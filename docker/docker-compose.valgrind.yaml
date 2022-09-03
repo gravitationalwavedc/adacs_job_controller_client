@@ -1,0 +1,22 @@
+version: '3.4'
+
+services:
+  web:
+    build:
+      dockerfile: adacs_job_client.Dockerfile
+      context: ..
+      target: test
+    image: gwcloud_job_server_valgrind 
+    container_name: gwcloud_job_server_valgrind
+    depends_on:
+      - db
+
+  db:
+    image: mysql:5.7
+    container_name: gwcloud_job_server_mysql_valgrind
+    volumes: 
+      - var_lib_mysql_job_server_valgrind:/var/lib/mysql
+
+volumes:
+  var_lib_mysql_job_server_valgrind:
+

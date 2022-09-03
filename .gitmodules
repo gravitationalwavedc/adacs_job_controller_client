@@ -1,0 +1,21 @@
+[submodule "src/third_party/sqlpp11"]
+	path = src/third_party/sqlpp11
+	url = https://github.com/rbock/sqlpp11.git
+[submodule "src/third_party/Simple-WebSocket-Server"]
+	path = src/third_party/Simple-WebSocket-Server
+	url = https://gitlab.com/llakerink/Simple-WebSocket-Server.git
+[submodule "src/third_party/json"]
+	path = src/third_party/json
+	url = https://github.com/nlohmann/json.git
+[submodule "src/third_party/date"]
+	path = src/third_party/date
+	url = https://github.com/HowardHinnant/date.git
+[submodule "src/third_party/boost"]
+	path = src/third_party/boost
+	url = https://github.com/boostorg/boost.git
+[submodule "src/third_party/openssl"]
+	path = src/third_party/openssl
+	url = https://github.com/openssl/openssl.git
+[submodule "src/third_party/openssl-cmake"]
+	path = src/third_party/openssl-cmake
+	url = https://github.com/janbar/openssl-cmake.git

@@ -1,0 +1,11 @@
+version: '3.4'
+
+services:
+  client:
+    build:
+      dockerfile: docker/adacs_job_client.Dockerfile
+      context: ..
+      target: build_production
+    container_name: adacs_job_client
+    volumes: 
+      - ../out/:/out/

@@ -1,0 +1,24 @@
+version: '3.4'
+
+services:
+  web:
+    build:
+      dockerfile: adacs_job_client.Dockerfile
+      context: ..
+      target: test
+    image: gwcloud_job_server_test 
+    container_name: gwcloud_job_server_test
+    volumes:
+      - ../test_report:/test_report
+    depends_on:
+      - db
+
+  db:
+    image: mysql:5.7
+    container_name: gwcloud_job_server_mysql_test
+    volumes: 
+      - var_lib_mysql_job_server_test:/var/lib/mysql
+
+volumes:
+  var_lib_mysql_job_server_test:
+

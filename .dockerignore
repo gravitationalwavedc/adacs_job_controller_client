@@ -1,0 +1,4 @@
+src/build
+src/cmake-build-debug
+src/cmake-build-release
+src/third_party/boost_install
