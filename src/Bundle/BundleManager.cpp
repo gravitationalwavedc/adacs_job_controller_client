@@ -3,7 +3,7 @@
 //
 
 #include "BundleManager.h"
-#include "../utils/GeneralUtils.h"
+#include "../lib/GeneralUtils.h"
 
 
 BundleManager::BundleManager() {

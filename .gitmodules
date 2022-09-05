@@ -19,3 +19,18 @@
 [submodule "src/third_party/openssl-cmake"]
 	path = src/third_party/openssl-cmake
 	url = https://github.com/janbar/openssl-cmake.git
+[submodule "src/third_party/folly"]
+	path = src/third_party/folly
+	url = https://github.com/facebook/folly.git
+[submodule "src/third_party/double-conversion"]
+	path = src/third_party/double-conversion
+	url = https://github.com/google/double-conversion.git
+[submodule "src/third_party/libevent"]
+	path = src/third_party/libevent
+	url = https://github.com/libevent/libevent.git
+[submodule "src/third_party/fmt"]
+	path = src/third_party/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "src/third_party/glog"]
+	path = src/third_party/glog
+	url = https://github.com/google/glog.git
