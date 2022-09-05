@@ -6,38 +6,31 @@
 #define ADACS_JOB_CLIENT_WEBSOCKETSERVERFIXTURE_H
 
 #include "../../Settings.h"
-#include "../../tests/utils.h"
 #include "../../lib/GeneralUtils.h"
+#include "../../tests/utils.h"
 #include "../utils.h"
-#include "./certs/test.crt.h"
-#include "./certs/test.key.h"
+#include "JsonConfigFixture.h"
 #include <boost/test/unit_test.hpp>
 #include <fstream>
-#include "JsonConfigFixture.h"
-
-static constexpr char* TEST_CERT_FILENAME = "test.crt";
-static constexpr char* TEST_KEY_FILENAME = "test.key";
 
 class WebsocketServerFixture : public JsonConfigFixture {
 public:
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::shared_ptr<TestWsServer> websocketServer;
     std::thread serverThread;
-    std::shared_ptr<TestWsServer::Connection> pWebsocketServerConnection = nullptr;
+    std::promise<std::shared_ptr<TestWsServer::Connection>> pWebsocketServerConnection;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     WebsocketServerFixture() {
-        writeCertFiles();
-        websocketServer = std::make_shared<TestWsServer>(TEST_CERT_FILENAME, TEST_KEY_FILENAME);
-//        websocketServer->config.address = TEST_SERVER_HOST;
+        websocketServer = std::make_shared<TestWsServer>();
         websocketServer->config.port = TEST_SERVER_PORT;
 
-        websocketServer->endpoint["^/ws/?$"].on_open = [&]([[maybe_unused]] auto connection) {
-            pWebsocketServerConnection = connection;
+        websocketServer->endpoint["^(.*?)$"].on_open = [&]([[maybe_unused]] auto connection) {
+            pWebsocketServerConnection.set_value(connection);
             onWebsocketServerOpen(connection);
         };
 
-        websocketServer->endpoint["^/ws/?$"].on_message = [&]([[maybe_unused]] auto connection, auto in_message) {
+        websocketServer->endpoint["^(.*?)$"].on_message = [&]([[maybe_unused]] auto connection, auto in_message) {
             onWebsocketServerMessage(in_message);
         };
     }
@@ -52,28 +45,16 @@ public:
 
     void startWebSocketServer() {
         // Start the client
+        std::promise<bool> bReady;
         serverThread = std::thread([&]() {
-            websocketServer->start();
+            websocketServer->start([&bReady](uint16_t) { bReady.set_value(true); });
         });
 
-        while (!acceptingConnections(TEST_SERVER_PORT)) {}
+        bReady.get_future().wait();
     }
 
     virtual void onWebsocketServerOpen(std::shared_ptr<TestWsServer::Connection> connection) {}
     virtual void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) {}
-
-private:
-    static void writeCertFiles() {
-        std::ofstream crt;
-        crt.open(TEST_CERT_FILENAME, std::ios::out);
-        crt.write(reinterpret_cast<char *>(&test_crt), test_crt_len);
-        crt.close();
-
-        std::ofstream key;
-        key.open(TEST_KEY_FILENAME, std::ios::out);
-        key.write(reinterpret_cast<char *>(&test_key), test_key_len);
-        key.close();
-    }
 };
 
 

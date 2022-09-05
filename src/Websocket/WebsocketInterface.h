@@ -11,7 +11,11 @@
 #include <folly/concurrency/ConcurrentHashMap.h>
 #include <folly/concurrency/UnboundedQueue.h>
 
+#ifndef BUILD_TESTS
 using WsClient = SimpleWeb::SocketClient<SimpleWeb::WSS>;
+#else
+using WsClient = SimpleWeb::SocketClient<SimpleWeb::WS>;
+#endif
 
 class WebsocketInterface {
 public:
@@ -22,7 +26,7 @@ public:
     static void SingletonFactory(const std::string& token);
     static auto Singleton() -> std::shared_ptr<WebsocketInterface>;
 
-    void start();
+    auto start() -> void;
     void join();
     void stop();
 
@@ -34,6 +38,7 @@ private:
     std::shared_ptr<WsClient::Connection> pConnection = nullptr;
     std::thread clientThread;
     std::string url;
+    std::promise<void> closePromise;
 
 #ifndef BUILD_TESTS
     [[noreturn]] void run();

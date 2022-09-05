@@ -20,11 +20,23 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
 
     auto config = readClientConfig();
     url = std::string{config["websocketEndpoint"]} + "?token=" + token;
-    client = std::make_shared<WsClient>(url, false);
+    client = std::make_shared<WsClient>(url);
+
+    client->on_error = [this](auto, auto error) {
+        std::cerr << "WS: Error with connection to " << url << std::endl;
+        std::cerr << error.message() << std::endl;
+        std::terminate();
+    };
 
     client->on_open = [this](const std::shared_ptr<WsClient::Connection>& connection) {
         std::cout << "WS: Client connected to " << url << std::endl;
         pConnection = connection;
+    };
+
+    client->on_close = [this](const std::shared_ptr<WsClient::Connection>&, int, const std::string &) {
+        std::cout << "WS: Client connection closed to " << url << std::endl;
+        pConnection = nullptr;
+        closePromise.set_value();
     };
 }
 
@@ -33,10 +45,13 @@ WebsocketInterface::~WebsocketInterface() {
 }
 
 void WebsocketInterface::start() {
+    std::promise<void> bReady;
     clientThread = std::thread([&]() {
         // Start server
-        client->start();
+        client->start([&](){ bReady.set_value(); });
     });
+
+    bReady.get_future().wait();
 }
 
 void WebsocketInterface::join() {
@@ -47,6 +62,11 @@ void WebsocketInterface::join() {
 
 void WebsocketInterface::stop() {
     if (client) {
+        if (pConnection) {
+            closePromise = std::promise<void>();
+            pConnection->send_close(1000);
+            closePromise.get_future().wait();
+        }
         client->stop();
     }
 

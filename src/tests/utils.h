@@ -7,7 +7,7 @@
 
 #include "server_wss.hpp"
 
-using TestWsServer = SimpleWeb::SocketServer<SimpleWeb::WSS>;
+using TestWsServer = SimpleWeb::SocketServer<SimpleWeb::WS>;
 
 auto randomInt(uint64_t start, uint64_t end) -> uint64_t;
 auto generateRandomData(uint32_t count) -> std::shared_ptr<std::vector<uint8_t>>;

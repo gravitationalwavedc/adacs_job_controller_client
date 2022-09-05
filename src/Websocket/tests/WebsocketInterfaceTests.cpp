@@ -19,9 +19,13 @@ public:
         startWebSocketServer();
     }
 
+    ~WebsocketInterfaceFixture() {
+        websocketInterface->stop();
+    }
+
     void startClient() {
         websocketInterface->start();
-        while (!pWebsocketServerConnection) {}
+        pWebsocketServerConnection.get_future().wait();
     }
 
     void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) override {
