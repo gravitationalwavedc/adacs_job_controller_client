@@ -23,6 +23,22 @@ set(CMAKE_POLICY_DEFAULT_CMP0074 NEW)
 # Add our own cmake path so that we can override the find SSL
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
 
+# Disable system packages
+set(CMAKE_DISABLE_FIND_PACKAGE_LibLZMA TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_Gflags TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_BZip2 TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_LZ4 TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_Zstd TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_Snappy TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_LibDwarf TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_Libiberty TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_LibUring TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_Libsodium TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_LibUnwind TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_LibAIO TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_fmt TRUE)
+
 find_package (Python3 COMPONENTS Development)
 
 # Set up the hinnant date library
@@ -55,6 +71,7 @@ set(LIBFMT_LIBRARY ${CMAKE_BINARY_DIR}/third_party/fmt/libfmtd.a)
 set(WITH_GFLAGS OFF)
 set(WITH_GTEST OFF)
 set(WITH_PKGCONFIG OFF)
+set(WITH_UNWIND OFF)
 set(Glog_ROOT ${CMAKE_SOURCE_DIR}/third_party/glog)
 set(Glog_LIBRARY ${CMAKE_BINARY_DIR}/third_party/glog/libglogd.a)
 
@@ -90,6 +107,8 @@ add_subdirectory(third_party/libevent)
 add_subdirectory(third_party/glog)
 
 file(REMOVE third_party/folly/build/fbcode_builder/CMake/FindGlog.cmake)
+file(REMOVE third_party/folly/build/fbcode_builder/CMake/FindGflags.cmake)
+set(LIBGFLAGS_FOUND FALSE)
 add_subdirectory(third_party/folly)
 
 add_subdirectory(third_party/fmt)
