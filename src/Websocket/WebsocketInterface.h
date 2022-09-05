@@ -17,6 +17,7 @@ class WebsocketInterface {
 public:
     WebsocketInterface() {};
     WebsocketInterface(const std::string& token);
+    ~WebsocketInterface();
 
     static void SingletonFactory(const std::string& token);
     static auto Singleton() -> std::shared_ptr<WebsocketInterface>;
@@ -30,8 +31,20 @@ public:
 
 private:
     std::shared_ptr<WsClient> client;
+    std::shared_ptr<WsClient::Connection> pConnection = nullptr;
     std::thread clientThread;
     std::string url;
+
+#ifndef BUILD_TESTS
+    [[noreturn]] void run();
+    [[noreturn]] void pruneSources();
+#else
+    void run();
+    void pruneSources();
+#endif
+
+    auto doesHigherPriorityDataExist(uint64_t maxPriority) -> bool;
+    static void reportWebsocketError(const SimpleWeb::error_code &errorCode);
 
     // Packet Queue is a:
     //  list of priorities - doesn't need any sync because it never changes
@@ -48,11 +61,18 @@ private:
     mutable std::mutex dataCVMutex;
     bool dataReady{};
     std::condition_variable dataCV;
-    std::vector<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<std::shared_ptr<std::vector<uint8_t>>, false>>>> queue;
+    std::vector<std::shared_ptr<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<std::shared_ptr<std::vector<uint8_t>>, false>>>>> queue;
 
 #ifdef BUILD_TESTS
 public:
     EXPOSE_PROPERTY_FOR_TESTING(url)
+    EXPOSE_PROPERTY_FOR_TESTING(queue)
+    EXPOSE_PROPERTY_FOR_TESTING_READONLY(dataReady)
+
+    EXPOSE_FUNCTION_FOR_TESTING(pruneSources);
+    EXPOSE_FUNCTION_FOR_TESTING(run);
+    EXPOSE_FUNCTION_FOR_TESTING_ONE_PARAM(doesHigherPriorityDataExist, uint64_t);
+
     static void setSingleton(std::shared_ptr<WebsocketInterface>);
 #endif
 };

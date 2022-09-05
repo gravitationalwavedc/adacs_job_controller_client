@@ -23,13 +23,23 @@ public:
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::shared_ptr<TestWsServer> websocketServer;
     std::thread serverThread;
+    std::shared_ptr<TestWsServer::Connection> pWebsocketServerConnection = nullptr;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     WebsocketServerFixture() {
         writeCertFiles();
         websocketServer = std::make_shared<TestWsServer>(TEST_CERT_FILENAME, TEST_KEY_FILENAME);
-        websocketServer->config.address = TEST_SERVER_HOST;
+//        websocketServer->config.address = TEST_SERVER_HOST;
         websocketServer->config.port = TEST_SERVER_PORT;
+
+        websocketServer->endpoint["^/ws/?$"].on_open = [&]([[maybe_unused]] auto connection) {
+            pWebsocketServerConnection = connection;
+            onWebsocketServerOpen(connection);
+        };
+
+        websocketServer->endpoint["^/ws/?$"].on_message = [&]([[maybe_unused]] auto connection, auto in_message) {
+            onWebsocketServerMessage(in_message);
+        };
     }
 
     ~WebsocketServerFixture() {
@@ -46,14 +56,11 @@ public:
             websocketServer->start();
         });
 
-        BOOST_CHECK_EQUAL(acceptingConnections(8000), true);
+        while (!acceptingConnections(TEST_SERVER_PORT)) {}
     }
 
-//    void onOpen() {
-//         Tell the client that we are ready
-//        Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
-//        msg.send(cluster);
-//    }
+    virtual void onWebsocketServerOpen(std::shared_ptr<TestWsServer::Connection> connection) {}
+    virtual void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) {}
 
 private:
     static void writeCertFiles() {

@@ -155,7 +155,7 @@ add_executable(
         Websocket/tests/WebsocketInterfaceTests.cpp
         tests/fixtures/JsonConfigFixture.h
         lib/Messaging/tests.cpp
-)
+        tests/utils.cpp)
 
 # Set the link libraries
 set(

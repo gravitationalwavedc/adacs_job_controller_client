@@ -15,22 +15,27 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
 
     // Create the list of priorities in order
     for (auto i = static_cast<uint32_t>(Message::Priority::Highest); i <= static_cast<uint32_t>(Message::Priority::Lowest); i++) {
-        queue.emplace_back();
+        queue.emplace_back(std::make_shared<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<std::shared_ptr<std::vector<uint8_t>>, false>>>>());
     }
 
     auto config = readClientConfig();
     url = std::string{config["websocketEndpoint"]} + "?token=" + token;
-    client = std::make_shared<WsClient>(url);
+    client = std::make_shared<WsClient>(url, false);
 
     client->on_open = [this](const std::shared_ptr<WsClient::Connection>& connection) {
         std::cout << "WS: Client connected to " << url << std::endl;
+        pConnection = connection;
     };
 }
 
+WebsocketInterface::~WebsocketInterface() {
+    stop();
+}
+
 void WebsocketInterface::start() {
-    clientThread = std::thread([this]() {
+    clientThread = std::thread([&]() {
         // Start server
-        this->client->start();
+        client->start();
     });
 }
 
@@ -41,7 +46,10 @@ void WebsocketInterface::join() {
 }
 
 void WebsocketInterface::stop() {
-    client->stop();
+    if (client) {
+        client->stop();
+    }
+
     join();
 }
 
@@ -75,10 +83,10 @@ void WebsocketInterface::queueMessage(std::string source, const std::shared_ptr<
         auto sQueue = std::make_shared<folly::UMPSCQueue<std::shared_ptr<std::vector<uint8_t>>, false>>();
 
         // Make sure that the source is in the map
-        pMap->try_emplace(source, sQueue);
+        pMap->get()->try_emplace(source, sQueue);
 
         // Write the data in the queue
-        (*pMap)[source]->enqueue(pData);
+        (*pMap->get())[source]->enqueue(pData);
 
         // Trigger the new data event to start sending
         this->dataReady = true;
@@ -91,3 +99,164 @@ void WebsocketInterface::setSingleton(std::shared_ptr<WebsocketInterface> newSin
     singleton = newSingleton;
 }
 #endif
+
+#ifndef BUILD_TESTS
+[[noreturn]] void WebsocketInterface::pruneSources() {
+    // Iterate forever
+    while (true) {
+        // Wait 1 minute until the next prune
+        std::this_thread::sleep_for(std::chrono::seconds(QUEUE_SOURCE_PRUNE_SECONDS));
+#else
+
+void WebsocketInterface::pruneSources() {
+#endif
+    // Acquire the exclusive lock to prevent more data being pushed on while we are pruning
+    {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+
+        // Iterate over the priorities
+        for (auto &priority : queue) {
+            // Get a pointer to the relevant map
+            auto *pMap = &priority;
+
+            // Iterate over the map
+            for (auto iter = pMap->get()->begin(); iter != pMap->get()->end();) {
+                // Check if the vector for this source is empty
+                if ((*iter).second->empty()) {
+                    // Remove this source from the map and continue
+                    iter = pMap->get()->erase(iter);
+                    continue;
+                }
+                // Manually increment the iterator
+                ++iter;
+            }
+        }
+    }
+#ifndef BUILD_TESTS
+    }
+#endif
+}
+
+#ifndef BUILD_TESTS
+[[noreturn]] void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-complexity)
+    // Iterate forever
+    while (true) {
+#else
+
+void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-complexity)
+#endif
+    {
+        std::unique_lock<std::mutex> lock(dataCVMutex);
+
+        // Wait for data to be ready to send
+        dataCV.wait(lock, [this] { return this->dataReady; });
+
+        // Reset the condition
+        this->dataReady = false;
+    }
+
+    reset:
+
+    // Iterate over the priorities
+    for (auto priority = queue.begin(); priority != queue.end(); priority++) {
+
+        // Get a pointer to the relevant map
+        auto *pMap = &(*priority);
+
+        // Get the current priority
+        auto currentPriority = priority - queue.begin();
+
+        // While there is still data for this priority, send it
+        bool hadData = false;
+        do {
+            hadData = false;
+
+            std::shared_lock<std::shared_mutex> lock(mutex_);
+            // Iterate over the map
+            for (auto iter = pMap->get()->begin(); iter != pMap->get()->end(); ++iter) {
+                // Check if the vector for this source is empty
+                if (!(*iter).second->empty()) {
+
+                    // Pop the next item from the queue
+                    auto data = (*iter).second->try_dequeue();
+
+                    try {
+                        // data should never be null as we're checking for empty
+                        if (data) {
+                            // Convert the message
+                            auto outMessage = std::make_shared<WsClient::OutMessage>((*data)->size());
+                            std::copy((*data)->begin(), (*data)->end(), std::ostream_iterator<uint8_t>(*outMessage));
+
+                            // Send the message on the websocket
+                            pConnection->send(
+                                    outMessage,
+                                    [this](const SimpleWeb::error_code &errorCode){
+                                        // Kill the connection only if the error was not indicating success
+                                        if (!errorCode){
+                                            return;
+                                        }
+
+                                        pConnection->close();
+                                        pConnection = nullptr;
+
+                                        reportWebsocketError(errorCode);
+                                    },
+                                    // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+                                    130
+                            );
+                        }
+                    } catch (std::exception& exception) {
+                        std::cerr << "Exception: " __FILE__ ":" << __LINE__ << " > " << exception.what() << std::endl;
+                    }
+
+                    // Data existed
+                    hadData = true;
+                }
+            }
+
+            // Check if there is higher priority data to send
+            if (doesHigherPriorityDataExist(currentPriority)) {
+                // Yes, so start the entire send process again
+                goto reset; // NOLINT(cppcoreguidelines-avoid-goto,hicpp-avoid-goto)
+            }
+
+            // Higher priority data does not exist, so keep sending data from this priority
+        } while (hadData);
+    }
+#ifndef BUILD_TESTS
+    }
+#endif
+}
+
+auto WebsocketInterface::doesHigherPriorityDataExist(uint64_t maxPriority) -> bool {
+    for (auto priority = queue.begin(); priority != queue.end(); priority++) {
+        // Get a pointer to the relevant map
+        auto *pMap = &(*priority);
+
+        // Check if the current priority is greater or equal to max priority and return false if not.
+        auto currentPriority = priority - queue.begin();
+        if (currentPriority >= maxPriority) {
+            return false;
+        }
+
+        // Iterate over the map
+        for (auto iter = pMap->get()->begin(); iter != pMap->get()->end();) {
+            // Check if the vector for this source is empty
+            if (!(*iter).second->empty()) {
+                // It'iter not empty so data does exist
+                return true;
+            }
+
+            // Increment the iterator
+            ++iter;
+        }
+    }
+
+    return false;
+}
+
+void WebsocketInterface::reportWebsocketError(const SimpleWeb::error_code &errorCode) {
+    // Log this
+    std::cout << "WS: Error in connection. "
+              << "Error: " << errorCode << ", error message: " << errorCode.message() << std::endl;
+}

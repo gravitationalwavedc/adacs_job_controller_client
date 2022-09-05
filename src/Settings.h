@@ -15,7 +15,7 @@ const uint64_t MESSAGE_INITIAL_VECTOR_SIZE = (1024ULL*64ULL);
 #define CLIENT_CONFIG_FILE "test_config.json"
 #define TEST_SERVER_HOST "localhost"
 #define TEST_SERVER_PORT 8001
-#define TEST_SERVER_URL "wss://" TEST_SERVER_HOST ":" STRINGIFY(TEST_SERVER_PORT) "/ws/"
+#define TEST_SERVER_URL TEST_SERVER_HOST ":" STRINGIFY(TEST_SERVER_PORT) "/ws/"
 #else
 #define CLIENT_CONFIG_FILE "config.json"
 #endif
