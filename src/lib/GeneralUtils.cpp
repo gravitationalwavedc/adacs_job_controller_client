@@ -13,6 +13,21 @@
 #include <thread>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <iostream>
+
+#ifdef BUILD_TESTS
+bool applicationAborted = false;
+#endif
+
+void abortApplication() {
+#ifdef BUILD_TESTS
+    applicationAborted = true;
+    std::cerr << "APPLICATION ABORTING" << std::endl;
+    throw std::runtime_error("Aborted");
+#else
+    std::abort();
+#endif
+}
 
 auto getExecutablePath() -> boost::filesystem::path {
     char result[PATH_MAX] = {0};

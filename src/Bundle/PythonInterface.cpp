@@ -7,6 +7,7 @@
 #include <iostream>
 
 #include "PythonInterface.h"
+#include "../lib/GeneralUtils.h"
 
 static void* _dlPythonLibHandle = nullptr;
 static PyInterpreterState* _interpreterState;
@@ -15,7 +16,7 @@ template<typename R, typename ... Args> R getRetType(R(*)(Args...));
 
 #define ENSURE_DLFN(function, dlfn) if (dlfn == nullptr) { \
     std::cerr << "Unable to find required function " << #function << " in python dynamic library." << std::endl; \
-    std::terminate();                                      \
+    abortApplication();                                      \
 }
 
 #define PYWRAP_0(function) auto function() -> decltype(function()) { \
@@ -97,7 +98,7 @@ PythonInterface::PythonInterface(const std::string& sPythonLibrary) {
     void *libHandle = dlopen(sPythonLibrary.c_str(), RTLD_NOW | RTLD_GLOBAL);
     if (libHandle == nullptr) {
         std::cerr << "Unable to load python dynamic library " << sPythonLibrary << std::endl;
-        std::terminate();
+        abortApplication();
     }
 
     // Set the library handle and initialise the python interpreter

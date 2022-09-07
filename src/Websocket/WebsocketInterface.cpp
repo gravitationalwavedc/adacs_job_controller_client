@@ -4,13 +4,14 @@
 
 #include "../lib/GeneralUtils.h"
 #include "WebsocketInterface.h"
+#include "../Settings.h"
 
 static std::shared_ptr<WebsocketInterface> singleton;
 
 WebsocketInterface::WebsocketInterface(const std::string& token) {
     if (singleton) {
         std::cerr << "WebsocketInterface singleton was already initialised!" << std::endl;
-        std::terminate();
+        abortApplication();
     }
 
     // Create the list of priorities in order
@@ -22,21 +23,25 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
     url = std::string{config["websocketEndpoint"]} + "?token=" + token;
     client = std::make_shared<WsClient>(url);
 
-    client->on_error = [this](auto, auto error) {
+    client->on_error = [&](auto, auto error) {
         std::cerr << "WS: Error with connection to " << url << std::endl;
         std::cerr << error.message() << std::endl;
-        std::terminate();
+        abortApplication();
     };
 
-    client->on_open = [this](const std::shared_ptr<WsClient::Connection>& connection) {
+    client->on_open = [&](const std::shared_ptr<WsClient::Connection>& connection) {
         std::cout << "WS: Client connected to " << url << std::endl;
         pConnection = connection;
     };
 
-    client->on_close = [this](const std::shared_ptr<WsClient::Connection>&, int, const std::string &) {
+    client->on_close = [&](const std::shared_ptr<WsClient::Connection>&, int, const std::string &) {
         std::cout << "WS: Client connection closed to " << url << std::endl;
         pConnection = nullptr;
         closePromise.set_value();
+    };
+
+    client->on_pong = [&](const std::shared_ptr<WsClient::Connection>&) {
+        handlePong();
     };
 }
 
@@ -52,6 +57,23 @@ void WebsocketInterface::start() {
     });
 
     bReady.get_future().wait();
+
+#ifndef BUILD_TESTS
+    // Start the scheduler thread
+    schedulerThread = std::thread([this] {
+        this->run();
+    });
+
+    // Start the prune thread
+    pruneThread = std::thread([this] {
+        this->pruneSources();
+    });
+
+    // Start the ping thread
+    pingThread = std::thread([this] {
+        this->runPings();
+    });
+#endif
 }
 
 void WebsocketInterface::join() {
@@ -65,7 +87,7 @@ void WebsocketInterface::stop() {
         if (pConnection) {
             closePromise = std::promise<void>();
             pConnection->send_close(1000);
-            closePromise.get_future().wait();
+            closePromise.get_future().wait_for(std::chrono::milliseconds(100));
         }
         client->stop();
     }
@@ -76,7 +98,7 @@ void WebsocketInterface::stop() {
 void WebsocketInterface::SingletonFactory(const std::string& token) {
     if (singleton) {
         std::cerr << "WebsocketInterface singleton was already initialised!" << std::endl;
-        std::terminate();
+        abortApplication();
     }
 
     singleton = std::make_shared<WebsocketInterface>(token);
@@ -85,7 +107,7 @@ void WebsocketInterface::SingletonFactory(const std::string& token) {
 auto WebsocketInterface::Singleton() -> std::shared_ptr<WebsocketInterface> {
     if (!singleton) {
         std::cerr << "WebsocketInterface singleton was null!" << std::endl;
-        std::terminate();
+        abortApplication();
     }
 
     return singleton;
@@ -220,6 +242,8 @@ void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-comple
                                         pConnection = nullptr;
 
                                         reportWebsocketError(errorCode);
+
+                                        abortApplication();
                                     },
                                     // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
                                     130
@@ -279,4 +303,58 @@ void WebsocketInterface::reportWebsocketError(const SimpleWeb::error_code &error
     // Log this
     std::cout << "WS: Error in connection. "
               << "Error: " << errorCode << ", error message: " << errorCode.message() << std::endl;
+}
+
+void WebsocketInterface::handlePong() {
+    // Update the ping timer
+    pongTimestamp = std::chrono::system_clock::now();
+
+    // Report the latency
+    auto latency = pongTimestamp - pingTimestamp;
+
+    std::cout << "WS: Had " << std::chrono::duration_cast<std::chrono::milliseconds>(latency).count()
+    << "ms latency with the server." << std::endl;
+}
+
+[[noreturn]] void WebsocketInterface::runPings() {
+    while (true) {
+        checkPings();
+
+        // Wait CLUSTER_MANAGER_PING_INTERVAL_SECONDS to check again
+        std::this_thread::sleep_for(std::chrono::seconds(PING_INTERVAL_SECONDS));
+    }
+}
+
+void WebsocketInterface::checkPings() {
+    // Check for any websocket pings that didn't pong within INTERVAL_SECONDS, and terminate if so
+
+    std::chrono::time_point<std::chrono::system_clock> zeroTime = {};
+    if (pingTimestamp != zeroTime && pongTimestamp == zeroTime) {
+        std::cout << "WS: Error in connection with " << url << ". "
+                  << "Error: Websocket timed out waiting for ping." << std::endl;
+
+        abortApplication();
+    }
+
+    // Send a fresh ping to the server
+    // Update the ping timestamp
+    pingTimestamp = std::chrono::system_clock::now();
+    pongTimestamp = {};
+
+    // Send a ping to the client
+    // See https://www.rfc-editor.org/rfc/rfc6455#section-5.2 for the ping opcode 137
+    pConnection->send(
+            "",
+            [&](const SimpleWeb::error_code &errorCode){
+                // Kill the server only if the error was not indicating success
+                if (!errorCode){
+                    return;
+                }
+
+                reportWebsocketError(errorCode);
+                abortApplication();
+            },
+            // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers, readability-magic-numbers)
+            137
+    );
 }

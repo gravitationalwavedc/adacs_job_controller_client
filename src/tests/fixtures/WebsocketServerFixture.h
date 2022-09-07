@@ -19,6 +19,7 @@ public:
     std::shared_ptr<TestWsServer> websocketServer;
     std::thread serverThread;
     std::promise<std::shared_ptr<TestWsServer::Connection>> pWebsocketServerConnection;
+    bool bServerConnectionClosed = true;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     WebsocketServerFixture() {
@@ -26,12 +27,25 @@ public:
         websocketServer->config.port = TEST_SERVER_PORT;
 
         websocketServer->endpoint["^(.*?)$"].on_open = [&]([[maybe_unused]] auto connection) {
+            bServerConnectionClosed = false;
             pWebsocketServerConnection.set_value(connection);
             onWebsocketServerOpen(connection);
         };
 
         websocketServer->endpoint["^(.*?)$"].on_message = [&]([[maybe_unused]] auto connection, auto in_message) {
             onWebsocketServerMessage(in_message);
+        };
+
+        websocketServer->endpoint["^(.*?)$"].on_ping = [&]([[maybe_unused]] auto connection) {
+            onWebsocketServerPing();
+        };
+
+        websocketServer->endpoint["^(.*?)$"].on_close = [&](auto, auto, auto) {
+            bServerConnectionClosed = true;
+        };
+
+        websocketServer->endpoint["^(.*?)$"].on_error = [&](auto, auto) {
+            bServerConnectionClosed = true;
         };
     }
 
@@ -41,6 +55,9 @@ public:
         if (serverThread.joinable()) {
             serverThread.join();
         }
+
+        // Really wait until the server has shut down
+        while (acceptingConnections(TEST_SERVER_PORT)) {}
     }
 
     void startWebSocketServer() {
@@ -55,6 +72,7 @@ public:
 
     virtual void onWebsocketServerOpen(std::shared_ptr<TestWsServer::Connection> connection) {}
     virtual void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) {}
+    virtual void onWebsocketServerPing() {}
 };
 
 

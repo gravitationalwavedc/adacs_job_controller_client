@@ -3,6 +3,7 @@
 //
 
 #include "BundleInterface.h"
+#include "../lib/GeneralUtils.h"
 
 BundleInterface::BundleInterface(std::string bundlePath) {
     pythonInterpreter = PythonInterface::newInterpreter();
@@ -25,7 +26,7 @@ BundleInterface::BundleInterface(std::string bundlePath) {
     auto *pValue = Py_CompileString("def blah(x):\n\tprint(5 * x)\n\timport sys\n\tprint(\"Python version\")\n\tprint (sys.version)\n\tprint(\"Version info.\")\n\tprint (sys.version_info)\n\treturn 77\n", "source", Py_file_input);
     if (PyErr_Occurred() != nullptr) {
         PyErr_Print();
-        std::terminate();
+        abortApplication();
     }
 
     pValue = PyEval_EvalCode(pValue, pGlobal, pLocal);
@@ -43,7 +44,7 @@ BundleInterface::BundleInterface(std::string bundlePath) {
     pValue = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
         PyErr_Print();
-        std::terminate();
+        abortApplication();
     }
 
     Py_DECREF(pArgs);
@@ -68,7 +69,7 @@ print("TNAME: sys.xxx={}".format(getattr(sys, 'xxx', 'attribute not set')))
     auto *pValue = Py_CompileString(code.c_str(), "source", Py_file_input);
     if (PyErr_Occurred() != nullptr) {
         PyErr_Print();
-        std::terminate();
+        abortApplication();
     }
 
     pValue = PyEval_EvalCode(pValue, pGlobal, pLocal);

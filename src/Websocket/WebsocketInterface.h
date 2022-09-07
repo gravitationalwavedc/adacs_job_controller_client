@@ -48,6 +48,10 @@ private:
     void pruneSources();
 #endif
 
+    [[noreturn]] void runPings();
+    void checkPings();
+    void handlePong();
+
     auto doesHigherPriorityDataExist(uint64_t maxPriority) -> bool;
     static void reportWebsocketError(const SimpleWeb::error_code &errorCode);
 
@@ -68,15 +72,26 @@ private:
     std::condition_variable dataCV;
     std::vector<std::shared_ptr<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<std::shared_ptr<std::vector<uint8_t>>, false>>>>> queue;
 
+    std::chrono::time_point<std::chrono::system_clock> pingTimestamp;
+    std::chrono::time_point<std::chrono::system_clock> pongTimestamp;
+
+    std::thread pingThread;
+    std::thread schedulerThread;
+    std::thread pruneThread;
+
 #ifdef BUILD_TESTS
 public:
     EXPOSE_PROPERTY_FOR_TESTING(url)
     EXPOSE_PROPERTY_FOR_TESTING(queue)
     EXPOSE_PROPERTY_FOR_TESTING_READONLY(dataReady)
+    EXPOSE_PROPERTY_FOR_TESTING_READONLY(pingTimestamp)
+    EXPOSE_PROPERTY_FOR_TESTING_READONLY(pongTimestamp)
+    EXPOSE_PROPERTY_FOR_TESTING_READONLY(pConnection)
 
-    EXPOSE_FUNCTION_FOR_TESTING(pruneSources);
-    EXPOSE_FUNCTION_FOR_TESTING(run);
-    EXPOSE_FUNCTION_FOR_TESTING_ONE_PARAM(doesHigherPriorityDataExist, uint64_t);
+    EXPOSE_FUNCTION_FOR_TESTING(pruneSources)
+    EXPOSE_FUNCTION_FOR_TESTING(run)
+    EXPOSE_FUNCTION_FOR_TESTING(checkPings)
+    EXPOSE_FUNCTION_FOR_TESTING_ONE_PARAM(doesHigherPriorityDataExist, uint64_t)
 
     static void setSingleton(std::shared_ptr<WebsocketInterface>);
 #endif

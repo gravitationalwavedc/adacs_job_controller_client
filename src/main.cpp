@@ -11,7 +11,11 @@ int main(int argc, char* argv[]) {
     auto wsToken = std::string(argv[1]);
 
     auto bundleManager = std::make_shared<BundleManager>();
-    auto websocketInterface = std::make_shared<WebsocketInterface>(wsToken);
+
+    // Start and connect the websocket
+    WebsocketInterface::SingletonFactory(wsToken);
+    auto websocketInterface = WebsocketInterface::Singleton();
+    websocketInterface->start();
 
 //    auto pythonInterface = PythonInterface("libpython3.so");
 //    auto bundle1 = new BundleInterface("/home/lewis/Projects/gwdc/adacs_job_client/src/testing/bundle");

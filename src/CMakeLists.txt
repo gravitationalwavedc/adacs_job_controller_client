@@ -150,12 +150,12 @@ add_executable(
         tests/test_main.cpp
         tests/utils.h
         tests/fixtures/WebsocketServerFixture.h
-        tests/fixtures/certs/test.crt.h
-        tests/fixtures/certs/test.key.h
         Websocket/tests/WebsocketInterfaceTests.cpp
         tests/fixtures/JsonConfigFixture.h
         lib/Messaging/tests.cpp
-        tests/utils.cpp)
+        tests/utils.cpp
+        Websocket/tests/ping_pong_tests.cpp
+)
 
 # Set the link libraries
 set(
