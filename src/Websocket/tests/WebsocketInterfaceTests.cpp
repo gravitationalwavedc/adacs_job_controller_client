@@ -29,10 +29,12 @@ public:
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) override {
-        auto data = message->string();
+    void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> inMessage) override {
+        auto stringData = inMessage->string();
+        auto data = std::vector<uint8_t>(stringData.begin(), stringData.end());
+        auto message = Message(data);
 
-        receivedMessages.emplace_back(std::vector<uint8_t>(data.begin(), data.end()));
+        receivedMessages.emplace_back(message.pop_bytes());
     }
 };
 
@@ -235,46 +237,74 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
 
         // Create several sources and insert data in the queue
         auto s1_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s1", s1_d1, Message::Priority::Highest);
+        auto msg = Message(-1, Message::Priority::Highest, "s1");
+        msg.push_bytes(*s1_d1);
+        msg.send();
 
         auto s1_d2 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s1", s1_d2, Message::Priority::Highest);
+        msg = Message(-1, Message::Priority::Highest, "s1");
+        msg.push_bytes(*s1_d2);
+        msg.send();
 
         auto s2_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s2", s2_d1, Message::Priority::Highest);
+        msg = Message(-1, Message::Priority::Highest, "s2");
+        msg.push_bytes(*s2_d1);
+        msg.send();
 
         auto s3_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d1, Message::Priority::Lowest);
+        msg = Message(-1, Message::Priority::Lowest, "s3");
+        msg.push_bytes(*s3_d1);
+        msg.send();
 
         auto s3_d2 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d2, Message::Priority::Lowest);
+        msg = Message(-1, Message::Priority::Lowest, "s3");
+        msg.push_bytes(*s3_d2);
+        msg.send();
 
         auto s3_d3 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d3, Message::Priority::Lowest);
+        msg = Message(-1, Message::Priority::Lowest, "s3");
+        msg.push_bytes(*s3_d3);
+        msg.send();
 
         auto s3_d4 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d4, Message::Priority::Lowest);
+        msg = Message(-1, Message::Priority::Lowest, "s3");
+        msg.push_bytes(*s3_d4);
+        msg.send();
 
         auto s4_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s4", s4_d1, Message::Priority::Lowest);
+        msg = Message(-1, Message::Priority::Lowest, "s4");
+        msg.push_bytes(*s4_d1);
+        msg.send();
 
         auto s4_d2 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s4", s4_d2, Message::Priority::Lowest);
+        msg = Message(-1, Message::Priority::Lowest, "s4");
+        msg.push_bytes(*s4_d2);
+        msg.send();
 
         auto s5_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s5", s5_d1, Message::Priority::Lowest);
+        msg = Message(-1, Message::Priority::Lowest, "s5");
+        msg.push_bytes(*s5_d1);
+        msg.send();
 
         auto s5_d2 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s5", s5_d2, Message::Priority::Lowest);
+        msg = Message(-1, Message::Priority::Lowest, "s5");
+        msg.push_bytes(*s5_d2);
+        msg.send();
 
         auto s6_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s6", s6_d1, Message::Priority::Medium);
+        msg = Message(-1, Message::Priority::Medium, "s6");
+        msg.push_bytes(*s6_d1);
+        msg.send();
 
         auto s6_d2 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s6", s6_d2, Message::Priority::Medium);
+        msg = Message(-1, Message::Priority::Medium, "s6");
+        msg.push_bytes(*s6_d2);
+        msg.send();
 
         auto s6_d3 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s6", s6_d3, Message::Priority::Medium);
+        msg = Message(-1, Message::Priority::Medium, "s6");
+        msg.push_bytes(*s6_d3);
+        msg.send();
 
         *WebsocketInterface::Singleton()->getdataReady() = true;
         WebsocketInterface::Singleton()->callrun();

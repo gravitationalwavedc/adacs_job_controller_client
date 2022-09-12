@@ -5,6 +5,7 @@
 #ifndef ADACS_JOB_CLIENT_MESSAGEHANDLER_H
 #define ADACS_JOB_CLIENT_MESSAGEHANDLER_H
 
+#include "../lib/Messaging/Message.h"
 
 void handleMessage(Message);
 

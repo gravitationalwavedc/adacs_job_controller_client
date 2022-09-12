@@ -5,6 +5,7 @@
 #include "../lib/GeneralUtils.h"
 #include "WebsocketInterface.h"
 #include "../Settings.h"
+#include "../Core/MessageHandler.h"
 
 static std::shared_ptr<WebsocketInterface> singleton;
 
@@ -43,6 +44,12 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
     client->on_pong = [&](const std::shared_ptr<WsClient::Connection>&) {
         handlePong();
     };
+
+    client->on_message = [&](const std::shared_ptr<WsClient::Connection>&, std::shared_ptr<WsClient::InMessage> inMessage) {
+        auto stringData = inMessage->string();
+        auto message = Message(std::vector<uint8_t>(stringData.begin(), stringData.end()));
+        handleMessage(message);
+    };
 }
 
 WebsocketInterface::~WebsocketInterface() {
@@ -53,11 +60,14 @@ void WebsocketInterface::start() {
     std::promise<void> bReady;
     clientThread = std::thread([&]() {
         // Start server
-        client->start([&](){ bReady.set_value(); });
+        client->start([&]() { bReady.set_value(); });
     });
 
     bReady.get_future().wait();
+}
 
+void WebsocketInterface::serverReady() {
+    std::cout << "WS: Server ready - starting threads" << std::endl;
 #ifndef BUILD_TESTS
     // Start the scheduler thread
     schedulerThread = std::thread([this] {

@@ -124,3 +124,11 @@ auto Message::pop_bytes() -> std::vector<uint8_t> {
 void Message::send() {
     WebsocketInterface::Singleton()->queueMessage(source, data, priority);
 }
+
+#ifdef BUILD_TESTS
+void Message::send(std::shared_ptr<TestWsServer::Connection> connection) {
+    auto outMessage = std::make_shared<TestWsServer::OutMessage>(data->size());
+    std::copy(data->begin(), data->end(), std::ostream_iterator<uint8_t>(*outMessage));
+    connection->send(outMessage);
+}
+#endif

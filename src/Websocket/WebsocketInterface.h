@@ -33,6 +33,8 @@ public:
     // virtual here so that we can override this function for testing
     virtual void queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& data, Message::Priority priority);
 
+    void serverReady();
+
 private:
     std::shared_ptr<WsClient> client;
     std::shared_ptr<WsClient::Connection> pConnection = nullptr;
@@ -47,7 +49,6 @@ private:
     void run();
     void pruneSources();
 #endif
-
     [[noreturn]] void runPings();
     void checkPings();
     void handlePong();

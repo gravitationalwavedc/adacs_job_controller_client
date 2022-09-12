@@ -12,6 +12,7 @@
 #include "JsonConfigFixture.h"
 #include <boost/test/unit_test.hpp>
 #include <fstream>
+#include "../../lib/Messaging/Message.h"
 
 class WebsocketServerFixture : public JsonConfigFixture {
 public:
@@ -26,10 +27,13 @@ public:
         websocketServer = std::make_shared<TestWsServer>();
         websocketServer->config.port = TEST_SERVER_PORT;
 
-        websocketServer->endpoint["^(.*?)$"].on_open = [&]([[maybe_unused]] auto connection) {
+        websocketServer->endpoint["^(.*?)$"].on_open = [&](auto connection) {
             bServerConnectionClosed = false;
             pWebsocketServerConnection.set_value(connection);
             onWebsocketServerOpen(connection);
+
+            Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
+            msg.send(connection);
         };
 
         websocketServer->endpoint["^(.*?)$"].on_message = [&]([[maybe_unused]] auto connection, auto in_message) {

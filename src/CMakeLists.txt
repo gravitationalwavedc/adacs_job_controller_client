@@ -134,6 +134,8 @@ set(
         lib/GeneralUtils.h
         lib/Messaging/Message.cpp
         lib/Messaging/Message.h
+        Core/MessageHandler.cpp
+        Core/MessageHandler.h
 )
 
 # Set the main executable and source files
