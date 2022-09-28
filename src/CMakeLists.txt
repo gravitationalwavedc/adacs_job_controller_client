@@ -90,6 +90,7 @@ include_directories(
         third_party/folly
         third_party/fmt/include
         third_party/libevent/include
+        third_party/sqlite3-cmake/src
         ${CMAKE_BINARY_DIR}/third_party/folly
         ${CMAKE_BINARY_DIR}/third_party/openssl-cmake/include
         ${CMAKE_BINARY_DIR}/third_party/glog
@@ -165,7 +166,8 @@ add_executable(
         tests/utils.cpp
         Websocket/tests/ping_pong_tests.cpp
         Files/tests/test_file_list.cpp
-        tests/fixtures/TemporaryDirectoryFixture.h)
+        tests/fixtures/TemporaryDirectoryFixture.h
+)
 
 # Set the link libraries
 set(
@@ -174,7 +176,6 @@ set(
         ssl
         crypto
         folly
-        event
         double-conversion
         sqlite3
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_filesystem.a

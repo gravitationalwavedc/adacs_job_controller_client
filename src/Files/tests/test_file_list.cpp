@@ -14,12 +14,32 @@ struct FileListTestDataFixture : public WebsocketServerFixture, public Temporary
     std::shared_ptr<Message> receivedMessage;
     std::promise<void> promMessageReceived;
     uint64_t jobId;
+    std::string symlinkDir = createTemporaryDirectory();
+    std::string symlinkFile = createTemporaryFile(symlinkDir);
     std::string tempDir = createTemporaryDirectory();
+    std::string tempFile = createTemporaryFile(tempDir);
+    std::string tempDir2 = createTemporaryDirectory(tempDir);
+    std::string tempFile2 = createTemporaryFile(tempDir2);
     SqliteConnector database = SqliteConnector();
     schema::JobclientJob jobTable;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     FileListTestDataFixture() {
+        // Create symlinks
+        boost::filesystem::create_directory_symlink(symlinkDir, boost::filesystem::path(tempDir) / "symlink_dir");
+        boost::filesystem::create_symlink(symlinkFile, boost::filesystem::path(tempDir) / "symlink_path");
+        boost::filesystem::create_directory_symlink("/not/a/real/path", boost::filesystem::path(tempDir) / "symlink_dir_not_real");
+        boost::filesystem::create_symlink("/not/a/real/path", boost::filesystem::path(tempDir) / "symlink_path_not_real");
+
+        // Generate some fake data
+        std::ofstream ofs1(tempFile);
+        ofs1 << "12345";
+        ofs1.close();
+
+        std::ofstream ofs2(tempFile2);
+        ofs2 << "12345678";
+        ofs2.close();
+
         // Insert a job in the database
         jobId = database->operator()(
                 insert_into(jobTable)
@@ -128,8 +148,6 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
     }
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_directory_is_a_file) {
-        auto tempFile = createTemporaryFile(tempDir);
-
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
         msg.push_int(jobId);
         msg.push_string("some_uuid");
@@ -143,5 +161,97 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to list files is not a directory");
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_recursive) {
+        Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(jobId);
+        msg.push_string("some_uuid");
+        msg.push_string("some_bundle_hash");
+        msg.push_string("/");
+        msg.push_bool(true);
+        msg.send(pWebsocketServerConnection);
+
+        promMessageReceived.get_future().wait();
+
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
+        BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 3);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempDir2.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), true);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 0);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 5);
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_recursive_2) {
+        Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(jobId);
+        msg.push_string("some_uuid");
+        msg.push_string("some_bundle_hash");
+        msg.push_string(tempDir2.substr(tempDir.length()));
+        msg.push_bool(true);
+        msg.send(pWebsocketServerConnection);
+
+        promMessageReceived.get_future().wait();
+
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
+        BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 1);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_not_recursive) {
+        Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(jobId);
+        msg.push_string("some_uuid");
+        msg.push_string("some_bundle_hash");
+        msg.push_string("/");
+        msg.push_bool(false);
+        msg.send(pWebsocketServerConnection);
+
+        promMessageReceived.get_future().wait();
+
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
+        BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 2);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempDir2.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), true);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 0);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 5);
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_not_recursive_2) {
+        Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(jobId);
+        msg.push_string("some_uuid");
+        msg.push_string("some_bundle_hash");
+        msg.push_string(tempDir2.substr(tempDir.length()));
+        msg.push_bool(false);
+        msg.send(pWebsocketServerConnection);
+
+        promMessageReceived.get_future().wait();
+
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
+        BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 1);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
     }
 BOOST_AUTO_TEST_SUITE_END()

@@ -8,7 +8,7 @@
 #include "../Files/FileHandling.h"
 
 
-void handleMessage(std::shared_ptr<Message> message) {
+void handleMessage(const std::shared_ptr<Message>& message) {
     switch (message->getId()) {
         case SERVER_READY:
             // SERVER_READY is sent by the server once the server is ready to receive messages. Until we receive this

@@ -14,8 +14,10 @@ private:
     std::vector<std::string> tempDirs;
 
 public:
-    std::string createTemporaryDirectory() {
-        boost::filesystem::path ph = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path();
+    std::string createTemporaryDirectory(std::string parent = "") {
+        boost::filesystem::path ph =
+                boost::filesystem::path(parent == "" ? boost::filesystem::temp_directory_path() : parent)
+                / boost::filesystem::unique_path();
         boost::filesystem::create_directories(ph);
 
         tempDirs.push_back(ph.string());
