@@ -47,7 +47,7 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
 
     client->on_message = [&](const std::shared_ptr<WsClient::Connection>&, std::shared_ptr<WsClient::InMessage> inMessage) {
         auto stringData = inMessage->string();
-        auto message = Message(std::vector<uint8_t>(stringData.begin(), stringData.end()));
+        auto message = std::make_shared<Message>(std::vector<uint8_t>(stringData.begin(), stringData.end()));
         handleMessage(message);
     };
 }
@@ -240,24 +240,26 @@ void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-comple
                             std::copy((*data)->begin(), (*data)->end(), std::ostream_iterator<uint8_t>(*outMessage));
 
                             // Send the message on the websocket
-                            pConnection->send(
-                                    outMessage,
-                                    [this](const SimpleWeb::error_code &errorCode){
-                                        // Kill the connection only if the error was not indicating success
-                                        if (!errorCode){
-                                            return;
-                                        }
+                            if (pConnection != nullptr) {
+                                pConnection->send(
+                                        outMessage,
+                                        [this](const SimpleWeb::error_code &errorCode) {
+                                            // Kill the connection only if the error was not indicating success
+                                            if (!errorCode) {
+                                                return;
+                                            }
 
-                                        pConnection->close();
-                                        pConnection = nullptr;
+                                            pConnection->close();
+                                            pConnection = nullptr;
 
-                                        reportWebsocketError(errorCode);
+                                            reportWebsocketError(errorCode);
 
-                                        abortApplication();
-                                    },
-                                    // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-                                    130
-                            );
+                                            abortApplication();
+                                        },
+                                        // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+                                        130
+                                );
+                            }
                         }
                     } catch (std::exception& exception) {
                         std::cerr << "Exception: " __FILE__ ":" << __LINE__ << " > " << exception.what() << std::endl;

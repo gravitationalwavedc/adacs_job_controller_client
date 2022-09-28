@@ -13,13 +13,17 @@
 #include <boost/test/unit_test.hpp>
 #include <fstream>
 #include "../../lib/Messaging/Message.h"
+#include "../../Websocket/WebsocketInterface.h"
 
 class WebsocketServerFixture : public JsonConfigFixture {
 public:
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::shared_ptr<TestWsServer> websocketServer;
     std::thread serverThread;
-    std::promise<std::shared_ptr<TestWsServer::Connection>> pWebsocketServerConnection;
+    bool clientRunning = true;
+    std::thread clientThread;
+    std::promise<void> websocketServerConnectionPromise;
+    std::shared_ptr<TestWsServer::Connection> pWebsocketServerConnection;
     bool bServerConnectionClosed = true;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
@@ -29,11 +33,20 @@ public:
 
         websocketServer->endpoint["^(.*?)$"].on_open = [&](auto connection) {
             bServerConnectionClosed = false;
-            pWebsocketServerConnection.set_value(connection);
+            websocketServerConnectionPromise.set_value();
+            pWebsocketServerConnection = connection;
             onWebsocketServerOpen(connection);
 
             Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
             msg.send(connection);
+
+            // Start the scheduler thread
+            clientThread = std::thread([&] {
+                while (clientRunning) {
+                    WebsocketInterface::Singleton()->callrun();
+                    WebsocketInterface::Singleton()->callpruneSources();
+                }
+            });
         };
 
         websocketServer->endpoint["^(.*?)$"].on_message = [&]([[maybe_unused]] auto connection, auto in_message) {
@@ -54,6 +67,14 @@ public:
     }
 
     ~WebsocketServerFixture() {
+        // Shut down the client, send any message at all to trigger the internal run event and escape the loop
+        clientRunning = false;
+        Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.send();
+        if (clientThread.joinable()) {
+            clientThread.join();
+        }
+
         // Finished with the client
         websocketServer->stop();
         if (serverThread.joinable()) {

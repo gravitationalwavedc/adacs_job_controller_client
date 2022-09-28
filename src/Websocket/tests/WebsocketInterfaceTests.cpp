@@ -25,7 +25,7 @@ public:
 
     void startClient() {
         WebsocketInterface::Singleton()->start();
-        pWebsocketServerConnection.get_future().wait();
+        websocketServerConnectionPromise.get_future().wait();
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
@@ -39,7 +39,6 @@ public:
 };
 
 BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
-
     BOOST_AUTO_TEST_CASE(test_constructor) {
         BOOST_CHECK_EQUAL(*WebsocketInterface::Singleton()->geturl(), std::string{TEST_SERVER_URL} + "?token=" + token);
 
@@ -399,4 +398,4 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
         // Testing a non-standard priority that has a value greater than Lowest should now result in false
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Lowest + 1), false);
     }
-}
+BOOST_AUTO_TEST_SUITE_END()

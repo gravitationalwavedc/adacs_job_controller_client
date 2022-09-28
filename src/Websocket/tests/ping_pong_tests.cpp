@@ -21,7 +21,7 @@ struct PingPongTestDataFixture : public WebsocketServerFixture, public AbortHelp
         startWebSocketServer();
 
         WebsocketInterface::Singleton()->start();
-        pWebsocketServerConnection.get_future().wait();
+        websocketServerConnectionPromise.get_future().wait();
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 

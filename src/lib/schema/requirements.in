@@ -1,0 +1,4 @@
+django<5
+PyMySQL
+pyparsing
+mysql-connector-python<8.0.30

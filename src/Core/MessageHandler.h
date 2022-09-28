@@ -7,7 +7,7 @@
 
 #include "../lib/Messaging/Message.h"
 
-void handleMessage(Message);
+void handleMessage(std::shared_ptr<Message>);
 
 
 #endif //ADACS_JOB_CLIENT_MESSAGEHANDLER_H

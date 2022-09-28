@@ -119,6 +119,8 @@ add_subdirectory(third_party/Simple-WebSocket-Server)
 
 add_subdirectory(third_party/sqlpp11)
 
+add_subdirectory(third_party/sqlite3-cmake)
+
 # Define the source files
 set(
         SOURCE_FILES
@@ -136,6 +138,11 @@ set(
         lib/Messaging/Message.h
         Core/MessageHandler.cpp
         Core/MessageHandler.h
+        Files/FileList.cpp
+        Files/FileDownload.cpp
+        Files/FileHandling.h
+        lib/jobclient_schema.h
+        DB/SqliteConnector.h
 )
 
 # Set the main executable and source files
@@ -157,7 +164,8 @@ add_executable(
         lib/Messaging/tests.cpp
         tests/utils.cpp
         Websocket/tests/ping_pong_tests.cpp
-)
+        Files/tests/test_file_list.cpp
+        tests/fixtures/TemporaryDirectoryFixture.h)
 
 # Set the link libraries
 set(
@@ -168,6 +176,7 @@ set(
         folly
         event
         double-conversion
+        sqlite3
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_filesystem.a
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_unit_test_framework.a
         ${Glog_LIBRARY}
