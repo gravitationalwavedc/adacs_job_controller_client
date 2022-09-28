@@ -13,6 +13,7 @@ auto readClientConfig() -> nlohmann::json;
 auto acceptingConnections(uint16_t port) -> bool;
 auto generateUUID() -> std::string;
 void abortApplication();
+auto getBundlePath() -> std::string;
 
 
 #ifdef BUILD_TESTS

@@ -10,10 +10,15 @@
 #include <Python.h>
 #include <memory>
 #include "PythonInterface.h"
+#include "nlohmann/json.hpp"
 
 class BundleInterface {
 public:
-    BundleInterface(std::string bundlePath);
+    BundleInterface(const std::string& bundleHash);
+
+    auto run(std::string bundleFunction, nlohmann::json details, std::string jobData) -> PyObject *;
+    auto toString(PyObject*) -> std::string;
+    void disposeObject(PyObject*);
 
     void f(const char *tname);
 private:
@@ -22,6 +27,10 @@ private:
     PyObject *pGlobal;
     PyObject *pLocal;
     PyObject *pBundleModule;
+
+    PyObject *jsonModule;
+
+    PyObject *jsonLoads(const std::string& content);
 };
 
 

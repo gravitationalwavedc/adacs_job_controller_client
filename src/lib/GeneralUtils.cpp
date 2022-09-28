@@ -29,6 +29,10 @@ void abortApplication() {
 #endif
 }
 
+auto getBundlePath() -> std::string {
+    return (getExecutablePath() / "bundles" / "unpacked").string();
+}
+
 auto getExecutablePath() -> boost::filesystem::path {
     char result[PATH_MAX] = {0};
     ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);

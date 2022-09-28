@@ -167,6 +167,7 @@ add_executable(
         Websocket/tests/ping_pong_tests.cpp
         Files/tests/test_file_list.cpp
         tests/fixtures/TemporaryDirectoryFixture.h
+        tests/fixtures/BundleFixture.h
 )
 
 # Set the link libraries

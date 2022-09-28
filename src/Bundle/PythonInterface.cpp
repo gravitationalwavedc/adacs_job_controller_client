@@ -85,6 +85,13 @@ PYWRAP_1(PyEval_RestoreThread, PyThreadState *, state)
 PYWRAP_1(PyThreadState_Clear, PyThreadState *, state)
 PYWRAP_0(PyThreadState_DeleteCurrent)
 PYWRAP_0(PyEval_SaveThread)
+PYWRAP_1(PyObject_Repr, PyObject *, obj)
+PYWRAP_1(PyUnicode_AsUTF8, PyObject *, obj)
+PYWRAP_1(PyUnicode_FromString, const char *, obj)
+PYWRAP_1(PyImport_ImportModule, const char *, obj)
+PYWRAP_3(PyDict_Merge, PyObject*, mp, PyObject*, other, int, override)
+PYWRAP_1(PySys_GetObject, const char *, obj)
+PYWRAP_2(PyList_Append, PyObject *, list, PyObject *, item)
 
 // Python 3.8+ changed this to a function
 #if PY_MINOR_VERSION >= 8
@@ -93,7 +100,7 @@ PYWRAP_1(_Py_Dealloc, PyObject *, obj)
 // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
 }
 
-PythonInterface::PythonInterface(const std::string& sPythonLibrary) {
+void PythonInterface::initPython(const std::string& sPythonLibrary) {
     // Attempt to load the python dynamic library
     void *libHandle = dlopen(sPythonLibrary.c_str(), RTLD_NOW | RTLD_GLOBAL);
     if (libHandle == nullptr) {

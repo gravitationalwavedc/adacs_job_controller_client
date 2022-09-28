@@ -7,6 +7,7 @@
 #include "../lib/jobclient_schema.h"
 #include <cstdint>
 #include <boost/filesystem.hpp>
+#include "../Bundle/BundleManager.h"
 
 void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     // Get the job details
@@ -59,14 +60,11 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
             return;
         }
 
-
         // Get the working directory
         workingDirectory = job->workingDirectory;
     } else {
-        std::cerr << "Bundle interface not complete" << std::endl;
-        abort();
-//        auto bundle_path = get_bundle_path()
-//        working_directory = await run_bundle("working_directory", bundle_path, bundle_hash, dir_path, "file_list")
+        auto bundlePath = getBundlePath();
+        workingDirectory = BundleManager::Singleton()->runBundle("working_directory", bundleHash, dirPath, "file_list");
     }
 
     // Get the absolute path to the directory and check that the path exists

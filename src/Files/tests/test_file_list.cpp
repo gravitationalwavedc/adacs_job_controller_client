@@ -7,8 +7,9 @@
 #include "../../lib/jobclient_schema.h"
 #include "../../DB/SqliteConnector.h"
 #include "../../tests/fixtures/TemporaryDirectoryFixture.h"
+#include "../../tests/fixtures/BundleFixture.h"
 
-struct FileListTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture {
+struct FileListTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::string token;
     std::shared_ptr<Message> receivedMessage;
@@ -253,5 +254,93 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
         BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
         BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_list_no_job_outside_working_directory) {
+        auto bundleHash = generateUUID();
+        writeFileListNoJobWorkingDirectory(bundleHash, "/usr");
+
+        Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(0);
+        msg.push_string("some_uuid");
+        msg.push_string(bundleHash);
+        msg.push_string("../" + tempDir);
+        msg.push_bool(true);
+        msg.send(pWebsocketServerConnection);
+
+        promMessageReceived.get_future().wait();
+
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST_ERROR);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to list files is outside the working directory");
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_list_no_job_directory_not_exist) {
+        auto bundleHash = generateUUID();
+        writeFileListNoJobWorkingDirectory(bundleHash, tempDir);
+
+        Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(0);
+        msg.push_string("some_uuid");
+        msg.push_string(bundleHash);
+        msg.push_string(tempDir + "/not/real/");
+        msg.push_bool(true);
+        msg.send(pWebsocketServerConnection);
+
+        promMessageReceived.get_future().wait();
+
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST_ERROR);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to list files does not exist");
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_list_no_job_directory_is_a_file) {
+        auto bundleHash = generateUUID();
+        writeFileListNoJobWorkingDirectory(bundleHash, tempDir);
+
+        Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(0);
+        msg.push_string("some_uuid");
+        msg.push_string(bundleHash);
+        msg.push_string(boost::filesystem::path(tempFile).filename().string());
+        msg.push_bool(true);
+        msg.send(pWebsocketServerConnection);
+
+        promMessageReceived.get_future().wait();
+
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST_ERROR);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to list files is not a directory");
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_list_no_job_success) {
+        auto bundleHash = generateUUID();
+        writeFileListNoJobWorkingDirectory(bundleHash, tempDir);
+
+        Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(0);
+        msg.push_string("some_uuid");
+        msg.push_string(bundleHash);
+        msg.push_string("/");
+        msg.push_bool(true);
+        msg.send(pWebsocketServerConnection);
+
+        promMessageReceived.get_future().wait();
+
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
+        BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 3);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempDir2.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), true);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 0);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
+
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile.substr(tempDir.length()));
+        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 5);
     }
 BOOST_AUTO_TEST_SUITE_END()

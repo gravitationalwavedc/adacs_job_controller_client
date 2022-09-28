@@ -16,7 +16,7 @@
 
 class PythonInterface {
 public:
-    PythonInterface(const std::string& sPythonLibrary);
+    static void initPython(const std::string& sPythonLibrary);
     static auto getPythonLibHandle() -> void*;
 
 private:
