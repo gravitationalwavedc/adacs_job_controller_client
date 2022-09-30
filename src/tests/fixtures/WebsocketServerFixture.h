@@ -27,11 +27,11 @@ public:
     bool bServerConnectionClosed = true;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
-    WebsocketServerFixture() {
+    explicit WebsocketServerFixture(bool run = true) {
         websocketServer = std::make_shared<TestWsServer>();
         websocketServer->config.port = TEST_SERVER_PORT;
 
-        websocketServer->endpoint["^(.*?)$"].on_open = [&](auto connection) {
+        websocketServer->endpoint["^(.*?)$"].on_open = [&, run](auto connection) {
             bServerConnectionClosed = false;
             websocketServerConnectionPromise.set_value();
             pWebsocketServerConnection = connection;
@@ -40,13 +40,15 @@ public:
             Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
             msg.send(connection);
 
-            // Start the scheduler thread
-            clientThread = std::thread([&] {
-                while (clientRunning) {
-                    WebsocketInterface::Singleton()->callrun();
-                    WebsocketInterface::Singleton()->callpruneSources();
-                }
-            });
+            if (run) {
+                // Start the scheduler thread
+                clientThread = std::thread([&] {
+                    while (clientRunning) {
+                        WebsocketInterface::Singleton()->callrun();
+                        WebsocketInterface::Singleton()->callpruneSources();
+                    }
+                });
+            }
         };
 
         websocketServer->endpoint["^(.*?)$"].on_message = [&]([[maybe_unused]] auto connection, auto in_message) {

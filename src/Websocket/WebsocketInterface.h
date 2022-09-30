@@ -31,7 +31,7 @@ public:
     void stop();
 
     // virtual here so that we can override this function for testing
-    virtual void queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& data, Message::Priority priority);
+    virtual void queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& data, Message::Priority priority, std::function<void()> callback = [] {});
 
     void serverReady();
 
@@ -71,7 +71,11 @@ private:
     mutable std::mutex dataCVMutex;
     bool dataReady{};
     std::condition_variable dataCV;
-    std::vector<std::shared_ptr<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<std::shared_ptr<std::vector<uint8_t>>, false>>>>> queue;
+    struct sDataItem {
+        std::shared_ptr<std::vector<uint8_t>> data;
+        std::function<void()> callback;
+    };
+    std::vector<std::shared_ptr<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<sDataItem, false>>>>> queue;
 
     std::chrono::time_point<std::chrono::system_clock> pingTimestamp;
     std::chrono::time_point<std::chrono::system_clock> pongTimestamp;

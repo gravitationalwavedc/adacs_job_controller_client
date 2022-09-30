@@ -48,7 +48,7 @@ public:
     explicit Message(uint32_t msgId);
 #endif
 
-    Message(uint32_t msgId, Priority priority, const std::string& source);
+    Message(uint32_t msgId, Priority priority, const std::string& source, std::function<void()> callback = [] {});
     explicit Message(const std::vector<uint8_t>& vdata);
 
     void push_bool(bool value);
@@ -93,6 +93,7 @@ private:
     Priority priority = Priority::Lowest;
     std::string source;
     uint32_t id = 0;
+    std::function<void()> callback = [] {};
 
 EXPOSE_PROPERTY_FOR_TESTING(data);
 };

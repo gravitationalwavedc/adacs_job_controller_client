@@ -14,7 +14,8 @@ Message::Message(uint32_t msgId) : index(0), id(msgId) {
 }
 #endif
 
-Message::Message(uint32_t msgId, Message::Priority priority, const std::string& source) : priority(priority), index(0), source(source) {
+Message::Message(uint32_t msgId, Message::Priority priority, const std::string& source, std::function<void()> callback)
+: priority(priority), index(0), source(source), callback(callback) {
     data = std::make_shared<std::vector<uint8_t>>();
     data->reserve(MESSAGE_INITIAL_VECTOR_SIZE);
 
@@ -122,7 +123,7 @@ auto Message::pop_bytes() -> std::vector<uint8_t> {
 }
 
 void Message::send() {
-    WebsocketInterface::Singleton()->queueMessage(source, data, priority);
+    WebsocketInterface::Singleton()->queueMessage(source, data, priority, callback);
 }
 
 #ifdef BUILD_TESTS

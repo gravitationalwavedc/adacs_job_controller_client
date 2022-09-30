@@ -11,7 +11,7 @@ public:
     std::string token;
     std::vector<std::vector<uint8_t>> receivedMessages;
 
-    WebsocketInterfaceFixture() {
+    WebsocketInterfaceFixture() : WebsocketServerFixture(false) {
         token = generateUUID();
         WebsocketInterface::setSingleton(nullptr);
         WebsocketInterface::setSingleton(std::make_shared<WebsocketInterface>(token));
@@ -91,21 +91,21 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
         // s1 should have been put in the queue exactly once
         BOOST_CHECK_EQUAL(find_s1->second->size(), 1);
         // The found s1 should exactly equal s1_d1
-        BOOST_CHECK_EQUAL_COLLECTIONS((*find_s1->second->try_peek())->begin(), (*find_s1->second->try_peek())->end(),
+        BOOST_CHECK_EQUAL_COLLECTIONS((*find_s1->second->try_peek()).data->begin(), (*find_s1->second->try_peek()).data->end(),
                                       s1_d1->begin(), s1_d1->end());
 
         auto find_s2 = (*WebsocketInterface::Singleton()->getqueue())[Message::Priority::Lowest]->find("s2");
         // s2 should have been put in the queue exactly once
         BOOST_CHECK_EQUAL(find_s2->second->size(), 1);
         // The found s2 should exactly equal s2_d1
-        BOOST_CHECK_EQUAL_COLLECTIONS((*find_s2->second->try_peek())->begin(), (*find_s2->second->try_peek())->end(),
+        BOOST_CHECK_EQUAL_COLLECTIONS((*find_s2->second->try_peek()).data->begin(), (*find_s2->second->try_peek()).data->end(),
                                       s2_d1->begin(), s2_d1->end());
 
         auto find_s3 = (*WebsocketInterface::Singleton()->getqueue())[Message::Priority::Lowest]->find("s3");
         // s2 should have been put in the queue exactly once
         BOOST_CHECK_EQUAL(find_s3->second->size(), 1);
         // The found s2 should exactly equal s2_d1
-        BOOST_CHECK_EQUAL_COLLECTIONS((*find_s3->second->try_peek())->begin(), (*find_s3->second->try_peek())->end(),
+        BOOST_CHECK_EQUAL_COLLECTIONS((*find_s3->second->try_peek()).data->begin(), (*find_s3->second->try_peek()).data->end(),
                                       s3_d1->begin(), s3_d1->end());
 
         auto s1_d2 = generateRandomData(randomInt(0, 255));
@@ -122,14 +122,14 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
         // Test dequeuing gives the correct results
         auto data = find_s1->second->dequeue();
         // d should be the same reference as s1_d1
-        BOOST_CHECK_EQUAL(data == s1_d1, true);
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s1_d1->begin(), s1_d1->end());
+        BOOST_CHECK_EQUAL(data.data == s1_d1, true);
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s1_d1->begin(), s1_d1->end());
 
         data = find_s1->second->dequeue();
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s1_d2->begin(), s1_d2->end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s1_d2->begin(), s1_d2->end());
 
         data = find_s1->second->dequeue();
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s1_d3->begin(), s1_d3->end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s1_d3->begin(), s1_d3->end());
 
         auto s2_d2 = generateRandomData(randomInt(0, 255));
         WebsocketInterface::Singleton()->queueMessage("s2", s2_d2, Message::Priority::Lowest);
@@ -155,22 +155,22 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
 
         // Test dequeuing gives the correct results
         data = find_s2->second->dequeue();
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s2_d1->begin(), s2_d1->end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s2_d1->begin(), s2_d1->end());
 
         data = find_s2->second->dequeue();
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s2_d2->begin(), s2_d2->end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s2_d2->begin(), s2_d2->end());
 
         data = find_s2->second->dequeue();
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s2_d3->begin(), s2_d3->end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s2_d3->begin(), s2_d3->end());
 
         data = find_s3->second->dequeue();
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s3_d1->begin(), s3_d1->end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s3_d1->begin(), s3_d1->end());
 
         data = find_s3->second->dequeue();
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s3_d2->begin(), s3_d2->end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s3_d2->begin(), s3_d2->end());
 
         data = find_s3->second->dequeue();
-        BOOST_CHECK_EQUAL_COLLECTIONS(data->begin(), data->end(), s3_d3->begin(), s3_d3->end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s3_d3->begin(), s3_d3->end());
 
         // Check that after all data has been dequeued, that s1, s2, and s3 queues are empty
         BOOST_CHECK_EQUAL(find_s1->second->empty(), true);
@@ -234,9 +234,11 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
     BOOST_AUTO_TEST_CASE(test_run) {
         startClient();
 
+        bool cbCalled = false;
+
         // Create several sources and insert data in the queue
         auto s1_d1 = generateRandomData(randomInt(0, 255));
-        auto msg = Message(-1, Message::Priority::Highest, "s1");
+        auto msg = Message(-1, Message::Priority::Highest, "s1", [&] { cbCalled = true; });
         msg.push_bytes(*s1_d1);
         msg.send();
 
@@ -305,6 +307,9 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
         msg.push_bytes(*s6_d3);
         msg.send();
 
+        // Callback shouldn't be called yet
+        BOOST_CHECK_EQUAL(cbCalled, false);
+
         *WebsocketInterface::Singleton()->getdataReady() = true;
         WebsocketInterface::Singleton()->callrun();
 
@@ -313,6 +318,9 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
             // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
+
+        // Callback should now be called
+        BOOST_CHECK_EQUAL(cbCalled, true);
 
         // Check that the data sent was in priority/source order
         // The following order is deterministic - but sensitive.

@@ -70,7 +70,6 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     // Get the absolute path to the directory and check that the path exists
     try {
         dirPath = boost::filesystem::canonical(boost::filesystem::path(workingDirectory) / dirPath).string();
-        std::cout << "dirPath " << dirPath << std::endl;
     } catch (boost::filesystem::filesystem_error &error) {
         std::cout << "Path to list files does not exist "
                   << (boost::filesystem::path(workingDirectory) / dirPath).string() << std::endl;

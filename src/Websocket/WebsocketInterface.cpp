@@ -4,6 +4,8 @@
 
 #include "../lib/GeneralUtils.h"
 #include "WebsocketInterface.h"
+
+#include <utility>
 #include "../Settings.h"
 #include "../Core/MessageHandler.h"
 
@@ -17,7 +19,7 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
 
     // Create the list of priorities in order
     for (auto i = static_cast<uint32_t>(Message::Priority::Highest); i <= static_cast<uint32_t>(Message::Priority::Lowest); i++) {
-        queue.emplace_back(std::make_shared<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<std::shared_ptr<std::vector<uint8_t>>, false>>>>());
+        queue.emplace_back(std::make_shared<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<sDataItem, false>>>>());
     }
 
     auto config = readClientConfig();
@@ -123,7 +125,7 @@ auto WebsocketInterface::Singleton() -> std::shared_ptr<WebsocketInterface> {
     return singleton;
 }
 
-void WebsocketInterface::queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& pData, Message::Priority priority) {
+void WebsocketInterface::queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& pData, Message::Priority priority, std::function<void()> callback) {
     // Get a pointer to the relevant map
     auto *pMap = &queue[priority];
 
@@ -132,13 +134,13 @@ void WebsocketInterface::queueMessage(std::string source, const std::shared_ptr<
         std::shared_lock<std::shared_mutex> lock(mutex_);
 
         // Make sure that this source exists in the map
-        auto sQueue = std::make_shared<folly::UMPSCQueue<std::shared_ptr<std::vector<uint8_t>>, false>>();
+        auto sQueue = std::make_shared<folly::UMPSCQueue<sDataItem, false>>();
 
         // Make sure that the source is in the map
         pMap->get()->try_emplace(source, sQueue);
 
         // Write the data in the queue
-        (*pMap->get())[source]->enqueue(pData);
+        (*pMap->get())[source]->enqueue({pData, std::move(callback)});
 
         // Trigger the new data event to start sending
         this->dataReady = true;
@@ -236,8 +238,8 @@ void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-comple
                         // data should never be null as we're checking for empty
                         if (data) {
                             // Convert the message
-                            auto outMessage = std::make_shared<WsClient::OutMessage>((*data)->size());
-                            std::copy((*data)->begin(), (*data)->end(), std::ostream_iterator<uint8_t>(*outMessage));
+                            auto outMessage = std::make_shared<WsClient::OutMessage>((*data).data->size());
+                            std::copy((*data).data->begin(), (*data).data->end(), std::ostream_iterator<uint8_t>(*outMessage));
 
                             // Send the message on the websocket
                             if (pConnection != nullptr) {
@@ -259,6 +261,8 @@ void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-comple
                                         // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
                                         130
                                 );
+
+                                (*data).callback();
                             }
                         }
                     } catch (std::exception& exception) {

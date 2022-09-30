@@ -18,6 +18,9 @@ void handleMessage(const std::shared_ptr<Message>& message) {
         case FILE_LIST:
             handleFileList(message);
             break;
+        case DOWNLOAD_FILE:
+            handleFileDownload(message);
+            break;
         default:
             std::cerr << "Message Handler: Got unknown message ID from the server " << message->getId() << std::endl;
     }
