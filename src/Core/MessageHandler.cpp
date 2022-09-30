@@ -7,6 +7,7 @@
 #include "../Websocket/WebsocketInterface.h"
 #include "../Files/FileHandling.h"
 
+extern std::map<std::string, std::promise<void>> pausedFileTransfers;
 
 void handleMessage(const std::shared_ptr<Message>& message) {
     switch (message->getId()) {
@@ -21,6 +22,17 @@ void handleMessage(const std::shared_ptr<Message>& message) {
         case FILE_DOWNLOAD:
             handleFileDownload(message);
             break;
+        case PAUSE_FILE_CHUNK_STREAM:
+            pausedFileTransfers.try_emplace(message->pop_string(), std::promise<void>());
+            break;
+        case RESUME_FILE_CHUNK_STREAM: {
+            auto prom = pausedFileTransfers.find(message->pop_string());
+            if (prom != pausedFileTransfers.end()) {
+                prom->second.set_value();
+                pausedFileTransfers.erase(prom);
+            }
+            break;
+        }
         default:
             std::cerr << "Message Handler: Got unknown message ID from the server " << message->getId() << std::endl;
     }

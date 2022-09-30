@@ -141,12 +141,11 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             }
 
             // Read the next chunk and send it to the server
-            std::vector<uint8_t> data;
+            std::vector<uint8_t> data(CHUNK_SIZE);
             if (fileSize > CHUNK_SIZE) {
-                data.reserve(CHUNK_SIZE);
                 file.read(reinterpret_cast<char*>(data.data()), CHUNK_SIZE);
             } else {
-                data.reserve(fileSize);
+                data.resize(fileSize);
                 file.read(reinterpret_cast<char*>(data.data()), fileSize);
             }
 
@@ -154,17 +153,17 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             // pause file transfers), we create an event that we wait for on every nth packet, and don't
             // transfer any more packets until the marked packet has been sent. There will always be some
             // amount of buffer overrun on the server, but at localhost speeds it's about 8Mb which is tolerable
-            auto event = std::promise<void>();
+            auto event = std::make_shared<std::promise<void>>();
 
             // Send the packet to the scheduler
-            result = Message(FILE_CHUNK, Message::Priority::Lowest, uuid, [&] { event.set_value(); });
+            result = Message(FILE_CHUNK, Message::Priority::Lowest, uuid, [event] { event->set_value(); });
             result.push_string(uuid);
             result.push_bytes(data);
             result.send();
 
             // If this is the nth packet, wait for it to be sent before sending additional packets
             if (packetCount % CHUNK_WAIT_COUNT == 0) {
-                event.get_future().wait();
+                event->get_future().wait();
             }
 
             // Update counters

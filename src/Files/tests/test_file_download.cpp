@@ -9,11 +9,12 @@
 #include "../../tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../tests/fixtures/BundleFixture.h"
 
+extern std::map<std::string, std::promise<void>> pausedFileTransfers;
+
 struct FileDownloadTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::string token;
-    std::shared_ptr<Message> receivedMessage;
-    std::promise<void> promMessageReceived;
+    std::queue<std::shared_ptr<Message>> receivedMessages;
     uint64_t jobId;
     std::string symlinkDir = createTemporaryDirectory();
     std::string symlinkFile = createTemporaryFile(symlinkDir);
@@ -23,6 +24,7 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
     std::string tempFile2 = createTemporaryFile(tempDir2);
     SqliteConnector database = SqliteConnector();
     schema::JobclientJob jobTable;
+    std::chrono::time_point<std::chrono::system_clock> lastMessageTime;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     FileDownloadTestDataFixture() {
@@ -74,9 +76,91 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
 
     void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) {
         auto stringData = message->string();
-        receivedMessage = std::make_shared<Message>(std::vector<uint8_t>(stringData.begin(), stringData.end()));
-        promMessageReceived.set_value();
-        promMessageReceived = std::promise<void>();
+        receivedMessages.push( std::make_shared<Message>(std::vector<uint8_t>(stringData.begin(), stringData.end())));
+        lastMessageTime = std::chrono::system_clock::now();
+    }
+
+    std::shared_ptr<std::vector<uint8_t>> writeFileData() {
+        // Write out some random data to one of the temp files
+        std::ofstream file(tempFile2, std::ios::trunc | std::ios::binary);
+
+        // Data size between 64Mb and 128Mb
+        auto dataLength = randomInt(1024ULL*1024ULL*64ULL, 1024ULL*1024ULL*128ULL);
+        auto fileData = generateRandomData(dataLength);
+
+        file.write(reinterpret_cast<char*>(fileData->data()), fileData->size());
+        file.flush();
+        file.close();
+
+        return fileData;
+    }
+
+    void doFileDownload(std::shared_ptr<std::vector<uint8_t>> fileData, std::string downloadUuid) {
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
+
+        auto receivedMessage = receivedMessages.front();
+        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_DETAILS);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), downloadUuid);
+        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), fileData->size());
+
+        // Clean up the front of the queue
+        receivedMessages.pop();
+
+        // Wait for the entire file to be sent
+        std::vector<uint8_t> dataReceived;
+        dataReceived.reserve(fileData->size());
+
+        auto bPaused = false;
+        auto bPauseChecked = false;
+        std::chrono::time_point<std::chrono::system_clock> pauseTime;
+
+        while (dataReceived.size() < fileData->size()) {
+            // Spin waiting for the next message
+            while (receivedMessages.empty()) {
+                if (bPauseChecked) {
+                    continue;
+                }
+
+                // If we've been paused for more than a second, check that the client didn't continue sending packets
+                auto now = std::chrono::system_clock::now();
+                if (bPaused && std::chrono::duration_cast<std::chrono::milliseconds>(now - pauseTime).count() > 1000) {
+                    BOOST_CHECK_MESSAGE(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(now - lastMessageTime).count() > 500,
+                            "Client should have stopped sending packets while paused"
+                    );
+
+                    // Resume the transfer
+                    Message msg(RESUME_FILE_CHUNK_STREAM, Message::Priority::Highest, SYSTEM_SOURCE);
+                    msg.push_string(downloadUuid);
+                    msg.send(pWebsocketServerConnection);
+
+                    bPauseChecked = true;
+                }
+            };
+
+            auto msg = receivedMessages.front();
+            if (msg->pop_string() != downloadUuid) {
+                BOOST_FAIL("Download UUID didn't match");
+                return;
+            }
+
+            auto data = msg->pop_bytes();
+            dataReceived.insert(dataReceived.end(), data.begin(), data.end());
+
+            receivedMessages.pop();
+
+            // Test pausing if we have to
+            if (!bPaused) {
+                bPaused = true;
+                Message msg(PAUSE_FILE_CHUNK_STREAM, Message::Priority::Highest, SYSTEM_SOURCE);
+                msg.push_string(downloadUuid);
+                msg.send(pWebsocketServerConnection);
+                pauseTime = std::chrono::system_clock::now();
+            }
+        }
+
+        BOOST_CHECK_EQUAL_COLLECTIONS(dataReceived.begin(), dataReceived.end(), fileData->begin(), fileData->end());
     }
 };
 
@@ -89,8 +173,10 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string(tempFile);
         msg.send(pWebsocketServerConnection);
 
-        promMessageReceived.get_future().wait();
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
 
+        auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Job does not exist");
@@ -106,8 +192,10 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string(tempFile);
         msg.send(pWebsocketServerConnection);
 
-        promMessageReceived.get_future().wait();
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
 
+        auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Job is not submitted");
@@ -123,8 +211,10 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string("../" + tempFile);
         msg.send(pWebsocketServerConnection);
 
-        promMessageReceived.get_future().wait();
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
 
+        auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download is outside the working directory");
@@ -138,8 +228,10 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string(tempFile + ".not.real");
         msg.send(pWebsocketServerConnection);
 
-        promMessageReceived.get_future().wait();
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
 
+        auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download does not exist");
@@ -153,40 +245,14 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string(boost::filesystem::path(tempDir2).filename().string());
         msg.send(pWebsocketServerConnection);
 
-        promMessageReceived.get_future().wait();
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
 
+        auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download is not a file");
     }
-
-//    BOOST_AUTO_TEST_CASE(test_get_file_download_job_success_recursive) {
-//        Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
-//        msg.push_int(jobId);
-//        msg.push_string("some_uuid");
-//        msg.push_string("some_bundle_hash");
-//        msg.push_string("/");
-//        msg.push_bool(true);
-//        msg.send(pWebsocketServerConnection);
-//
-//        promMessageReceived.get_future().wait();
-//
-//        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD);
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 3);
-//
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempDir2.substr(tempDir.length()));
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), true);
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 0);
-//
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
-//
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile.substr(tempDir.length()));
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 5);
-//    }
 
     BOOST_AUTO_TEST_CASE(test_get_file_download_no_job_outside_working_directory) {
         auto bundleHash = generateUUID();
@@ -199,8 +265,10 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string("../" + tempFile);
         msg.send(pWebsocketServerConnection);
 
-        promMessageReceived.get_future().wait();
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
 
+        auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download is outside the working directory");
@@ -217,8 +285,10 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string(tempFile + ".not.real");
         msg.send(pWebsocketServerConnection);
 
-        promMessageReceived.get_future().wait();
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
 
+        auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download does not exist");
@@ -235,41 +305,45 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string(boost::filesystem::path(tempDir2).filename().string());
         msg.send(pWebsocketServerConnection);
 
-        promMessageReceived.get_future().wait();
+        // Spin waiting for the next message
+        while (receivedMessages.empty()) {};
 
+        auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download is not a file");
     }
 
-//    BOOST_AUTO_TEST_CASE(test_get_file_download_no_job_success) {
-//        auto bundleHash = generateUUID();
-//        writeFileListNoJobWorkingDirectory(bundleHash, tempDir);
-//
-//        Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
-//        msg.push_int(0);
-//        msg.push_string("some_uuid");
-//        msg.push_string(bundleHash);
-//        msg.push_string("/");
-//        msg.push_bool(true);
-//        msg.send(pWebsocketServerConnection);
-//
-//        promMessageReceived.get_future().wait();
-//
-//        BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD);
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 3);
-//
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempDir2.substr(tempDir.length()));
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), true);
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 0);
-//
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
-//
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile.substr(tempDir.length()));
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-//        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 5);
-//    }
+    BOOST_AUTO_TEST_CASE(test_get_file_download_job_success) {
+        auto fileData = writeFileData();
+
+        auto downloadUuid = generateUUID();
+
+        Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(jobId);
+        msg.push_string(downloadUuid);
+        msg.push_string("some_bundle_hash");
+        msg.push_string(tempFile2.substr(tempDir.length()));
+        msg.send(pWebsocketServerConnection);
+
+        doFileDownload(fileData, downloadUuid);
+    }
+
+    BOOST_AUTO_TEST_CASE(test_get_file_download_no_job_success) {
+        auto bundleHash = generateUUID();
+        writeFileListNoJobWorkingDirectory(bundleHash, tempDir);
+
+        auto fileData = writeFileData();
+
+        auto downloadUuid = generateUUID();
+
+        Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
+        msg.push_int(0);
+        msg.push_string(downloadUuid);
+        msg.push_string(bundleHash);
+        msg.push_string(tempFile2.substr(tempDir.length()));
+        msg.send(pWebsocketServerConnection);
+
+        doFileDownload(fileData, downloadUuid);
+    }
 BOOST_AUTO_TEST_SUITE_END()
