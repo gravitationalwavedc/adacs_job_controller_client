@@ -25,9 +25,9 @@ constexpr uint32_t UPDATE_JOB = 2001;
 constexpr uint32_t CANCEL_JOB = 2002;
 constexpr uint32_t DELETE_JOB = 2003;
 
-constexpr uint32_t DOWNLOAD_FILE = 4000;
-constexpr uint32_t FILE_DETAILS = 4001;
-constexpr uint32_t FILE_ERROR = 4002;
+constexpr uint32_t FILE_DOWNLOAD = 4000;
+constexpr uint32_t FILE_DOWNLOAD_DETAILS = 4001;
+constexpr uint32_t FILE_DOWNLOAD_ERROR = 4002;
 constexpr uint32_t FILE_CHUNK = 4003;
 constexpr uint32_t PAUSE_FILE_CHUNK_STREAM = 4004;
 constexpr uint32_t RESUME_FILE_CHUNK_STREAM = 4005;

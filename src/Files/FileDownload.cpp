@@ -43,7 +43,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             std::cout << "Job does not exist with ID " << jobId << std::endl;
 
             // Report that the job doesn't exist
-            auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
+            auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
             result.push_string(uuid);
             result.push_string("Job does not exist");
             result.send();
@@ -56,7 +56,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             std::cout << "Job " << jobId << " is submitting, nothing to do" << std::endl;
 
             // Report that the job hasn't been submitted
-            auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
+            auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
             result.push_string(uuid);
             result.push_string("Job is not submitted");
             result.send();
@@ -72,8 +72,9 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
     }
 
     // Make sure that there is no leading slash on the file path
-    while (!filePath.empty() and filePath[0] == '/')
+    while (!filePath.empty() and filePath[0] == '/') {
         filePath = filePath.substr(1);
+    }
 
     // Get the absolute path to the file and check that the path exists
     try {
@@ -83,7 +84,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
                   << (boost::filesystem::path(workingDirectory) / filePath).string() << std::endl;
 
         // Report that the file doesn't exist
-        auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
+        auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
         result.push_string(uuid);
         result.push_string("Path to file download does not exist");
         result.send();
@@ -94,7 +95,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
         std::cout << "Path to file download is outside the working directory " << filePath << std::endl;
 
         // Report that the file doesn't exist
-        auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
+        auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
         result.push_string(uuid);
         result.push_string("Path to file download is outside the working directory");
         result.send();
@@ -106,7 +107,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
         std::cout << "Path to file download is not a file " << filePath << std::endl;
 
         // Report that the file doesn't exist
-        auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
+        auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
         result.push_string(uuid);
         result.push_string("Path to file download is not a file");
         result.send();
@@ -120,7 +121,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
     auto fileSize = boost::filesystem::file_size(filePath);
 
     // Send the file size to the server
-    auto result = Message(FILE_DETAILS, Message::Priority::Highest, uuid);
+    auto result = Message(FILE_DOWNLOAD_DETAILS, Message::Priority::Highest, uuid);
     result.push_string(uuid);
     result.push_ulong(fileSize);
     result.send();
@@ -162,7 +163,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             result.send();
 
             // If this is the nth packet, wait for it to be sent before sending additional packets
-            if (packetCount % 10 == 0) {
+            if (packetCount % CHUNK_WAIT_COUNT == 0) {
                 event.get_future().wait();
             }
 
@@ -177,7 +178,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
         std::cerr << error.what() << std::endl;
 
         // Report that there was a file exception
-        result = Message(FILE_ERROR, Message::Priority::Highest, uuid);
+        result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
         result.push_string(uuid);
         result.push_string("Exception reading file");
         result.send();

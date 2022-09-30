@@ -11,10 +11,7 @@
 #include "../../lib/GeneralUtils.h"
 #include <boost/filesystem.hpp>
 
-std::string fileListNoJobWorkingDirectoryScript = R"PY(
-def working_directory(details, job_data):
-    return "xxx"
-)PY";
+extern std::string fileListNoJobWorkingDirectoryScript;
 
 class BundleFixture {
 private:

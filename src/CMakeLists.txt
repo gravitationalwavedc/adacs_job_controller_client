@@ -168,6 +168,8 @@ add_executable(
         Files/tests/test_file_list.cpp
         tests/fixtures/TemporaryDirectoryFixture.h
         tests/fixtures/BundleFixture.h
+        Files/tests/test_file_download.cpp
+        tests/fixtures/BundleFixture.cpp
 )
 
 # Set the link libraries

@@ -18,7 +18,7 @@ void handleMessage(const std::shared_ptr<Message>& message) {
         case FILE_LIST:
             handleFileList(message);
             break;
-        case DOWNLOAD_FILE:
+        case FILE_DOWNLOAD:
             handleFileDownload(message);
             break;
         default:
