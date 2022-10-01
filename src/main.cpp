@@ -3,14 +3,7 @@
 #include "Websocket/WebsocketInterface.h"
 
 
-int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Please provide the websocket token to connect with." << std::endl;
-        return 1;
-    }
-
-    auto wsToken = std::string(argv[1]);
-
+int run(std::string wsToken) {
     auto bundleManager = std::make_shared<BundleManager>();
 
     // Start and connect the websocket
@@ -50,4 +43,62 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Hello, World!" << std::endl;
     return 0;
+}
+
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        std::cerr << "Please provide the websocket token to connect with." << std::endl;
+        return 1;
+    }
+
+    auto wsToken = std::string(argv[1]);
+
+    /*
+        do the UNIX double-fork magic, see Stevens' "Advanced
+        Programming in the UNIX Environment" for details (ISBN 0201563177)
+        http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
+    */
+
+    auto pid = fork();
+    if (pid > 0) {
+        // exit first parent
+        return 0;
+    }
+
+    if (pid == -1) {
+        std::cerr << "fork #1 failed" << std::endl;
+        return 1;
+    }
+
+    // decouple from parent environment
+    chdir("/");
+    setsid();
+    umask(0);
+
+    // do second fork
+    pid = fork();
+    if (pid > 0) {
+        // exit from second parent
+        return 0;
+    }
+
+    if (pid == -1) {
+        std::cerr << "fork #2 failed" << std::endl;
+        return 1;
+    }
+
+    // redirect standard file descriptors
+    std::cout << std::flush;
+    std::cerr << std::flush;
+
+    auto si = open((const char*) STDIN_FILENO, O_RDONLY);
+    auto so = open((const char*) STDOUT_FILENO, O_APPEND | O_WRONLY);
+    auto se = open((const char*) STDERR_FILENO, O_APPEND | O_WRONLY);
+
+    dup2(si, STDIN_FILENO);
+    dup2(so, STDOUT_FILENO);
+    dup2(se, STDERR_FILENO);
+
+    return run(wsToken);
 }
