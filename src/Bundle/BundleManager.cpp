@@ -23,11 +23,21 @@ auto BundleManager::Singleton() -> std::shared_ptr<BundleManager> {
     return singleton;
 }
 
-auto BundleManager::runBundle(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> std::string {
+auto BundleManager::runBundle_string(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> std::string {
     auto bundle = loadBundle(bundleHash);
 
     auto resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->toString(resultObject);
+    bundle->disposeObject(resultObject);
+
+    return result;
+}
+
+auto BundleManager::runBundle_uint64(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> uint64_t {
+    auto bundle = loadBundle(bundleHash);
+
+    auto resultObject = bundle->run(bundleFunction, details, jobData);
+    auto result = bundle->toUint64(resultObject);
     bundle->disposeObject(resultObject);
 
     return result;

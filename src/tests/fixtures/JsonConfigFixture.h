@@ -15,7 +15,8 @@ public:
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     nlohmann::json clientConfig = {
             {"websocketEndpoint", TEST_SERVER_URL},
-            {"pythonLibrary", "libpython3.so"}
+            {"pythonLibrary", "libpython3.so"},
+            {"cluster", "test_cluster"}
     };
     std::string clientConfigFile = (getExecutablePath() / CLIENT_CONFIG_FILE).string();
     // NOLINTEND(misc-non-private-member-variables-in-classes)

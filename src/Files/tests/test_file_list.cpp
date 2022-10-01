@@ -8,8 +8,9 @@
 #include "../../DB/SqliteConnector.h"
 #include "../../tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../tests/fixtures/BundleFixture.h"
+#include "../../tests/fixtures/DatabaseFixture.h"
 
-struct FileListTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
+struct FileListTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture, public DatabaseFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::string token;
     std::shared_ptr<Message> receivedMessage;
@@ -21,8 +22,6 @@ struct FileListTestDataFixture : public WebsocketServerFixture, public Temporary
     std::string tempFile = createTemporaryFile(tempDir);
     std::string tempDir2 = createTemporaryDirectory(tempDir);
     std::string tempFile2 = createTemporaryFile(tempDir2);
-    SqliteConnector database = SqliteConnector();
-    schema::JobclientJob jobTable;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     FileListTestDataFixture() {

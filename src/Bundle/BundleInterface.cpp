@@ -148,6 +148,10 @@ auto BundleInterface::toString(PyObject *value) -> std::string {
     return std::string{PyUnicode_AsUTF8(value)};
 }
 
+auto BundleInterface::toUint64(PyObject *value) -> uint64_t {
+    return PyLong_AsLong(value);
+}
+
 void BundleInterface::disposeObject(PyObject* object) {
     Py_DECREF(object);
 }

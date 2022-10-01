@@ -17,7 +17,8 @@ public:
 
     static auto Singleton() -> std::shared_ptr<BundleManager>;
 
-    auto runBundle(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> std::string;
+    auto runBundle_string(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> std::string;
+    auto runBundle_uint64(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> uint64_t;
 
 private:
     std::shared_ptr<BundleInterface> loadBundle(std::string bundleHash);

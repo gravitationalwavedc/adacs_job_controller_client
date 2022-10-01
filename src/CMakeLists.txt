@@ -163,6 +163,10 @@ set(
         lib/Exceptions/segvcatch.h
         lib/Exceptions/segvcatch.cpp
         lib/Exceptions/x86_64-signal.h
+        Jobs/Submit.cpp
+        Jobs/JobHandling.h
+        Jobs/CheckStatus.cpp
+        lib/JobStatus.h
 )
 
 # Set the main executable and source files
@@ -189,6 +193,8 @@ add_executable(
         tests/fixtures/BundleFixture.h
         Files/tests/test_file_download.cpp
         tests/fixtures/BundleFixture.cpp
+        Jobs/tests/test_job_submit.cpp
+        tests/fixtures/DatabaseFixture.h
 )
 
 # Set the link libraries

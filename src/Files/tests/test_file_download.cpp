@@ -8,10 +8,11 @@
 #include "../../DB/SqliteConnector.h"
 #include "../../tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../tests/fixtures/BundleFixture.h"
+#include "../../tests/fixtures/DatabaseFixture.h"
 
 extern std::map<std::string, std::promise<void>> pausedFileTransfers;
 
-struct FileDownloadTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
+struct FileDownloadTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture, public DatabaseFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::string token;
     std::queue<std::shared_ptr<Message>> receivedMessages;
@@ -22,8 +23,6 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
     std::string tempFile = createTemporaryFile(tempDir);
     std::string tempDir2 = createTemporaryDirectory(tempDir);
     std::string tempFile2 = createTemporaryFile(tempDir2);
-    SqliteConnector database = SqliteConnector();
-    schema::JobclientJob jobTable;
     std::chrono::time_point<std::chrono::system_clock> lastMessageTime;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 

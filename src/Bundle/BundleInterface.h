@@ -18,6 +18,7 @@ public:
 
     auto run(std::string bundleFunction, nlohmann::json details, std::string jobData) -> PyObject *;
     auto toString(PyObject*) -> std::string;
+    uint64_t toUint64(PyObject *value);
     void disposeObject(PyObject*);
 
     void f(const char *tname);

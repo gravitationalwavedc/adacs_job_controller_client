@@ -64,7 +64,8 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
         workingDirectory = job->workingDirectory;
     } else {
         auto bundlePath = getBundlePath();
-        workingDirectory = BundleManager::Singleton()->runBundle("working_directory", bundleHash, dirPath, "file_list");
+        workingDirectory = BundleManager::Singleton()->runBundle_string("working_directory", bundleHash, dirPath,
+                                                                        "file_list");
     }
 
     // Get the absolute path to the directory and check that the path exists
@@ -160,7 +161,7 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     auto result = Message(FILE_LIST, Message::Priority::Highest, uuid);
     result.push_string(uuid);
     result.push_uint(fileList.size());
-    for (const auto& file : fileList) {
+    for (const auto &file: fileList) {
         result.push_string(file.path);
         result.push_bool(file.isDir);
         result.push_ulong(file.size);

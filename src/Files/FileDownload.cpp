@@ -67,8 +67,8 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
         workingDirectory = job->workingDirectory;
     } else {
         auto bundlePath = getBundlePath();
-        workingDirectory = BundleManager::Singleton()->runBundle("working_directory", bundleHash, filePath,
-                                                                 "file_download");
+        workingDirectory = BundleManager::Singleton()->runBundle_string("working_directory", bundleHash, filePath,
+                                                                        "file_download");
     }
 
     // Make sure that there is no leading slash on the file path
@@ -143,10 +143,10 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             // Read the next chunk and send it to the server
             std::vector<uint8_t> data(CHUNK_SIZE);
             if (fileSize > CHUNK_SIZE) {
-                file.read(reinterpret_cast<char*>(data.data()), CHUNK_SIZE);
+                file.read(reinterpret_cast<char *>(data.data()), CHUNK_SIZE);
             } else {
                 data.resize(fileSize);
-                file.read(reinterpret_cast<char*>(data.data()), fileSize);
+                file.read(reinterpret_cast<char *>(data.data()), fileSize);
             }
 
             // Since we don't want to flood the packet scheduler (So that we can give the server a chance to

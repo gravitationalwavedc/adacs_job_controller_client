@@ -6,6 +6,7 @@
 #include "MessageHandler.h"
 #include "../Websocket/WebsocketInterface.h"
 #include "../Files/FileHandling.h"
+#include "../Jobs/JobHandling.h"
 
 extern std::map<std::string, std::promise<void>> pausedFileTransfers;
 
@@ -37,6 +38,10 @@ void handleMessage(const std::shared_ptr<Message>& message) {
             }
             break;
         }
+        case SUBMIT_JOB:
+            // Submit a job
+            handleJobSubmit(message);
+            break;
         default:
             std::cerr << "Message Handler: Got unknown message ID from the server " << message->getId() << std::endl;
     }
