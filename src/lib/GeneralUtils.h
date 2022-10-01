@@ -14,7 +14,7 @@ auto acceptingConnections(uint16_t port) -> bool;
 auto generateUUID() -> std::string;
 void abortApplication();
 auto getBundlePath() -> std::string;
-
+void dumpExceptions(std::exception& exception);
 
 #ifdef BUILD_TESTS
 // NOLINTBEGIN

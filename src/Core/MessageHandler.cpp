@@ -17,15 +17,19 @@ void handleMessage(const std::shared_ptr<Message>& message) {
             WebsocketInterface::Singleton()->serverReady();
             break;
         case FILE_LIST:
+            // List all files in a directory
             handleFileList(message);
             break;
         case FILE_DOWNLOAD:
+            // Download a file
             handleFileDownload(message);
             break;
         case PAUSE_FILE_CHUNK_STREAM:
+            // Pause a file download (Remote end's transmission buffer is above the "high" threshold)
             pausedFileTransfers.try_emplace(message->pop_string(), std::promise<void>());
             break;
         case RESUME_FILE_CHUNK_STREAM: {
+            // Resume a file download (Remote end's transmission buffer is below the "low" threshold)
             auto prom = pausedFileTransfers.find(message->pop_string());
             if (prom != pausedFileTransfers.end()) {
                 prom->second.set_value();

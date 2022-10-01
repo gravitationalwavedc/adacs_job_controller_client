@@ -37,3 +37,12 @@
 [submodule "src/third_party/sqlite3-cmake"]
 	path = src/third_party/sqlite3-cmake
 	url = https://github.com/alex85k/sqlite3-cmake.git
+[submodule "src/third_party/libdwarf-code"]
+	path = src/third_party/libdwarf-code
+	url = https://github.com/davea42/libdwarf-code.git
+[submodule "src/third_party/mempatch"]
+	path = src/third_party/mempatch
+	url = https://github.com/niv/mempatch.git
+[submodule "src/third_party/elfutils"]
+	path = src/third_party/elfutils
+	url = git://sourceware.org/git/elfutils.git

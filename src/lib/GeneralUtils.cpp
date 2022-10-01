@@ -4,6 +4,7 @@
 
 #include "../Settings.h"
 #include "GeneralUtils.h"
+#include "Exceptions/my_exception_tracer_lib.h"
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -14,6 +15,7 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <iostream>
+#include <folly/experimental/exception_tracer/ExceptionTracer.h>
 
 #ifdef BUILD_TESTS
 bool applicationAborted = false;
@@ -76,4 +78,13 @@ auto acceptingConnections(uint16_t port) -> bool {
 
 auto generateUUID() -> std::string {
     return boost::lexical_cast<std::string>(boost::uuids::random_generator()());
+}
+
+void dumpExceptions(std::exception& exception) {
+    folly::exception_tracer::getCxaRethrowCallbacks().invoke();
+    std::cerr << "--- Exception: " << exception.what() << std::endl;
+    auto exceptions = folly::exception_tracer::getCurrentExceptions();
+    for (auto& exc : exceptions) {
+        std::cerr << exc << "\n";
+    }
 }

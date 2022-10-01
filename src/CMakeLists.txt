@@ -49,7 +49,6 @@ set(HinnantDate_INCLUDE_DIR Lib/date/include)
 set(ENABLE_TESTS Off)
 set(ENABLE_DATE_TESTING Off)
 set(CMAKE_LIBRARY_ARCHITECTURE "x86_64-linux-gnu")
-set(FOLLY_NO_EXCEPTION_TRACER ON)
 
 set(Boost_NO_WARN_NEW_VERSIONS ON)
 set(BOOST_ROOT ${CMAKE_SOURCE_DIR}/third_party/boost_install)
@@ -75,6 +74,10 @@ set(WITH_UNWIND OFF)
 set(Glog_ROOT ${CMAKE_SOURCE_DIR}/third_party/glog)
 set(Glog_LIBRARY ${CMAKE_BINARY_DIR}/third_party/glog/libglogd.a)
 
+set(LIBDWARF_LIBRARIES ${CMAKE_SOURCE_DIR}/third_party/elfutils_install/lib/libdw.a)
+set(LIBDWARF_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/third_party/elfutils_install/include/)
+set(LIBDWARF_FOUND TRUE)
+
 # Set up boost
 set(Boost_USE_STATIC_LIBS ON)
 set(Boost_USE_MULTITHREAD ON)
@@ -91,6 +94,8 @@ include_directories(
         third_party/fmt/include
         third_party/libevent/include
         third_party/sqlite3-cmake/src
+        third_party/mempatch
+        third_party/elfutils_install/include
         ${CMAKE_BINARY_DIR}/third_party/folly
         ${CMAKE_BINARY_DIR}/third_party/openssl-cmake/include
         ${CMAKE_BINARY_DIR}/third_party/glog
@@ -109,7 +114,9 @@ add_subdirectory(third_party/glog)
 
 file(REMOVE third_party/folly/build/fbcode_builder/CMake/FindGlog.cmake)
 file(REMOVE third_party/folly/build/fbcode_builder/CMake/FindGflags.cmake)
+file(WRITE third_party/folly/folly/experimental/exception_tracer/ExceptionTracerLib.cpp "")
 set(LIBGFLAGS_FOUND FALSE)
+
 add_subdirectory(third_party/folly)
 
 add_subdirectory(third_party/fmt)
@@ -121,6 +128,8 @@ add_subdirectory(third_party/Simple-WebSocket-Server)
 add_subdirectory(third_party/sqlpp11)
 
 add_subdirectory(third_party/sqlite3-cmake)
+
+add_subdirectory(third_party/mempatch)
 
 # Define the source files
 set(
@@ -144,6 +153,16 @@ set(
         Files/FileHandling.h
         lib/jobclient_schema.h
         DB/SqliteConnector.h
+        lib/Exceptions/my_eh_throw.cpp
+        lib/Exceptions/unwind-cxx.h
+        lib/Exceptions/eh_atomics.h
+        lib/Exceptions/my_exception_tracer_lib.h
+        lib/Exceptions/my_eh_ptr.cpp
+        lib/Exceptions/my_eh_catch.cpp
+        lib/Exceptions/my_exception_tracer_lib.cpp
+        lib/Exceptions/segvcatch.h
+        lib/Exceptions/segvcatch.cpp
+        lib/Exceptions/x86_64-signal.h
 )
 
 # Set the main executable and source files
@@ -181,6 +200,10 @@ set(
         folly
         double-conversion
         sqlite3
+        mempatch
+        event
+        ${CMAKE_SOURCE_DIR}/third_party/elfutils_install/lib/libdw.a
+        ${CMAKE_SOURCE_DIR}/third_party/elfutils_install/lib/libelf.a
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_filesystem.a
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_unit_test_framework.a
         ${Glog_LIBRARY}

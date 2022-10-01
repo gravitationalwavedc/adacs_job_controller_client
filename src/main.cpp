@@ -2,6 +2,7 @@
 #include "Bundle/BundleManager.h"
 #include "Websocket/WebsocketInterface.h"
 
+
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         std::cerr << "Please provide the websocket token to connect with." << std::endl;

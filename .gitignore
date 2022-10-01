@@ -2,6 +2,7 @@
 src/cmake-build-debug
 src/cmake-build-release
 src/third_party/boost_install
+src/third_party/elfutils_install
 out
 venv
 __pycache__
