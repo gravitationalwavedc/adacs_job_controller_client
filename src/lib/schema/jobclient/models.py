@@ -29,7 +29,7 @@ class Job(models.Model):
     running = models.BooleanField(default=True)
 
 
-class JobStatusModel(models.Model):
+class JobStatus(models.Model):
     # The job this status object is for
     job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='status')
 

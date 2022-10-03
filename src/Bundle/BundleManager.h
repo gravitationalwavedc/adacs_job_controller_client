@@ -19,6 +19,7 @@ public:
 
     auto runBundle_string(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> std::string;
     auto runBundle_uint64(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> uint64_t;
+    auto runBundle_json(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> nlohmann::json;
 
 private:
     std::shared_ptr<BundleInterface> loadBundle(std::string bundleHash);

@@ -18,7 +18,8 @@ public:
 
     auto run(std::string bundleFunction, nlohmann::json details, std::string jobData) -> PyObject *;
     auto toString(PyObject*) -> std::string;
-    uint64_t toUint64(PyObject *value);
+    auto toUint64(PyObject *value) -> uint64_t;
+    auto jsonDumps(PyObject *obj) -> std::string;
     void disposeObject(PyObject*);
 
     void f(const char *tname);
@@ -35,7 +36,7 @@ private:
 
     PyObject *jsonModule;
 
-    PyObject *jsonLoads(const std::string& content);
+    auto jsonLoads(const std::string& content) -> PyObject *;
 };
 
 

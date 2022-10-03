@@ -36,8 +36,19 @@ auto BundleManager::runBundle_string(std::string bundleFunction, std::string bun
 auto BundleManager::runBundle_uint64(std::string bundleFunction, std::string bundleHash, nlohmann::json details, std::string jobData) -> uint64_t {
     auto bundle = loadBundle(bundleHash);
 
-    auto resultObject = bundle->run(bundleFunction, details, jobData);
+    auto *resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->toUint64(resultObject);
+    bundle->disposeObject(resultObject);
+
+    return result;
+}
+
+auto BundleManager::runBundle_json(std::string bundleFunction, std::string bundleHash, nlohmann::json details,
+                                   std::string jobData) -> nlohmann::json {
+    auto bundle = loadBundle(bundleHash);
+
+    auto *resultObject = bundle->run(bundleFunction, details, jobData);
+    auto result = bundle->jsonDumps(resultObject);
     bundle->disposeObject(resultObject);
 
     return result;

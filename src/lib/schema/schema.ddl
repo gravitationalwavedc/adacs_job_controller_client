@@ -57,21 +57,21 @@ CREATE TABLE `jobclient_job` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `jobclient_jobstatusmodel`
+-- Table structure for table `jobclient_jobstatus`
 --
 
-DROP TABLE IF EXISTS `jobclient_jobstatusmodel`;
+DROP TABLE IF EXISTS `jobclient_jobstatus`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `jobclient_jobstatusmodel` (
+CREATE TABLE `jobclient_jobstatus` (
   `id` bigint(20) NOT NULL AUTO_INCREMENT,
   `what` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
   `state` int(11) NOT NULL,
   `job_id` bigint(20) NOT NULL,
   PRIMARY KEY (`id`),
-  KEY `jobclient_jobstatusmodel_job_id_743286d0_fk_jobclient_job_id` (`job_id`),
-  KEY `jobclient_jobstatusmodel_state_1d61edb3` (`state`),
-  CONSTRAINT `jobclient_jobstatusmodel_job_id_743286d0_fk_jobclient_job_id` FOREIGN KEY (`job_id`) REFERENCES `jobclient_job` (`id`)
+  KEY `jobclient_jobstatus_job_id_70fad371_fk_jobclient_job_id` (`job_id`),
+  KEY `jobclient_jobstatus_state_9451a918` (`state`),
+  CONSTRAINT `jobclient_jobstatus_job_id_70fad371_fk_jobclient_job_id` FOREIGN KEY (`job_id`) REFERENCES `jobclient_job` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -84,4 +84,4 @@ CREATE TABLE `jobclient_jobstatusmodel` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2022-09-28 15:17:42
+-- Dump completed on 2022-10-03 16:15:24

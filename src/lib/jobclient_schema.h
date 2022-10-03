@@ -285,7 +285,7 @@ namespace schema
       };
     };
   };
-  namespace JobclientJobstatusmodel_
+  namespace JobclientJobstatus_
   {
     struct Id
     {
@@ -351,24 +351,24 @@ namespace schema
       };
       using _traits = sqlpp::make_traits<sqlpp::integer, sqlpp::tag::require_insert>;
     };
-  } // namespace JobclientJobstatusmodel_
+  } // namespace JobclientJobstatus_
 
-  struct JobclientJobstatusmodel: sqlpp::table_t<JobclientJobstatusmodel,
-               JobclientJobstatusmodel_::Id,
-               JobclientJobstatusmodel_::What,
-               JobclientJobstatusmodel_::State,
-               JobclientJobstatusmodel_::JobId>
+  struct JobclientJobstatus: sqlpp::table_t<JobclientJobstatus,
+               JobclientJobstatus_::Id,
+               JobclientJobstatus_::What,
+               JobclientJobstatus_::State,
+               JobclientJobstatus_::JobId>
   {
     struct _alias_t
     {
-      static constexpr const char _literal[] =  "jobclient_jobstatusmodel";
+      static constexpr const char _literal[] =  "jobclient_jobstatus";
       using _name_t = sqlpp::make_char_sequence<sizeof(_literal), _literal>;
       template<typename T>
       struct _member_t
       {
-        T jobclientJobstatusmodel;
-        T& operator()() { return jobclientJobstatusmodel; }
-        const T& operator()() const { return jobclientJobstatusmodel; }
+        T jobclientJobstatus;
+        T& operator()() { return jobclientJobstatus; }
+        const T& operator()() const { return jobclientJobstatus; }
       };
     };
   };

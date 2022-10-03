@@ -156,6 +156,27 @@ auto BundleInterface::toUint64(PyObject *value) -> uint64_t {
     return PyLong_AsLong(value);
 }
 
+auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
+    // Get a pointer to the json.loads function
+    auto* pFunc = PyObject_GetAttrString(jsonModule, "dumps");
+
+    // Build a tuple to hold the arguments
+    auto* pArgs = PyTuple_New(1);
+    PyTuple_SetItem(pArgs, 0, obj);
+
+    //Call my function, passing it the number four
+    auto *pValue = PyObject_CallObject(pFunc, pArgs);
+    if (PyErr_Occurred() != nullptr) {
+        PyErr_Print();
+        abortApplication();
+    }
+
+    Py_DECREF(pArgs);
+    Py_XDECREF(pFunc);
+
+    return {PyUnicode_AsUTF8(pValue)};
+}
+
 void BundleInterface::disposeObject(PyObject* object) {
     Py_DECREF(object);
 }
