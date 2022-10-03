@@ -129,3 +129,8 @@ auto PythonInterface::enableThreading() -> PythonInterface::EnableThreadsScope {
     return {};
 }
 
+auto PythonInterface::MyPy_IsNone(PyObject *obj) -> bool {
+    auto *my_Py_NoneStruct = reinterpret_cast<PyObject*>(dlsym(PythonInterface::getPythonLibHandle(), "_Py_NoneStruct"));
+
+    return obj == my_Py_NoneStruct;
+}

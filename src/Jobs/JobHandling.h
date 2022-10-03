@@ -48,7 +48,6 @@ struct sJob {
                 return {};
             } catch (sqlpp::exception &except) {
                 if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    std::cout << "Locked" << std::endl;
                     // Wait a small moment and try again
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 } else {

@@ -11,8 +11,19 @@ def working_directory(details, job_data):
 
 std::string jobSubmitScript = R"PY(
 def working_directory(details, job_data):
-    assert details["job_id"] = aaa
-    assert details["cluster"] = bbb
+    return "eee"
+
+def submit(details, job_data):
+    assert details["job_id"] == aaa
+    assert details["cluster"] == "bbb"
     assert job_data == "ccc"
     return ddd
+)PY";
+
+std::string jobSubmitErrorScript = R"PY(
+def working_directory(details, job_data):
+    return "/doesnt/matter/"
+
+def submit(details, job_data):
+    xxx
 )PY";

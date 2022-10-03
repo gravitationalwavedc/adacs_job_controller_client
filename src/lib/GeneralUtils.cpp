@@ -89,7 +89,7 @@ void dumpExceptions(std::exception& exception) {
     }
 }
 
-nlohmann::json getDefaultJobDetails() {
+auto getDefaultJobDetails() -> nlohmann::json {
     /*
     Returns the default 'details' dictionary that is passed to the bundle.py file in each bundle
 
@@ -97,6 +97,6 @@ nlohmann::json getDefaultJobDetails() {
     */
 
     return {
-            {'cluster', readClientConfig()["cluster"]}
+            {"cluster", readClientConfig()["cluster"]}
     };
 }

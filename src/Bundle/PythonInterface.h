@@ -18,6 +18,7 @@ class PythonInterface {
 public:
     static void initPython(const std::string& sPythonLibrary);
     static auto getPythonLibHandle() -> void*;
+    static auto MyPy_IsNone(PyObject* obj) -> bool;
 
 private:
     // allow other threads to run

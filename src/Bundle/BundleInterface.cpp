@@ -141,6 +141,10 @@ auto BundleInterface::run(std::string bundleFunction, nlohmann::json details, st
     Py_DECREF(pArgs);
     Py_XDECREF(pFunc);
 
+    if (PythonInterface::MyPy_IsNone(pResult)) {
+        throw none_exception();
+    }
+
     return pResult;
 }
 

@@ -13,6 +13,7 @@
 
 extern std::string fileListNoJobWorkingDirectoryScript;
 extern std::string jobSubmitScript;
+extern std::string jobSubmitErrorScript;
 
 class BundleFixture {
 private:
@@ -39,7 +40,7 @@ public:
         ostr.close();
     }
 
-    void writeJobSubmit(const std::string& hash, const std::string& returnValue, uint64_t jobId, const std::string& params, const std::string& cluster) {
+    void writeJobSubmit(const std::string& hash, const std::string& workingDirectory, const std::string& schedulerId, uint64_t jobId, const std::string& params, const std::string& cluster) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -48,7 +49,22 @@ public:
         script.replace(script.find("aaa"), 3, std::to_string(jobId));
         script.replace(script.find("bbb"), 3, cluster);
         script.replace(script.find("ccc"), 3, params);
-        script.replace(script.find("ddd"), 3, returnValue);
+        script.replace(script.find("ddd"), 3, schedulerId);
+        script.replace(script.find("eee"), 3, workingDirectory);
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeJobSubmitError(const std::string& hash, const std::string& resultLine) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{jobSubmitErrorScript};
+
+        script.replace(script.find("xxx"), 3, resultLine);
 
         std::ofstream ostr((path / "bundle.py").string());
         ostr << script;

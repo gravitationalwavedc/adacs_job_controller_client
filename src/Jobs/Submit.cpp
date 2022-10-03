@@ -32,10 +32,13 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
             if (job.submittingCount >= 10) {
                 std::cout << "Job with ID " << jobId
                           << " took too long to submit - assuming it's failed and trying again..." << std::endl;
+
                 job.submittingCount = 0;
-                job.submitting = false;
+
+                // set jobId to 0 to bypass the "already submitted" check
                 job.jobId = 0;
-                job.save();
+
+                // Job is saved later
             } else {
                 std::cout << "Job with ID " << jobId << " is being submitted, nothing to do" << std::endl;
                 job.save();
@@ -50,13 +53,11 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
             return;
         }
 
-        std::cout << "Attempting to submit new job with UI ID: " << jobId << std::endl;
-
         // Submit the job and record that we have submitted the job
         std::cout << "Submitting new job with ui id " << jobId << std::endl;
 
         // Update the jobId in the details
-        details['job_id'] = jobId;
+        details["job_id"] = jobId;
 
         // Update the job object and save it
         job.jobId = jobId;
@@ -68,7 +69,7 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
 
     // The job is guaranteed to be in the database now, so we can finish the critical section
 
-    // Get the working directory
+    // Get the working directory. We call bundle functions outside the critical section to avoid lock contention.
     job.workingDirectory = BundleManager::Singleton()->runBundle_string("working_directory", bundleHash, details, "");
 
     // Update the job object and save it
@@ -90,7 +91,7 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
         // Notify the server that the job is failed
         auto result = Message(UPDATE_JOB, Message::Priority::Medium, std::to_string(jobId));
         result.push_uint(job.jobId);
-        result.push_string("system");
+        result.push_string(SYSTEM_SOURCE);
         result.push_uint(JobStatus::ERROR);
         result.push_string("Unable to submit job. Please check the logs as to why.");
         result.send();
@@ -113,7 +114,7 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
         // Notify the server that the job is submitted
         auto result = Message(UPDATE_JOB, Message::Priority::Medium, std::to_string(jobId));
         result.push_uint(job.jobId);
-        result.push_string("system");
+        result.push_string(SYSTEM_SOURCE);
         result.push_uint(JobStatus::SUBMITTED);
         result.push_string("Job submitted successfully");
         result.send();

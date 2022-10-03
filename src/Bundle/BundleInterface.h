@@ -22,6 +22,10 @@ public:
     void disposeObject(PyObject*);
 
     void f(const char *tname);
+
+    class none_exception : public std::exception {
+
+    };
 private:
     std::shared_ptr<PythonInterface::SubInterpreter> pythonInterpreter;
 
