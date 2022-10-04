@@ -27,3 +27,11 @@ def working_directory(details, job_data):
 def submit(details, job_data):
     xxx
 )PY";
+
+std::string jobCheckStatusScript = R"PY(
+def status(details, job_data):
+    assert details["job_id"] == aaa
+    assert details["scheduler_id"] == bbb
+    assert details["cluster"] == "ccc"
+    return json.loads("""xxx""")
+)PY";

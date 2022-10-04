@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <boost/filesystem.hpp>
 #include "../Bundle/BundleManager.h"
+#include "glog/logging.h"
 
 void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     // Get the job details
@@ -37,7 +38,7 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
 
         // Check that a job was actually found
         if (jobResults.empty()) {
-            std::cout << "Job does not exist with ID " << jobId << std::endl;
+            LOG(ERROR) << "Job does not exist with ID " << jobId;
 
             // Report that the job doesn't exist
             auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
@@ -50,7 +51,7 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
         const auto *job = &jobResults.front();
 
         if (static_cast<bool>(job->submitting)) {
-            std::cout << "Job " << jobId << " is submitting, nothing to do" << std::endl;
+            LOG(INFO) << "Job " << jobId << " is submitting, nothing to do";
 
             // Report that the job hasn't been submitted
             auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
@@ -72,8 +73,8 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     try {
         dirPath = boost::filesystem::canonical(boost::filesystem::path(workingDirectory) / dirPath).string();
     } catch (boost::filesystem::filesystem_error &error) {
-        std::cout << "Path to list files does not exist "
-                  << (boost::filesystem::path(workingDirectory) / dirPath).string() << std::endl;
+        LOG(WARNING) << "Path to list files does not exist "
+                  << (boost::filesystem::path(workingDirectory) / dirPath).string();
 
         // Report that the file doesn't exist
         auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
@@ -84,7 +85,7 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     }
     // Verify that this directory really sits under the working directory
     if (!dirPath.starts_with(workingDirectory)) {
-        std::cout << "Path to list files is outside the working directory " << dirPath << std::endl;
+        LOG(WARNING) << "Path to list files is outside the working directory " << dirPath;
 
         // Report that the file doesn't exist
         auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
@@ -96,7 +97,7 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
 
     // Verify that the path is a directory
     if (!boost::filesystem::is_directory(dirPath)) {
-        std::cout << "Path to list files is not a directory " << dirPath << std::endl;
+        LOG(WARNING) << "Path to list files is not a directory " << dirPath;
 
         // Report that the file doesn't exist
         auto result = Message(FILE_LIST_ERROR, Message::Priority::Highest, uuid);
@@ -106,8 +107,8 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
         return;
     }
 
-    std::cout << "Trying to get file list " << jobId << " " << uuid << " " << bundleHash << std::endl;
-    std::cout << "Path " << dirPath << std::endl;
+    LOG(INFO) << "Trying to get file list " << jobId << " " << uuid << " " << bundleHash;
+    LOG(INFO) << "Path " << dirPath;
 
     // Define a struct and vector for tracking the file information
     struct sFile {
@@ -168,7 +169,7 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     }
     result.send();
 
-    std::cout << "File list for path " << dirPath << " completed." << std::endl;
+    LOG(INFO) << "File list for path " << dirPath << " completed.";
 }
 
 void handleFileList(const std::shared_ptr<Message> &msg) {

@@ -5,6 +5,7 @@
 #include "JobHandling.h"
 #include "../Bundle/BundleManager.h"
 #include "../lib/JobStatus.h"
+#include "glog/logging.h"
 #include <thread>
 
 struct sStatus {
@@ -13,7 +14,7 @@ struct sStatus {
     std::string what;
     uint32_t state;
 
-    static sStatus fromDb(auto &record) {
+    static auto fromDb(auto &record) -> sStatus {
         return {
                 .id = static_cast<uint64_t>(record.id),
                 .jobId = static_cast<uint64_t>(record.jobId),
@@ -22,7 +23,7 @@ struct sStatus {
         };
     }
 
-    static auto getJobStatusByJobIdAndWhat(uint64_t jobId, std::string what) {
+    static auto getJobStatusByJobIdAndWhat(uint64_t jobId, const std::string& what) {
         SqliteConnector _database = SqliteConnector();
         schema::JobclientJobstatus _jobStatusTable;
 
@@ -46,7 +47,6 @@ struct sStatus {
                 return vStatus;
             } catch (sqlpp::exception &except) {
                 if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    std::cout << "Locked" << std::endl;
                     // Wait a small moment and try again
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 } else {
@@ -81,7 +81,6 @@ struct sStatus {
                 return vStatus;
             } catch (sqlpp::exception &except) {
                 if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    std::cout << "Locked" << std::endl;
                     // Wait a small moment and try again
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 } else {
@@ -93,7 +92,7 @@ struct sStatus {
         throw std::runtime_error("Unable to save record, even after retrying");
     }
 
-    static void deleteByIdList(std::vector<uint64_t> ids) {
+    static void deleteByIdList(const std::vector<uint64_t>& ids) {
         SqliteConnector _database = SqliteConnector();
         schema::JobclientJobstatus _jobStatusTable;
 
@@ -105,7 +104,6 @@ struct sStatus {
                 );
             } catch (sqlpp::exception &except) {
                 if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    std::cout << "Locked" << std::endl;
                     // Wait a small moment and try again
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 } else {
@@ -124,7 +122,7 @@ struct sStatus {
         // Retry for up to 10 seconds
         for (int count = 0; count < 100; count++) {
             try {
-                if (id) {
+                if (id != 0) {
                     // Update the record
                     _database->operator()(
                             update(_jobStatusTable)
@@ -151,7 +149,6 @@ struct sStatus {
                 return;
             } catch (sqlpp::exception &except) {
                 if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    std::cout << "Locked" << std::endl;
                     // Wait a small moment and try again
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 } else {
@@ -178,13 +175,13 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
     // Create a dict to store the data for this job
     auto details = getDefaultJobDetails();
     details["job_id"] = job.jobId;
-    details["schedulerId"] = job.schedulerId;
+    details["scheduler_id"] = job.schedulerId;
 
     // Get the status of the job
     auto _status = BundleManager::Singleton()->runBundle_json("status", job.bundleHash, details, "");
 
     // Check if the status has changed or not
-    for (auto stat: _status["status"]) {
+    for (const auto& stat: _status["status"]) {
         auto info = stat["info"];
         auto status = stat["status"];
         auto what = stat["what"];

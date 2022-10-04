@@ -1,6 +1,7 @@
 #include <iostream>
 #include "Bundle/BundleManager.h"
 #include "Websocket/WebsocketInterface.h"
+#include "Settings.h"
 
 
 int run(std::string wsToken) {
@@ -51,6 +52,11 @@ int main(int argc, char* argv[]) {
         std::cerr << "Please provide the websocket token to connect with." << std::endl;
         return 1;
     }
+
+    // Set logging defaults
+    FLAGS_log_dir = (getExecutablePath() / "logs").string();
+    FLAGS_minloglevel = GLOG_MIN_LOG_LEVEL;
+    google::InitGoogleLogging(argv[0]);
 
     auto wsToken = std::string(argv[1]);
 

@@ -5,12 +5,12 @@
 #ifndef ADACS_JOB_CLIENT_JOBHANDLING_H
 #define ADACS_JOB_CLIENT_JOBHANDLING_H
 
-#include "../lib/Messaging/Message.h"
 #include "../DB/SqliteConnector.h"
+#include "../lib/Messaging/Message.h"
 #include "../lib/jobclient_schema.h"
 
 struct sJob {
-    static sJob fromRecord(auto record) {
+    static auto fromRecord(auto record) -> sJob {
         return {
                 static_cast<uint64_t>(record->id),
                 static_cast<uint64_t>(record->jobId),
@@ -25,7 +25,7 @@ struct sJob {
         };
     }
 
-    static sJob getOrCreateByJobId(auto jobId) {
+    static auto getOrCreateByJobId(auto jobId) -> sJob {
         SqliteConnector _database = SqliteConnector();
         schema::JobclientJob _jobTable;
 
@@ -59,7 +59,7 @@ struct sJob {
         throw std::runtime_error("Unable to get record, even after retrying");
     }
 
-    void _delete() {
+    void _delete() const {
         SqliteConnector _database = SqliteConnector();
         schema::JobclientJob _jobTable;
 
@@ -76,7 +76,6 @@ struct sJob {
                 return;
             } catch (sqlpp::exception &except) {
                 if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    std::cout << "Locked" << std::endl;
                     // Wait a small moment and try again
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 } else {
@@ -95,7 +94,7 @@ struct sJob {
         // Retry for up to 10 seconds
         for (int count = 0; count < 100; count++) {
             try {
-                if (id) {
+                if (id != 0) {
                     // Update the record
                     _database->operator()(
                             update(_jobTable)
@@ -134,7 +133,6 @@ struct sJob {
                 return;
             } catch (sqlpp::exception &except) {
                 if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    std::cout << "Locked" << std::endl;
                     // Wait a small moment and try again
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 } else {
@@ -147,7 +145,7 @@ struct sJob {
     }
 
     void refreshFromDb() {
-        if (!id) {
+        if (id == 0) {
             throw std::runtime_error("Can't refresh a record without an id");
         }
 
@@ -172,7 +170,6 @@ struct sJob {
                 return;
             } catch (sqlpp::exception &except) {
                 if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    std::cout << "Locked" << std::endl;
                     // Wait a small moment and try again
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 } else {
@@ -200,6 +197,6 @@ void handleJobSubmit(const std::shared_ptr<Message> &msg);
 
 void checkJobStatus(const sJob& job, bool forceNotification = false);
 
-bool archiveJob(const sJob& job);
+auto archiveJob(const sJob& job) -> bool;
 
 #endif //ADACS_JOB_CLIENT_JOBHANDLING_H

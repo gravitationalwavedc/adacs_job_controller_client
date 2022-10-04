@@ -1,13 +1,13 @@
 FROM centos:7.9.2009 AS build_base
 
 RUN yum -y upgrade && yum -y install centos-release-scl epel-release && yum -y install devtoolset-11
-RUN yum install -y python3-devel cmake3 git ninja-build
+RUN yum install -y python3-devel cmake3 git ninja-build autoconf gettext-devel automake flex bison
 
 # Copy in the third party directory
 ADD src/third_party /src/third_party
 
 # Prepare boost and third party libs
-RUN cd /src/third_party && source /opt/rh/devtoolset-11/enable && bash prepare_boost.sh && mv /src/third_party /
+RUN cd /src/third_party && source /opt/rh/devtoolset-11/enable && bash prepare_elfutils.sh && bash prepare_boost.sh && mv /src/third_party /
 
 # Copy in the source directory
 ADD src /src

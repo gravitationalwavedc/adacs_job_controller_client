@@ -30,11 +30,14 @@ details.  */
 #define SIGNAL_HANDLER(_name)                                   \
 static void _Jv_##_name (int, siginfo_t *,                      \
                          void *_p __attribute__ ((__unused__)))
+//#ifndef ucontext_t
+//struct ucontext_t;
+//#endif
 
 #define HANDLE_DIVIDE_OVERFLOW                                          \
 do                                                                      \
 {                                                                       \
-  struct ucontext_t *_uc = (struct ucontext_t *)_p;                         \
+  ucontext_t *_uc = (ucontext_t *)_p;                         \
   gregset_t &_gregs = _uc->uc_mcontext.gregs;                           \
   unsigned char *_rip = (unsigned char *)_gregs[REG_RIP];               \
                                                                         \

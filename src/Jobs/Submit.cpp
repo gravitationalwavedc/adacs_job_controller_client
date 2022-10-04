@@ -5,6 +5,7 @@
 #include "JobHandling.h"
 #include "../Bundle/BundleManager.h"
 #include "../lib/JobStatus.h"
+#include "glog/logging.h"
 #include <shared_mutex>
 
 static std::shared_mutex mutex_;
@@ -30,8 +31,8 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
         if (job.submitting) {
             job.submittingCount++;
             if (job.submittingCount >= 10) {
-                std::cout << "Job with ID " << jobId
-                          << " took too long to submit - assuming it's failed and trying again..." << std::endl;
+                LOG(WARNING) << "Job with ID " << jobId
+                          << " took too long to submit - assuming it's failed and trying again...";
 
                 job.submittingCount = 0;
 
@@ -40,21 +41,21 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
 
                 // Job is saved later
             } else {
-                std::cout << "Job with ID " << jobId << " is being submitted, nothing to do" << std::endl;
+                LOG(INFO) << "Job with ID " << jobId << " is being submitted, nothing to do";
                 job.save();
                 return;
             }
         }
 
         if (job.jobId != 0) {
-            std::cout << "Job with ID " << jobId << " has already been submitted, checking status..." << std::endl;
+            LOG(INFO) << "Job with ID " << jobId << " has already been submitted, checking status...";
             // If the job has already been submitted, check the state of the job and notify the server of its current state
             checkJobStatus(job, true);
             return;
         }
 
         // Submit the job and record that we have submitted the job
-        std::cout << "Submitting new job with ui id " << jobId << std::endl;
+        LOG(INFO) << "Submitting new job with ui id " << jobId;
 
         // Update the jobId in the details
         details["job_id"] = jobId;
@@ -84,7 +85,7 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
 
     // Check if there was an issue with the job
     if (job.schedulerId == 0) {
-        std::cout << "Job with UI ID " << job.jobId << " could not be submitted" << std::endl;
+        LOG(ERROR) << "Job with UI ID " << job.jobId << " could not be submitted";
 
         job._delete();
 
@@ -108,8 +109,7 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
         job.submitting = false;
         job.save();
 
-        std::cout << "Successfully submitted job with UI ID " << job.jobId << ", got scheduler id " << job.schedulerId
-                  << std::endl;
+        LOG(INFO) << "Successfully submitted job with UI ID " << job.jobId << ", got scheduler id " << job.schedulerId;
 
         // Notify the server that the job is submitted
         auto result = Message(UPDATE_JOB, Message::Priority::Medium, std::to_string(jobId));

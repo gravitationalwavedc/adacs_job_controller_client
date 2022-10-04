@@ -9,6 +9,7 @@
 #include <boost/filesystem.hpp>
 #include <fstream>
 #include "../Bundle/BundleManager.h"
+#include "glog/logging.h"
 #include <future>
 
 std::map<std::string, std::promise<void>> pausedFileTransfers;
@@ -40,7 +41,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
         // Check that a job was actually found
         if (jobResults.empty()) {
-            std::cout << "Job does not exist with ID " << jobId << std::endl;
+            LOG(ERROR) << "Job does not exist with ID " << jobId;
 
             // Report that the job doesn't exist
             auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
@@ -53,7 +54,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
         const auto *job = &jobResults.front();
 
         if (static_cast<bool>(job->submitting)) {
-            std::cout << "Job " << jobId << " is submitting, nothing to do" << std::endl;
+            LOG(INFO) << "Job " << jobId << " is submitting, nothing to do";
 
             // Report that the job hasn't been submitted
             auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
@@ -80,8 +81,8 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
     try {
         filePath = boost::filesystem::canonical(boost::filesystem::path(workingDirectory) / filePath).string();
     } catch (boost::filesystem::filesystem_error &error) {
-        std::cout << "Path to file download does not exist "
-                  << (boost::filesystem::path(workingDirectory) / filePath).string() << std::endl;
+        LOG(WARNING) << "Path to file download does not exist "
+                  << (boost::filesystem::path(workingDirectory) / filePath).string();
 
         // Report that the file doesn't exist
         auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
@@ -92,7 +93,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
     }
     // Verify that this directory really sits under the working directory
     if (!filePath.starts_with(workingDirectory)) {
-        std::cout << "Path to file download is outside the working directory " << filePath << std::endl;
+        LOG(WARNING) << "Path to file download is outside the working directory " << filePath;
 
         // Report that the file doesn't exist
         auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
@@ -104,7 +105,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
     // Verify that the path is a file
     if (!boost::filesystem::is_regular_file(filePath)) {
-        std::cout << "Path to file download is not a file " << filePath << std::endl;
+        LOG(WARNING) << "Path to file download is not a file " << filePath;
 
         // Report that the file doesn't exist
         auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
@@ -114,8 +115,8 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
         return;
     }
 
-    std::cout << "Trying to download file " << jobId << " " << uuid << " " << bundleHash << std::endl;
-    std::cout << "Path " << filePath << std::endl;
+    LOG(INFO) << "Trying to download file " << jobId << " " << uuid << " " << bundleHash;
+    LOG(INFO) << "Path " << filePath;
 
     // Get the file size
     auto fileSize = boost::filesystem::file_size(filePath);
@@ -171,10 +172,10 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             packetCount++;
         }
 
-        std::cout << "Finished file transfer for " << filePath << std::endl;
+        LOG(INFO) << "Finished file transfer for " << filePath;
     } catch (std::exception &error) {
-        std::cerr << "Error in file transfer" << std::endl;
-        std::cerr << error.what() << std::endl;
+        LOG(ERROR) << "Error in file transfer";
+        LOG(ERROR) << error.what();
 
         // Report that there was a file exception
         result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);

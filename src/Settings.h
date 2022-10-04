@@ -7,6 +7,8 @@
 
 #include <cstdint>
 
+const uint32_t GLOG_MIN_LOG_LEVEL = 0;
+
 const uint64_t MESSAGE_INITIAL_VECTOR_SIZE = (1024ULL*64ULL);
 
 #ifdef BUILD_TESTS
