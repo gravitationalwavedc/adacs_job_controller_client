@@ -46,3 +46,6 @@
 [submodule "src/third_party/elfutils"]
 	path = src/third_party/elfutils
 	url = git://sourceware.org/git/elfutils.git
+[submodule "src/third_party/cpp-subprocess"]
+	path = src/third_party/cpp-subprocess
+	url = https://github.com/arun11299/cpp-subprocess.git

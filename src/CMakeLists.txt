@@ -96,6 +96,7 @@ include_directories(
         third_party/sqlite3-cmake/src
         third_party/mempatch
         third_party/elfutils_install/include
+        third_party/cpp-subprocess
         ${CMAKE_BINARY_DIR}/third_party/folly
         ${CMAKE_BINARY_DIR}/third_party/openssl-cmake/include
         ${CMAKE_BINARY_DIR}/third_party/glog
@@ -130,6 +131,8 @@ add_subdirectory(third_party/sqlpp11)
 add_subdirectory(third_party/sqlite3-cmake)
 
 add_subdirectory(third_party/mempatch)
+
+add_subdirectory(third_party/cpp-subprocess)
 
 # Define the source files
 set(
@@ -167,6 +170,7 @@ set(
         Jobs/JobHandling.h
         Jobs/CheckStatus.cpp
         lib/JobStatus.h
+        Jobs/ArchiveJob.cpp
 )
 
 # Set the main executable and source files
@@ -195,7 +199,7 @@ add_executable(
         tests/fixtures/BundleFixture.cpp
         Jobs/tests/test_job_submit.cpp
         tests/fixtures/DatabaseFixture.h
-)
+        Jobs/tests/test_check_status.cpp Jobs/tests/test_archive_job.cpp)
 
 # Set the link libraries
 set(

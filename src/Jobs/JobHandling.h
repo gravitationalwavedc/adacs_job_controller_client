@@ -30,7 +30,7 @@ struct sJob {
         schema::JobclientJob _jobTable;
 
         // Retry for up to 10 seconds
-        for (int count = 0; count = 100; count++) {
+        for (int count = 0; count < 100; count++) {
             try {
                 auto jobResults =
                         _database->operator()(
@@ -64,7 +64,7 @@ struct sJob {
         schema::JobclientJob _jobTable;
 
         // Retry for up to 10 seconds
-        for (int count = 0; count = 100; count++) {
+        for (int count = 0; count < 100; count++) {
             try {
                 _database->operator()(
                         remove_from(_jobTable)
@@ -93,7 +93,7 @@ struct sJob {
         schema::JobclientJob _jobTable;
 
         // Retry for up to 10 seconds
-        for (int count = 0; count = 100; count++) {
+        for (int count = 0; count < 100; count++) {
             try {
                 if (id) {
                     // Update the record
@@ -155,7 +155,7 @@ struct sJob {
         schema::JobclientJob _jobTable;
 
         // Retry for up to 10 seconds
-        for (int count = 0; count = 100; count++) {
+        for (int count = 0; count < 100; count++) {
             try {
                 auto jobResults =
                         _database->operator()(
@@ -198,6 +198,8 @@ struct sJob {
 
 void handleJobSubmit(const std::shared_ptr<Message> &msg);
 
-void checkJobStatus(sJob job, bool forceNotification = false);
+void checkJobStatus(const sJob& job, bool forceNotification = false);
+
+bool archiveJob(const sJob& job);
 
 #endif //ADACS_JOB_CLIENT_JOBHANDLING_H
