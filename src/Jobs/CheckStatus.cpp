@@ -6,160 +6,8 @@
 #include "../Bundle/BundleManager.h"
 #include "../lib/JobStatus.h"
 #include "glog/logging.h"
+#include "../DB/sStatus.h"
 #include <thread>
-
-struct sStatus {
-    uint64_t id;
-    uint64_t jobId;
-    std::string what;
-    uint32_t state;
-
-    static auto fromDb(auto &record) -> sStatus {
-        return {
-                .id = static_cast<uint64_t>(record.id),
-                .jobId = static_cast<uint64_t>(record.jobId),
-                .what = record.what,
-                .state = static_cast<uint32_t>(record.state)
-        };
-    }
-
-    static auto getJobStatusByJobIdAndWhat(uint64_t jobId, const std::string& what) {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJobstatus _jobStatusTable;
-
-        for (int count = 0; count < 100; count++) {
-            try {
-                auto statusResults = _database->operator()(
-                        select(all_of(_jobStatusTable))
-                                .from(_jobStatusTable)
-                                .where(
-                                        _jobStatusTable.jobId == jobId
-                                        and _jobStatusTable.what == what
-                                )
-                );
-
-                // Parse the objects
-                std::vector<sStatus> vStatus;
-                for (const auto &record: statusResults) {
-                    vStatus.push_back(sStatus::fromDb(record));
-                }
-
-                return vStatus;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
-        }
-
-        throw std::runtime_error("Unable to save record, even after retrying");
-    }
-
-    static auto getJobStatusByJobId(uint64_t jobId) {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJobstatus _jobStatusTable;
-
-        for (int count = 0; count < 100; count++) {
-            try {
-                auto statusResults = _database->operator()(
-                        select(all_of(_jobStatusTable))
-                                .from(_jobStatusTable)
-                                .where(
-                                        _jobStatusTable.jobId == jobId
-                                )
-                );
-
-                // Parse the objects
-                std::vector<sStatus> vStatus;
-                for (const auto &record: statusResults) {
-                    vStatus.push_back(sStatus::fromDb(record));
-                }
-
-                return vStatus;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
-        }
-
-        throw std::runtime_error("Unable to save record, even after retrying");
-    }
-
-    static void deleteByIdList(const std::vector<uint64_t>& ids) {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJobstatus _jobStatusTable;
-
-        for (int count = 0; count < 100; count++) {
-            try {
-                _database->operator()(
-                        remove_from(_jobStatusTable)
-                                .where(_jobStatusTable.id == sqlpp::value_list(ids))
-                );
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
-        }
-
-        throw std::runtime_error("Unable to save record, even after retrying");
-    }
-
-    void save() {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJobstatus _jobStatusTable;
-
-        // Retry for up to 10 seconds
-        for (int count = 0; count < 100; count++) {
-            try {
-                if (id != 0) {
-                    // Update the record
-                    _database->operator()(
-                            update(_jobStatusTable)
-                                    .set(
-                                            _jobStatusTable.jobId = jobId,
-                                            _jobStatusTable.what = what,
-                                            _jobStatusTable.state = state
-                                    )
-                                    .where(
-                                            _jobStatusTable.id == static_cast<uint64_t>(id)
-                                    )
-                    );
-                } else {
-                    // Create the record
-                    id = _database->operator()(
-                            insert_into(_jobStatusTable)
-                                    .set(
-                                            _jobStatusTable.jobId = jobId,
-                                            _jobStatusTable.what = what,
-                                            _jobStatusTable.state = state
-                                    )
-                    );
-                }
-                return;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
-        }
-
-        throw std::runtime_error("Unable to save record, even after retrying");
-    }
-};
 
 void checkJobStatusImpl(sJob job, bool forceNotification) {
     /*
@@ -180,18 +28,27 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
     // Get the status of the job
     auto _status = BundleManager::Singleton()->runBundle_json("status", job.bundleHash, details, "");
 
+    std::cout << _status.dump() << std::endl;
+
     // Check if the status has changed or not
     for (const auto& stat: _status["status"]) {
         auto info = stat["info"];
-        auto status = stat["status"];
+        auto jsonStatus = stat["status"];
         auto what = stat["what"];
+
+        // Check for a valid status - sometimes schedulers return an empty string
+        if (jsonStatus.is_null()) {
+            return;
+        }
+
+        auto status = static_cast<uint32_t>(jsonStatus);
 
         auto vStatus = sStatus::getJobStatusByJobIdAndWhat(job.id, what);
 
         // Prevent duplicates
         if (vStatus.size() > 1) {
             std::vector<uint64_t> ids;
-            transform(vStatus.begin(), vStatus.end(), ids.begin(), [](const sStatus &status) { return status.id; });
+            transform(vStatus.begin(), vStatus.end(), std::back_inserter(ids), [](const sStatus &status) { return status.id; });
 
             sStatus::deleteByIdList(ids);
 
@@ -199,12 +56,7 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
             vStatus = {};
         }
 
-        if (forceNotification || !vStatus.empty() || status != vStatus[0].state) {
-            // Check for a valid status - sometimes schedulers return an empty string
-            if (status.is_null()) {
-                return;
-            }
-
+        if (forceNotification || vStatus.empty() || status != vStatus[0].state) {
             sStatus stateItem{
                     .jobId = job.id
             };
@@ -230,10 +82,10 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
     }
 
     auto jobError = 0U;
-    auto vStatus = sStatus::getJobStatusByJobId(job.jobId);
+    auto vStatus = sStatus::getJobStatusByJobId(job.id);
     for (auto& state : vStatus) {
         // Check if any of the jobs are in error state
-        if (state.state > JobStatus::RUNNING || state.state != JobStatus::COMPLETED) {
+        if (state.state > JobStatus::RUNNING and state.state != JobStatus::COMPLETED) {
             jobError = state.state;
         }
     }
@@ -247,7 +99,7 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
     }
 
     // Check if there was an error, or if all jobs have completed
-    if (jobError != 0 or (static_cast<bool>(_status['complete']) and jobComplete)) {
+    if (jobError != 0 or (static_cast<bool>(_status["complete"]) and jobComplete)) {
         job.running = false;
         job.save();
 
@@ -261,6 +113,37 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
         result.push_uint(jobError != 0 ? jobError : JobStatus::COMPLETED);
         result.push_string("Job has completed");
         result.send();
+    }
+}
+
+auto checkJobStatus(const sJob& job, bool forceNotification) -> std::thread {
+    // This function simply spawns a new thread to deal with checking the job status
+    return std::thread{[job, forceNotification] {
+        try {
+            checkJobStatusImpl(job, forceNotification);
+        } catch (const std::exception& except) {
+            LOG(ERROR) << "Error getting job status: " << except.what();
+            dumpExceptions(except);
+        }
+    }};
+}
+
+void checkAllJobsStatus() {
+    std::vector<std::thread> checkThreads;
+
+    // Get all running jobs
+    auto jobs = sJob::getRunningJobs();
+
+    // Start checking the status of all jobs
+    for (const auto& job : jobs) {
+        checkThreads.push_back(checkJobStatus(job, false));
+    }
+
+    // Wait for all status checks to finish
+    for (auto& thread : checkThreads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
     }
 }
 
@@ -289,9 +172,3 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
 //        lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
 //        logging.error(''.join('!! ' + line for line in lines))
 //}
-
-void checkJobStatus(const sJob& job, bool forceNotification) {
-    // This function simply spawns a new thread to deal with checking the job status
-    auto thread = std::thread{[job, forceNotification] { checkJobStatusImpl(job, forceNotification); }};
-    thread.detach();
-}

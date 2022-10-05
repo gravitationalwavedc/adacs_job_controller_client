@@ -13,6 +13,8 @@
 
 #include <Python.h>
 #include <memory>
+#include <shared_mutex>
+#include <mutex>
 
 class PythonInterface {
 public:
@@ -128,6 +130,9 @@ public:
 
         SubInterpreter()
         {
+            static std::shared_mutex mutex_;
+            std::unique_lock<std::shared_mutex> lock(mutex_);
+
             RestoreThreadStateScope restore;
 
             _ts = Py_NewInterpreter();

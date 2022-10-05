@@ -33,5 +33,6 @@ def status(details, job_data):
     assert details["job_id"] == aaa
     assert details["scheduler_id"] == bbb
     assert details["cluster"] == "ccc"
+    import json
     return json.loads("""xxx""")
 )PY";

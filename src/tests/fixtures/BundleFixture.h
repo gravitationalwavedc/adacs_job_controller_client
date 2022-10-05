@@ -72,7 +72,7 @@ public:
         ostr.close();
     }
 
-    void writeJobCheckStatus(const std::string& hash, nlohmann::json result, uint64_t jobId, uint64_t schedulerId, std::string cluster) {
+    void writeJobCheckStatus(const std::string& hash, const nlohmann::json& result, uint64_t jobId, uint64_t schedulerId, const std::string& cluster) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());

@@ -16,7 +16,7 @@ class BundleInterface {
 public:
     BundleInterface(const std::string& bundleHash);
 
-    auto run(std::string bundleFunction, nlohmann::json details, std::string jobData) -> PyObject *;
+    auto run(const std::string& bundleFunction, nlohmann::json details, std::string jobData) -> PyObject *;
     auto toString(PyObject*) -> std::string;
     auto toUint64(PyObject *value) -> uint64_t;
     auto jsonDumps(PyObject *obj) -> std::string;

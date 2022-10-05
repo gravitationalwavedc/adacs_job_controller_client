@@ -14,7 +14,7 @@ auto acceptingConnections(uint16_t port) -> bool;
 auto generateUUID() -> std::string;
 void abortApplication();
 auto getBundlePath() -> std::string;
-void dumpExceptions(std::exception& exception);
+void dumpExceptions(const std::exception& exception);
 auto getDefaultJobDetails() -> nlohmann::json;
 
 #ifdef BUILD_TESTS

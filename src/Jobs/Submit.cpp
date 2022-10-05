@@ -50,7 +50,7 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
         if (job.jobId != 0) {
             LOG(INFO) << "Job with ID " << jobId << " has already been submitted, checking status...";
             // If the job has already been submitted, check the state of the job and notify the server of its current state
-            checkJobStatus(job, true);
+            checkJobStatus(job, true).detach();
             return;
         }
 

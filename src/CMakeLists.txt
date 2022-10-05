@@ -171,7 +171,7 @@ set(
         Jobs/CheckStatus.cpp
         lib/JobStatus.h
         Jobs/ArchiveJob.cpp
-)
+        DB/sJob.h DB/sStatus.h)
 
 # Set the main executable and source files
 add_executable(
@@ -199,7 +199,9 @@ add_executable(
         tests/fixtures/BundleFixture.cpp
         Jobs/tests/test_job_submit.cpp
         tests/fixtures/DatabaseFixture.h
-        Jobs/tests/test_check_status.cpp Jobs/tests/test_archive_job.cpp)
+        Jobs/tests/test_check_status.cpp
+        Jobs/tests/test_archive_job.cpp
+)
 
 # Set the link libraries
 set(

@@ -13,6 +13,7 @@ struct DatabaseFixture {
     SqliteConnector database;
 
     schema::JobclientJob jobTable{};
+    schema::JobclientJobstatus statusTable{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     DatabaseFixture() {
@@ -32,6 +33,7 @@ struct DatabaseFixture {
 private:
     void cleanDatabase() const {
         // Sanitize all records from the database
+        database->operator()(remove_from(statusTable).unconditionally());
         database->operator()(remove_from(jobTable).unconditionally());
     }
 };

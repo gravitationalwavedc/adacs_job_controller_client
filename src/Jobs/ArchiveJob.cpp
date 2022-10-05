@@ -18,7 +18,7 @@ auto archiveJob(const sJob& job) -> bool {
 
     // Attempt to tar up the job using the tar utility
     auto proc = subprocess::Popen(
-            {"tar", "-cvf", "archive.tar.gz", "."},
+            {"tar", "-cvf", "archive.tar.gz", "--exclude=./archive.tar.gz", "."},
             subprocess::output{subprocess::PIPE},
             subprocess::error{subprocess::PIPE},
             subprocess::shell{false},

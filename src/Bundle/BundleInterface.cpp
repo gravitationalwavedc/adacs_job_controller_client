@@ -114,7 +114,7 @@ auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
     return pValue;
 }
 
-auto BundleInterface::run(std::string bundleFunction, nlohmann::json details, std::string jobData) -> PyObject* {
+auto BundleInterface::run(const std::string& bundleFunction, nlohmann::json details, std::string jobData) -> PyObject* {
     auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
@@ -130,8 +130,8 @@ auto BundleInterface::run(std::string bundleFunction, nlohmann::json details, st
     auto* pValue = PyUnicode_FromString(jobData.c_str());
     PyTuple_SetItem(pArgs, 1, pValue);
 
-    //Call my function, passing it the number four
-    auto pResult = PyObject_CallObject(pFunc, pArgs);
+    // Call the bundle function
+    auto *pResult = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
         std::cerr << "Error calling bundle function " << bundleFunction << std::endl;
         PyErr_Print();
@@ -149,14 +149,23 @@ auto BundleInterface::run(std::string bundleFunction, nlohmann::json details, st
 }
 
 auto BundleInterface::toString(PyObject *value) -> std::string {
+    auto threadScope = PythonInterface::enableThreading();
+    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
+
     return std::string{PyUnicode_AsUTF8(value)};
 }
 
 auto BundleInterface::toUint64(PyObject *value) -> uint64_t {
+    auto threadScope = PythonInterface::enableThreading();
+    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
+
     return PyLong_AsLong(value);
 }
 
 auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
+    auto threadScope = PythonInterface::enableThreading();
+    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
+
     // Get a pointer to the json.loads function
     auto* pFunc = PyObject_GetAttrString(jsonModule, "dumps");
 
@@ -164,7 +173,7 @@ auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
     auto* pArgs = PyTuple_New(1);
     PyTuple_SetItem(pArgs, 0, obj);
 
-    //Call my function, passing it the number four
+    // Call json.dumps on the provided object
     auto *pValue = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
         PyErr_Print();
@@ -178,5 +187,8 @@ auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
 }
 
 void BundleInterface::disposeObject(PyObject* object) {
+    auto threadScope = PythonInterface::enableThreading();
+    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
+
     Py_DECREF(object);
 }

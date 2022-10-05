@@ -80,12 +80,12 @@ auto generateUUID() -> std::string {
     return boost::lexical_cast<std::string>(boost::uuids::random_generator()());
 }
 
-void dumpExceptions(std::exception& exception) {
+void dumpExceptions(const std::exception& exception) {
     folly::exception_tracer::getCxaRethrowCallbacks().invoke();
-    std::cerr << "--- Exception: " << exception.what() << std::endl;
+    LOG(INFO) << "--- Exception: " << exception.what();
     auto exceptions = folly::exception_tracer::getCurrentExceptions();
     for (auto& exc : exceptions) {
-        std::cerr << exc << "\n";
+        LOG(INFO) << exc;
     }
 }
 
