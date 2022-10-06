@@ -19,11 +19,7 @@ public:
         sqlite::connection_config config;
         config.path_to_database = (getExecutablePath() / DATABASE_FILE).string();
         config.flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-#ifdef NDEBUG
-        config->debug = false;
-#else
-        config.debug = true;
-#endif
+        config.debug = false;
         database = std::make_shared<sqlite::connection>(config);
     }
 

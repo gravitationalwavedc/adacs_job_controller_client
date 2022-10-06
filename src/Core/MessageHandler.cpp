@@ -43,6 +43,6 @@ void handleMessage(const std::shared_ptr<Message>& message) {
             handleJobSubmit(message);
             break;
         default:
-            std::cerr << "Message Handler: Got unknown message ID from the server " << message->getId() << std::endl;
+            LOG(WARNING) << "Message Handler: Got unknown message ID from the server " << message->getId();
     }
 }

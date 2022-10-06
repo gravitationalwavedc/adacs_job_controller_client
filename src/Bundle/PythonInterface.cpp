@@ -5,6 +5,7 @@
 #include <Python.h>
 #include <dlfcn.h>
 #include <iostream>
+#include <glog/logging.h>
 
 #include "PythonInterface.h"
 #include "../lib/GeneralUtils.h"
@@ -14,10 +15,9 @@ static void* _dlPythonLibHandle = nullptr;
 template<typename R, typename ... Args> R getRetType(R(*)(Args...));
 
 #define ENSURE_DLFN(function, dlfn) if (dlfn == nullptr) { \
-    std::cerr << "Unable to find required function " << #function << " in python dynamic library." << std::endl; \
+    LOG(ERROR) << "Unable to find required function " << #function << " in python dynamic library."; \
     abortApplication();                                      \
-}                                                          \
-std::cout << #function << std::endl;
+}
 
 #define PYWRAP_0(function) auto function() -> decltype(function()) { \
  using ReturnType = decltype( getRetType(&function ) );                       \
@@ -104,7 +104,7 @@ void PythonInterface::initPython(const std::string& sPythonLibrary) {
     // Attempt to load the python dynamic library
     void *libHandle = dlopen(sPythonLibrary.c_str(), RTLD_NOW | RTLD_GLOBAL);
     if (libHandle == nullptr) {
-        std::cerr << "Unable to load python dynamic library " << sPythonLibrary << std::endl;
+        LOG(ERROR) << "Unable to load python dynamic library " << sPythonLibrary;
         abortApplication();
     }
 

@@ -13,7 +13,7 @@ static std::shared_ptr<WebsocketInterface> singleton;
 
 WebsocketInterface::WebsocketInterface(const std::string& token) {
     if (singleton) {
-        std::cerr << "WebsocketInterface singleton was already initialised!" << std::endl;
+        LOG(ERROR) << "WebsocketInterface singleton was already initialised!";
         abortApplication();
     }
 
@@ -27,18 +27,18 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
     client = std::make_shared<WsClient>(url);
 
     client->on_error = [&](auto, auto error) {
-        std::cerr << "WS: Error with connection to " << url << std::endl;
-        std::cerr << error.message() << std::endl;
+        LOG(ERROR) << "WS: Error with connection to " << url;
+        LOG(ERROR) << error.message();
         abortApplication();
     };
 
     client->on_open = [&](const std::shared_ptr<WsClient::Connection>& connection) {
-        std::cout << "WS: Client connected to " << url << std::endl;
+        LOG(INFO) << "WS: Client connected to " << url;
         pConnection = connection;
     };
 
     client->on_close = [&](const std::shared_ptr<WsClient::Connection>&, int, const std::string &) {
-        std::cout << "WS: Client connection closed to " << url << std::endl;
+        LOG(INFO) << "WS: Client connection closed to " << url;
         pConnection = nullptr;
         closePromise.set_value();
     };
@@ -69,7 +69,7 @@ void WebsocketInterface::start() {
 }
 
 void WebsocketInterface::serverReady() {
-    std::cout << "WS: Server ready - starting threads" << std::endl;
+    LOG(INFO) << "WS: Server ready - starting threads";
 #ifndef BUILD_TESTS
     // Start the scheduler thread
     schedulerThread = std::thread([this] {
@@ -109,7 +109,7 @@ void WebsocketInterface::stop() {
 
 void WebsocketInterface::SingletonFactory(const std::string& token) {
     if (singleton) {
-        std::cerr << "WebsocketInterface singleton was already initialised!" << std::endl;
+        LOG(ERROR) << "WebsocketInterface singleton was already initialised!";
         abortApplication();
     }
 
@@ -118,7 +118,7 @@ void WebsocketInterface::SingletonFactory(const std::string& token) {
 
 auto WebsocketInterface::Singleton() -> std::shared_ptr<WebsocketInterface> {
     if (!singleton) {
-        std::cerr << "WebsocketInterface singleton was null!" << std::endl;
+        LOG(ERROR) << "WebsocketInterface singleton was null!";
         abortApplication();
     }
 
@@ -266,7 +266,7 @@ void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-comple
                             }
                         }
                     } catch (std::exception& exception) {
-                        std::cerr << "Exception: " __FILE__ ":" << __LINE__ << " > " << exception.what() << std::endl;
+                        LOG(ERROR) << "Exception: " __FILE__ ":" << __LINE__ << " > " << exception.what();
                     }
 
                     // Data existed
@@ -317,8 +317,8 @@ auto WebsocketInterface::doesHigherPriorityDataExist(uint64_t maxPriority) -> bo
 
 void WebsocketInterface::reportWebsocketError(const SimpleWeb::error_code &errorCode) {
     // Log this
-    std::cout << "WS: Error in connection. "
-              << "Error: " << errorCode << ", error message: " << errorCode.message() << std::endl;
+    LOG(ERROR) << "WS: Error in connection. "
+              << "Error: " << errorCode << ", error message: " << errorCode.message();
 }
 
 void WebsocketInterface::handlePong() {
@@ -328,8 +328,8 @@ void WebsocketInterface::handlePong() {
     // Report the latency
     auto latency = pongTimestamp - pingTimestamp;
 
-    std::cout << "WS: Had " << std::chrono::duration_cast<std::chrono::milliseconds>(latency).count()
-    << "ms latency with the server." << std::endl;
+    LOG(INFO) << "WS: Had " << std::chrono::duration_cast<std::chrono::milliseconds>(latency).count()
+    << "ms latency with the server.";
 }
 
 [[noreturn]] void WebsocketInterface::runPings() {
@@ -346,8 +346,8 @@ void WebsocketInterface::checkPings() {
 
     std::chrono::time_point<std::chrono::system_clock> zeroTime = {};
     if (pingTimestamp != zeroTime && pongTimestamp == zeroTime) {
-        std::cout << "WS: Error in connection with " << url << ". "
-                  << "Error: Websocket timed out waiting for ping." << std::endl;
+        LOG(ERROR) << "WS: Error in connection with " << url << ". "
+                  << "Error: Websocket timed out waiting for ping.";
 
         abortApplication();
     }

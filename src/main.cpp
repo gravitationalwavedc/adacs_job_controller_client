@@ -68,6 +68,8 @@ int main(int argc, char* argv[]) {
 
     // Set logging defaults
     FLAGS_log_dir = (getExecutablePath() / "logs").string();
+    boost::filesystem::create_directories(FLAGS_log_dir);
+
     FLAGS_minloglevel = GLOG_MIN_LOG_LEVEL;
     google::InitGoogleLogging(argv[0]);
 
@@ -86,7 +88,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (pid == -1) {
-        std::cerr << "fork #1 failed" << std::endl;
+        LOG(ERROR) << "fork #1 failed";
         return 1;
     }
 
@@ -103,7 +105,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (pid == -1) {
-        std::cerr << "fork #2 failed" << std::endl;
+        LOG(ERROR) << "fork #2 failed";
         return 1;
     }
 

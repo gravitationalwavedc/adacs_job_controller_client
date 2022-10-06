@@ -201,6 +201,7 @@ add_executable(
         tests/fixtures/DatabaseFixture.h
         Jobs/tests/test_check_status.cpp
         Jobs/tests/test_archive_job.cpp
+        Jobs/tests/test_check_status_many_bundles.cpp
 )
 
 # Set the link libraries

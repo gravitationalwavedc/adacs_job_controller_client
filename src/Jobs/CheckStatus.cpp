@@ -28,8 +28,6 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
     // Get the status of the job
     auto _status = BundleManager::Singleton()->runBundle_json("status", job.bundleHash, details, "");
 
-    std::cout << _status.dump() << std::endl;
-
     // Check if the status has changed or not
     for (const auto& stat: _status["status"]) {
         auto info = stat["info"];

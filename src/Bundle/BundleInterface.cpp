@@ -3,6 +3,7 @@
 //
 
 #include <iostream>
+#include <glog/logging.h>
 #include "BundleInterface.h"
 #include "../lib/GeneralUtils.h"
 
@@ -10,9 +11,14 @@ BundleInterface::BundleInterface(const std::string& bundleHash) {
     static std::shared_mutex mutex_;
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
+    static PyThreadState* _state = nullptr;
+    if (_state != nullptr) {
+        PyEval_RestoreThread(_state);
+        _state = nullptr;
+    }
+
     pythonInterpreter = PythonInterface::newInterpreter();
 
-    static PyThreadState* _state = nullptr;
     if (!_state) {
         _state = PyEval_SaveThread();
     }
@@ -39,7 +45,7 @@ BundleInterface::BundleInterface(const std::string& bundleHash) {
     // Create a new python module
     pBundleModule = PyImport_ImportModule("bundle");
     if (PyErr_Occurred() != nullptr) {
-        std::cerr << "Error loading python bundle at path " << bundlePath << std::endl;
+        LOG(ERROR) << "Error loading python bundle at path " << bundlePath;
         PyErr_Print();
         abortApplication();
     }
@@ -142,7 +148,7 @@ auto BundleInterface::run(const std::string& bundleFunction, nlohmann::json deta
     // Call the bundle function
     auto *pResult = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
-        std::cerr << "Error calling bundle function " << bundleFunction << std::endl;
+        LOG(ERROR) << "Error calling bundle function " << bundleFunction;
         PyErr_Print();
         abortApplication();
     }
