@@ -27,9 +27,6 @@ auto BundleManager::Singleton() -> std::shared_ptr<BundleManager> {
 }
 
 auto BundleManager::runBundle_string(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> std::string {
-    static std::shared_mutex mutex_;
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-
     auto bundle = loadBundle(bundleHash);
 
     auto resultObject = bundle->run(bundleFunction, details, jobData);
@@ -40,9 +37,6 @@ auto BundleManager::runBundle_string(const std::string& bundleFunction, const st
 }
 
 auto BundleManager::runBundle_uint64(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> uint64_t {
-    static std::shared_mutex mutex_;
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-
     auto bundle = loadBundle(bundleHash);
 
     auto *resultObject = bundle->run(bundleFunction, details, jobData);
@@ -54,9 +48,6 @@ auto BundleManager::runBundle_uint64(const std::string& bundleFunction, const st
 
 auto BundleManager::runBundle_json(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details,
                                    const std::string& jobData) -> nlohmann::json {
-    static std::shared_mutex mutex_;
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-
     auto bundle = loadBundle(bundleHash);
 
     auto *resultObject = bundle->run(bundleFunction, details, jobData);

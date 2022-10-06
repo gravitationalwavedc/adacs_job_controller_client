@@ -12,8 +12,6 @@ int run(std::string wsToken) {
 //    auto websocketInterface = WebsocketInterface::Singleton();
 //    websocketInterface->start();
 
-    auto pythonInterface = PythonInterface();
-
     BundleInterface* bundle1, *bundle2;
     std::thread b1{[&bundle1] {
         bundle1 = new BundleInterface("a");
@@ -24,8 +22,13 @@ int run(std::string wsToken) {
     b1.join();
     b2.join();
 
+//
+//    bundle1 = new BundleInterface("a");
+//    bundle2 = new BundleInterface("b");
+
+    auto threadScope = PythonInterface::enableThreading();
+
     std::thread t1{[bundle1] {
-        auto threadScope = PythonInterface::enableThreading();
         bundle1->f("t1");
     }};
     std::thread t2{[bundle1] { bundle1->f("t2"); }};

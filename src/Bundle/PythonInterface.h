@@ -23,25 +23,6 @@ public:
     static auto MyPy_IsNone(PyObject* obj) -> bool;
 
 private:
-    // allow other threads to run
-    class EnableThreadsScope
-    {
-    public:
-        EnableThreadsScope()
-        {
-            _state = PyEval_SaveThread();
-        }
-
-        ~EnableThreadsScope()
-        {
-            PyEval_RestoreThread(_state);
-        }
-
-    private:
-
-        PyThreadState* _state;
-    };
-
     class RestoreThreadStateScope
     {
     public:
@@ -130,9 +111,6 @@ public:
 
         SubInterpreter()
         {
-            static std::shared_mutex mutex_;
-            std::unique_lock<std::shared_mutex> lock(mutex_);
-
             RestoreThreadStateScope restore;
 
             _ts = Py_NewInterpreter();
@@ -164,7 +142,6 @@ public:
     };
 
     static auto newInterpreter() -> std::shared_ptr<SubInterpreter>;
-    static auto enableThreading() -> PythonInterface::EnableThreadsScope;
 };
 
 

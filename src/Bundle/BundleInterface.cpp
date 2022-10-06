@@ -7,9 +7,17 @@
 #include "../lib/GeneralUtils.h"
 
 BundleInterface::BundleInterface(const std::string& bundleHash) {
+    static std::shared_mutex mutex_;
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+
     pythonInterpreter = PythonInterface::newInterpreter();
 
-    auto threadScope = PythonInterface::enableThreading();
+    static PyThreadState* _state = nullptr;
+    if (!_state) {
+        _state = PyEval_SaveThread();
+    }
+
+//    auto threadScope = PythonInterface::enableThreading();
 
     // Activate the new interpreter
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
@@ -115,7 +123,8 @@ auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
 }
 
 auto BundleInterface::run(const std::string& bundleFunction, nlohmann::json details, std::string jobData) -> PyObject* {
-    auto threadScope = PythonInterface::enableThreading();
+//    auto threadScope = PythonInterface::enableThreading();
+
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     // First we need to create a python object from the details json
@@ -149,21 +158,21 @@ auto BundleInterface::run(const std::string& bundleFunction, nlohmann::json deta
 }
 
 auto BundleInterface::toString(PyObject *value) -> std::string {
-    auto threadScope = PythonInterface::enableThreading();
+//    auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     return std::string{PyUnicode_AsUTF8(value)};
 }
 
 auto BundleInterface::toUint64(PyObject *value) -> uint64_t {
-    auto threadScope = PythonInterface::enableThreading();
+//    auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     return PyLong_AsLong(value);
 }
 
 auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
-    auto threadScope = PythonInterface::enableThreading();
+//    auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     // Get a pointer to the json.loads function
@@ -187,7 +196,7 @@ auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
 }
 
 void BundleInterface::disposeObject(PyObject* object) {
-    auto threadScope = PythonInterface::enableThreading();
+//    auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     Py_DECREF(object);

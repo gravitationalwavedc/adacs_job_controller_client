@@ -10,14 +10,14 @@
 #include "../lib/GeneralUtils.h"
 
 static void* _dlPythonLibHandle = nullptr;
-static PyInterpreterState* _interpreterState;
 
 template<typename R, typename ... Args> R getRetType(R(*)(Args...));
 
 #define ENSURE_DLFN(function, dlfn) if (dlfn == nullptr) { \
     std::cerr << "Unable to find required function " << #function << " in python dynamic library." << std::endl; \
     abortApplication();                                      \
-}
+}                                                          \
+std::cout << #function << std::endl;
 
 #define PYWRAP_0(function) auto function() -> decltype(function()) { \
  using ReturnType = decltype( getRetType(&function ) );                       \
@@ -85,7 +85,7 @@ PYWRAP_1(PyEval_RestoreThread, PyThreadState *, state)
 PYWRAP_1(PyThreadState_Clear, PyThreadState *, state)
 PYWRAP_0(PyThreadState_DeleteCurrent)
 PYWRAP_0(PyEval_SaveThread)
-PYWRAP_1(PyObject_Repr, PyObject *, obj)
+//PYWRAP_1(PyObject_Repr, PyObject *, obj)
 PYWRAP_1(PyUnicode_AsUTF8, PyObject *, obj)
 PYWRAP_1(PyUnicode_FromString, const char *, obj)
 PYWRAP_1(PyImport_ImportModule, const char *, obj)
@@ -123,10 +123,6 @@ auto PythonInterface::getPythonLibHandle() -> void * {
 
 auto PythonInterface::newInterpreter() -> std::shared_ptr<SubInterpreter> {
     return std::make_shared<SubInterpreter>();
-}
-
-auto PythonInterface::enableThreading() -> PythonInterface::EnableThreadsScope {
-    return {};
 }
 
 auto PythonInterface::MyPy_IsNone(PyObject *obj) -> bool {
