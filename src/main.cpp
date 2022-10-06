@@ -2,60 +2,27 @@
 #include "Bundle/BundleManager.h"
 #include "Websocket/WebsocketInterface.h"
 #include "Settings.h"
+#include "Jobs/JobHandling.h"
+#include <boost/filesystem.hpp>
 
 
 int run(std::string wsToken) {
-    auto bundleManager = std::make_shared<BundleManager>();
-
     // Start and connect the websocket
-//    WebsocketInterface::SingletonFactory(wsToken);
-//    auto websocketInterface = WebsocketInterface::Singleton();
-//    websocketInterface->start();
+    WebsocketInterface::SingletonFactory(wsToken);
+    auto websocketInterface = WebsocketInterface::Singleton();
+    websocketInterface->start();
 
-    BundleInterface* bundle1, *bundle2;
-    std::thread b1{[&bundle1] {
-        bundle1 = new BundleInterface("a");
-    }};
-    std::thread b2{[&bundle2] {
-        bundle2 = new BundleInterface("b");
-    }};
-    b1.join();
-    b2.join();
+    // Wait until the server has notified us that it's ready for packets
+    while (!WebsocketInterface::Singleton()->isServerReady()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 
-//
-//    bundle1 = new BundleInterface("a");
-//    bundle2 = new BundleInterface("b");
+    // Check job status forever
+    while (true) {
+        checkAllJobsStatus();
+        std::this_thread::sleep_for(std::chrono::seconds(JOB_CHECK_SECONDS));
+    }
 
-    auto threadScope = PythonInterface::enableThreading();
-
-    std::thread t1{[bundle1] {
-        bundle1->f("t1");
-    }};
-    std::thread t2{[bundle1] { bundle1->f("t2"); }};
-    std::thread t3{[bundle1] { bundle1->f("t3"); }};
-    std::thread t4{[bundle1] { bundle1->f("t4"); }};
-    std::thread t5{[bundle1] { bundle1->f("t5"); }};
-
-    std::thread t6{[bundle2] { bundle2->f("t1"); }};
-    std::thread t7{[bundle2] { bundle2->f("t2"); }};
-    std::thread t8{[bundle2] { bundle2->f("t3"); }};
-    std::thread t9{[bundle2] { bundle2->f("t4"); }};
-    std::thread t10{[bundle2] { bundle2->f("t5"); }};
-
-    t1.join();
-    t2.join();
-    t3.join();
-    t4.join();
-    t5.join();
-    t6.join();
-    t7.join();
-    t8.join();
-    t9.join();
-    t10.join();
-
-//    std::make_shared<WsClient>("test");
-
-    std::cout << "Hello, World!" << std::endl;
     return 0;
 }
 

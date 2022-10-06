@@ -35,12 +35,18 @@ public:
 
     void serverReady();
 
+
+    bool isServerReady() {
+        return bServerReady;
+    }
+
 private:
     std::shared_ptr<WsClient> client;
     std::shared_ptr<WsClient::Connection> pConnection = nullptr;
     std::thread clientThread;
     std::string url;
     std::promise<void> closePromise;
+    bool bServerReady;
 
 #ifndef BUILD_TESTS
     [[noreturn]] void run();

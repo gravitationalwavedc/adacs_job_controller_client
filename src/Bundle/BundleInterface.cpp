@@ -2,16 +2,16 @@
 // Created by lewis on 9/3/22.
 //
 
-#include <iostream>
-#include <glog/logging.h>
-#include "BundleInterface.h"
 #include "../lib/GeneralUtils.h"
+#include "BundleInterface.h"
+#include <glog/logging.h>
+#include <iostream>
 
 BundleInterface::BundleInterface(const std::string& bundleHash) {
     static std::shared_mutex mutex_;
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
-    static PyThreadState* _state = nullptr;
+    static PyThreadState *_state = nullptr;
     if (_state != nullptr) {
         PyEval_RestoreThread(_state);
         _state = nullptr;
@@ -19,11 +19,9 @@ BundleInterface::BundleInterface(const std::string& bundleHash) {
 
     pythonInterpreter = PythonInterface::newInterpreter();
 
-    if (!_state) {
+    if (_state == nullptr) {
         _state = PyEval_SaveThread();
     }
-
-//    auto threadScope = PythonInterface::enableThreading();
 
     // Activate the new interpreter
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
@@ -52,58 +50,6 @@ BundleInterface::BundleInterface(const std::string& bundleHash) {
 
     // Get the locals dict
     pLocal = PyModule_GetDict(pBundleModule);
-
-//    auto pValue = Py_CompileString("def blah(x):\n\tprint(5 * x)\n\timport sys\n\tprint(\"Python version\")\n\tprint (sys.version)\n\tprint(\"Version info.\")\n\tprint (sys.version_info)\n\treturn 77\n", "source", Py_file_input);
-//    if (PyErr_Occurred() != nullptr) {
-//        PyErr_Print();
-//        abortApplication();
-//    }
-//
-//    pValue = PyEval_EvalCode(pValue, pGlobal, pLocal);
-//    Py_DECREF(pValue);
-//
-//    //Get a pointer to the init
-//    auto* pFunc = PyObject_GetAttrString(pBundleModule, "blah");
-//
-//    //Build a tuple to hold my arguments (just the number 4 in this case)
-//    auto* pArgs = PyTuple_New(1);
-//    pValue = PyLong_FromLong(4);
-//    PyTuple_SetItem(pArgs, 0, pValue);
-//
-//    //Call my function, passing it the number four
-//    pValue = PyObject_CallObject(pFunc, pArgs);
-//    if (PyErr_Occurred() != nullptr) {
-//        PyErr_Print();
-//        abortApplication();
-//    }
-//
-//    Py_DECREF(pArgs);
-//    printf("Returned val: %ld\n", PyLong_AsLong(pValue));
-//    Py_DECREF(pValue);
-//
-//    Py_XDECREF(pFunc);
-}
-
-void BundleInterface::f(const char* tname)
-{
-    std::string code = R"PY(
-from __future__ import print_function
-import sys
-print("TNAME: sys.xxx={}".format(getattr(sys, 'xxx', 'attribute not set')))
-    )PY";
-
-    code.replace(code.find("TNAME"), 5, tname);
-
-    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
-
-    auto *pValue = Py_CompileString(code.c_str(), "source", Py_file_input);
-    if (PyErr_Occurred() != nullptr) {
-        PyErr_Print();
-        abortApplication();
-    }
-
-    pValue = PyEval_EvalCode(pValue, pGlobal, pLocal);
-    Py_DECREF(pValue);
 }
 
 auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
@@ -128,9 +74,7 @@ auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
     return pValue;
 }
 
-auto BundleInterface::run(const std::string& bundleFunction, nlohmann::json details, std::string jobData) -> PyObject* {
-//    auto threadScope = PythonInterface::enableThreading();
-
+auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::json& details, std::string jobData) -> PyObject* {
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     // First we need to create a python object from the details json
@@ -164,21 +108,18 @@ auto BundleInterface::run(const std::string& bundleFunction, nlohmann::json deta
 }
 
 auto BundleInterface::toString(PyObject *value) -> std::string {
-//    auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     return std::string{PyUnicode_AsUTF8(value)};
 }
 
 auto BundleInterface::toUint64(PyObject *value) -> uint64_t {
-//    auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     return PyLong_AsLong(value);
 }
 
 auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
-//    auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     // Get a pointer to the json.loads function
@@ -202,7 +143,6 @@ auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
 }
 
 void BundleInterface::disposeObject(PyObject* object) {
-//    auto threadScope = PythonInterface::enableThreading();
     PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
 
     Py_DECREF(object);

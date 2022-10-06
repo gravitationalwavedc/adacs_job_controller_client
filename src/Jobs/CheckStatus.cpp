@@ -144,29 +144,3 @@ void checkAllJobsStatus() {
         }
     }
 }
-
-//async def check_all_jobs(con):
-//    try:
-//        jobs = await sync_to_async(Job.objects.filter)(running=True, queued=False, job_id__isnull=False,
-//                                                       submitting=False)
-//        logging.info("Jobs {}".format(str(await sync_to_async(jobs.__repr__)())))
-//
-//        futures = []
-//        async for job in sync_to_async_iterable(jobs):
-//            futures.append(asyncio.ensure_future(check_job_status(con, job)))
-//
-//        if len(futures):
-//            await asyncio.wait(futures)
-//
-//    except Exception as Exp:
-//        # An exception occurred, log the exception to the log
-//        logging.error("Error in check job status")
-//        logging.error(type(Exp))
-//        logging.error(Exp.args)
-//        logging.error(Exp)
-//
-//        # Also log the stack trace
-//        exc_type, exc_value, exc_traceback = sys.exc_info()
-//        lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
-//        logging.error(''.join('!! ' + line for line in lines))
-//}

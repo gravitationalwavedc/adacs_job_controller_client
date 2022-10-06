@@ -11,7 +11,7 @@
 
 static std::shared_ptr<WebsocketInterface> singleton;
 
-WebsocketInterface::WebsocketInterface(const std::string& token) {
+WebsocketInterface::WebsocketInterface(const std::string& token) : bServerReady(false) {
     if (singleton) {
         LOG(ERROR) << "WebsocketInterface singleton was already initialised!";
         abortApplication();
@@ -336,13 +336,13 @@ void WebsocketInterface::handlePong() {
     while (true) {
         checkPings();
 
-        // Wait CLUSTER_MANAGER_PING_INTERVAL_SECONDS to check again
+        // Wait PING_INTERVAL_SECONDS to check again
         std::this_thread::sleep_for(std::chrono::seconds(PING_INTERVAL_SECONDS));
     }
 }
 
 void WebsocketInterface::checkPings() {
-    // Check for any websocket pings that didn't pong within INTERVAL_SECONDS, and terminate if so
+    // Check for any websocket pings that didn't pong within PING_INTERVAL_SECONDS, and terminate if so
 
     std::chrono::time_point<std::chrono::system_clock> zeroTime = {};
     if (pingTimestamp != zeroTime && pongTimestamp == zeroTime) {
