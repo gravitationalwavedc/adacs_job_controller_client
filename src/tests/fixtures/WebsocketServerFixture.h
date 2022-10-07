@@ -14,8 +14,9 @@
 #include <fstream>
 #include "../../lib/Messaging/Message.h"
 #include "../../Websocket/WebsocketInterface.h"
+#include "DatabaseFixture.h"
 
-class WebsocketServerFixture : public JsonConfigFixture {
+class WebsocketServerFixture : public JsonConfigFixture, public DatabaseFixture {
 public:
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::shared_ptr<TestWsServer> websocketServer;
@@ -33,9 +34,10 @@ public:
 
         websocketServer->endpoint["^(.*?)$"].on_open = [&, run](auto connection) {
             bServerConnectionClosed = false;
-            websocketServerConnectionPromise.set_value();
             pWebsocketServerConnection = connection;
             onWebsocketServerOpen(connection);
+
+            websocketServerConnectionPromise.set_value();
 
             Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
             msg.send(connection);
@@ -51,8 +53,8 @@ public:
             }
         };
 
-        websocketServer->endpoint["^(.*?)$"].on_message = [&]([[maybe_unused]] auto connection, auto in_message) {
-            onWebsocketServerMessage(in_message);
+        websocketServer->endpoint["^(.*?)$"].on_message = [&](auto connection, auto in_message) {
+            handleWebsocketServerMessage(connection, in_message);
         };
 
         websocketServer->endpoint["^(.*?)$"].on_ping = [&]([[maybe_unused]] auto connection) {
@@ -97,8 +99,20 @@ public:
         bReady.get_future().wait();
     }
 
+    void handleWebsocketServerMessage(auto connection, auto in_message) {
+        auto stringData = in_message->string();
+        auto message = std::make_shared<Message>(std::vector<uint8_t>(stringData.begin(), stringData.end()));
+
+        if (maybeHandleDbMessage(connection, message)) {
+            // Nothing to do if the message has been handled
+            return;
+        }
+
+        onWebsocketServerMessage(std::make_shared<Message>(**message->getdata()));
+    }
+
     virtual void onWebsocketServerOpen(std::shared_ptr<TestWsServer::Connection> connection) {}
-    virtual void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) {}
+    virtual void onWebsocketServerMessage(std::shared_ptr<Message> message) {}
     virtual void onWebsocketServerPing() {}
 };
 

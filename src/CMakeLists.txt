@@ -155,7 +155,6 @@ set(
         Files/FileDownload.cpp
         Files/FileHandling.h
         lib/jobclient_schema.h
-        DB/SqliteConnector.h
         lib/Exceptions/my_eh_throw.cpp
         lib/Exceptions/unwind-cxx.h
         lib/Exceptions/eh_atomics.h
@@ -171,7 +170,9 @@ set(
         Jobs/CheckStatus.cpp
         lib/JobStatus.h
         Jobs/ArchiveJob.cpp
-        DB/sJob.h DB/sStatus.h)
+        DB/sJob.h
+        DB/sStatus.h
+)
 
 # Set the main executable and source files
 add_executable(
@@ -202,6 +203,9 @@ add_executable(
         Jobs/tests/test_check_status.cpp
         Jobs/tests/test_archive_job.cpp
         Jobs/tests/test_check_status_many_bundles.cpp
+        tests/db/SqliteConnector.h
+        tests/db/sJobDb.h
+        tests/db/sStatusDb.h
 )
 
 # Set the link libraries

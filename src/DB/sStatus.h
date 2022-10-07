@@ -7,8 +7,6 @@
 
 #include <cstdint>
 #include <string>
-#include "SqliteConnector.h"
-#include "../lib/jobclient_schema.h"
 #include <thread>
 
 
@@ -18,151 +16,113 @@ struct sStatus {
     std::string what;
     uint32_t state;
 
-    static auto fromDb(auto &record) -> sStatus {
+    static auto fromMessage(const std::shared_ptr<Message>& msg) -> sStatus {
         return {
-                .id = static_cast<uint64_t>(record.id),
-                .jobId = static_cast<uint64_t>(record.jobId),
-                .what = record.what,
-                .state = static_cast<uint32_t>(record.state)
+                .id = msg->pop_ulong(),
+                .jobId = msg->pop_ulong(),
+                .what = msg->pop_string(),
+                .state = msg->pop_uint()
         };
     }
 
     static auto getJobStatusByJobIdAndWhat(uint64_t jobId, const std::string& what) {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJobstatus _jobStatusTable;
+        // Request the data from the server
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.push_ulong(jobId);
+        msg.push_string(what);
+        msg.send();
 
-        for (int count = 0; count < 100; count++) {
-            try {
-                auto statusResults = _database->operator()(
-                        select(all_of(_jobStatusTable))
-                                .from(_jobStatusTable)
-                                .where(
-                                        _jobStatusTable.jobId == jobId
-                                        and _jobStatusTable.what == what
-                                )
-                );
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
 
-                // Parse the objects
-                std::vector<sStatus> vStatus;
-                for (const auto &record: statusResults) {
-                    vStatus.push_back(sStatus::fromDb(record));
-                }
-
-                return vStatus;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to get record");
         }
 
-        throw std::runtime_error("Unable to save record, even after retrying");
+        // Get the number of returned records
+        auto numRecords = response->pop_uint();
+
+        // Read in the records as job objects
+        std::vector<sStatus> vStatus;
+        for (uint32_t index = 0; index < numRecords; index++) {
+            vStatus.push_back(fromMessage(response));
+        }
+
+        return vStatus;
     }
 
     static auto getJobStatusByJobId(uint64_t jobId) {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJobstatus _jobStatusTable;
+        // Request the data from the server
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOBSTATUS_GET_BY_JOB_ID, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.push_ulong(jobId);
+        msg.send();
 
-        for (int count = 0; count < 100; count++) {
-            try {
-                auto statusResults = _database->operator()(
-                        select(all_of(_jobStatusTable))
-                                .from(_jobStatusTable)
-                                .where(
-                                        _jobStatusTable.jobId == jobId
-                                )
-                );
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
 
-                // Parse the objects
-                std::vector<sStatus> vStatus;
-                for (const auto &record: statusResults) {
-                    vStatus.push_back(sStatus::fromDb(record));
-                }
-
-                return vStatus;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to get record");
         }
 
-        throw std::runtime_error("Unable to save record, even after retrying");
+        // Get the number of returned records
+        auto numRecords = response->pop_uint();
+
+        // Read in the records as job objects
+        std::vector<sStatus> vStatus;
+        for (uint32_t index = 0; index < numRecords; index++) {
+            vStatus.push_back(fromMessage(response));
+        }
+
+        return vStatus;
     }
 
     static void deleteByIdList(const std::vector<uint64_t>& ids) {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJobstatus _jobStatusTable;
-
-        for (int count = 0; count < 100; count++) {
-            try {
-                _database->operator()(
-                        remove_from(_jobStatusTable)
-                                .where(_jobStatusTable.id.in(sqlpp::value_list(ids)))
-                );
-                return;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
+        // Request the server delete records
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOBSTATUS_DELETE_BY_ID_LIST, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.push_uint(ids.size());
+        for (const auto& value : ids) {
+            msg.push_ulong(value);
         }
+        msg.send();
 
-        throw std::runtime_error("Unable to save record, even after retrying");
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
+
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to delete record");
+        }
     }
 
     void save() {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJobstatus _jobStatusTable;
+        // Request the server save the record
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOBSTATUS_SAVE, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.push_ulong(id);
+        msg.push_ulong(jobId);
+        msg.push_string(what);
+        msg.push_uint(state);
+        msg.send();
 
-        // Retry for up to 10 seconds
-        for (int count = 0; count < 100; count++) {
-            try {
-                if (id != 0) {
-                    // Update the record
-                    _database->operator()(
-                            update(_jobStatusTable)
-                                    .set(
-                                            _jobStatusTable.jobId = jobId,
-                                            _jobStatusTable.what = what,
-                                            _jobStatusTable.state = state
-                                    )
-                                    .where(
-                                            _jobStatusTable.id == static_cast<uint64_t>(id)
-                                    )
-                    );
-                } else {
-                    // Create the record
-                    id = _database->operator()(
-                            insert_into(_jobStatusTable)
-                                    .set(
-                                            _jobStatusTable.jobId = jobId,
-                                            _jobStatusTable.what = what,
-                                            _jobStatusTable.state = state
-                                    )
-                    );
-                }
-                return;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
+
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to save record");
         }
 
-        throw std::runtime_error("Unable to save record, even after retrying");
+        // Set the job id
+        id = response->pop_ulong();
     }
 };
 

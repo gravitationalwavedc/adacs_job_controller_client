@@ -29,12 +29,8 @@ public:
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> inMessage) override {
-        auto stringData = inMessage->string();
-        auto data = std::vector<uint8_t>(stringData.begin(), stringData.end());
-        auto message = Message(data);
-
-        receivedMessages.emplace_back(message.pop_bytes());
+    void onWebsocketServerMessage(std::shared_ptr<Message> message) {
+        receivedMessages.emplace_back(message->pop_bytes());
     }
 };
 

@@ -34,12 +34,14 @@ public:
     virtual void queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& data, Message::Priority priority, std::function<void()> callback = [] {});
 
     void serverReady();
-
-
     bool isServerReady() {
         return bServerReady;
     }
 
+    // Database helpers
+    auto generateDbRequestId() -> uint64_t;
+    std::shared_ptr<Message> getDbResponse(uint64_t requestId);
+    void setDbRequestResponse(const std::shared_ptr<Message>& msg);
 private:
     std::shared_ptr<WsClient> client;
     std::shared_ptr<WsClient::Connection> pConnection = nullptr;
@@ -61,6 +63,7 @@ private:
 
     auto doesHigherPriorityDataExist(uint64_t maxPriority) -> bool;
     static void reportWebsocketError(const SimpleWeb::error_code &errorCode);
+    std::string getOpensslCertPath();
 
     // Packet Queue is a:
     //  list of priorities - doesn't need any sync because it never changes
@@ -89,6 +92,9 @@ private:
     std::thread pingThread;
     std::thread schedulerThread;
     std::thread pruneThread;
+
+    std::map<uint64_t, std::promise<std::shared_ptr<Message>>> dbRequestPromises;
+    std::atomic<uint64_t> dbRequestCounter;
 
 #ifdef BUILD_TESTS
 public:

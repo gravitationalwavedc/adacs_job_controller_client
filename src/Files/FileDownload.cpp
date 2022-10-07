@@ -3,13 +3,13 @@
 //
 
 #include "FileHandling.h"
-#include "../DB/SqliteConnector.h"
-#include "../lib/jobclient_schema.h"
 #include <cstdint>
 #include <boost/filesystem.hpp>
 #include <fstream>
 #include "../Bundle/BundleManager.h"
 #include "glog/logging.h"
+#include "../DB/sJob.h"
+#include "../Settings.h"
 #include <future>
 
 std::map<std::string, std::promise<void>> pausedFileTransfers;
@@ -21,26 +21,18 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
     auto bundleHash = msg->pop_string();
     auto filePath = msg->pop_string();
 
-    // Create a database connection
-    auto database = SqliteConnector();
-
-    schema::JobclientJob jobTable;
-
     std::string workingDirectory;
 
     if (jobId != 0) {
         // Get the job
-        auto jobResults =
-                database->operator()(
-                        select(all_of(jobTable))
-                                .from(jobTable)
-                                .where(
-                                        jobTable.id == static_cast<uint64_t>(jobId)
-                                )
-                );
+        sJob job;
+        try {
+            job = sJob::getOrCreateByJobId(jobId);
 
-        // Check that a job was actually found
-        if (jobResults.empty()) {
+            if (job.id == 0) {
+                throw std::runtime_error("Job did not exist");
+            }
+        } catch (std::runtime_error&) {
             LOG(ERROR) << "Job does not exist with ID " << jobId;
 
             // Report that the job doesn't exist
@@ -51,9 +43,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             return;
         }
 
-        const auto *job = &jobResults.front();
-
-        if (static_cast<bool>(job->submitting)) {
+        if (static_cast<bool>(job.submitting)) {
             LOG(INFO) << "Job " << jobId << " is submitting, nothing to do";
 
             // Report that the job hasn't been submitted
@@ -65,7 +55,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
         }
 
         // Get the working directory
-        workingDirectory = job->workingDirectory;
+        workingDirectory = job.workingDirectory;
     } else {
         auto bundlePath = getBundlePath();
         workingDirectory = BundleManager::Singleton()->runBundle_string("working_directory", bundleHash, filePath,

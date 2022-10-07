@@ -6,7 +6,7 @@
 #include <boost/filesystem.hpp>
 
 
-int run(std::string wsToken) {
+[[noreturn]] int run(std::string wsToken) {
     // Start and connect the websocket
     WebsocketInterface::SingletonFactory(wsToken);
     auto websocketInterface = WebsocketInterface::Singleton();
@@ -22,12 +22,10 @@ int run(std::string wsToken) {
         checkAllJobsStatus();
         std::this_thread::sleep_for(std::chrono::seconds(JOB_CHECK_SECONDS));
     }
-
-    return 0;
 }
 
 
-int main(int argc, char* argv[]) {
+auto main(int argc, char* argv[]) -> int {
     if (argc != 2) {
         std::cerr << "Please provide the websocket token to connect with." << std::endl;
         return 1;

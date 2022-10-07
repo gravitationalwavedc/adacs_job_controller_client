@@ -42,6 +42,9 @@ void handleMessage(const std::shared_ptr<Message>& message) {
             // Submit a job
             handleJobSubmit(message);
             break;
+        case DB_RESPONSE:
+            WebsocketInterface::Singleton()->setDbRequestResponse(message);
+            break;
         default:
             LOG(WARNING) << "Message Handler: Got unknown message ID from the server " << message->getId();
     }

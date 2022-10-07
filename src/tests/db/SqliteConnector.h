@@ -2,11 +2,13 @@
 // Created by lewis on 5/3/20.
 //
 
-#ifndef GWCLOUD_JOB_SERVER_MYSQLCONNECTOR_H
-#define GWCLOUD_JOB_SERVER_MYSQLCONNECTOR_H
+#ifndef GWCLOUD_JOB_SERVER_SQLITELCONNECTOR_H
+#define GWCLOUD_JOB_SERVER_SQLITELCONNECTOR_H
 
-#include "../Settings.h"
-#include "../lib/GeneralUtils.h"
+#ifdef BUILD_TESTS
+
+#include "../../Settings.h"
+#include "../../lib/GeneralUtils.h"
 #include <sqlpp11/sqlite3/connection.h>
 #include <sqlpp11/sqlite3/connection_config.h>
 #include <sqlpp11/sqlpp11.h>
@@ -39,5 +41,7 @@ private:
     std::shared_ptr<sqlite::connection> database;
 };
 
-#endif //GWCLOUD_JOB_SERVER_MYSQLCONNECTOR_H
+#endif
+
+#endif //GWCLOUD_JOB_SERVER_SQLITELCONNECTOR_H
 

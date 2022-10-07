@@ -5,14 +5,13 @@
 #include "../../tests/fixtures/WebsocketServerFixture.h"
 #include "../../Websocket/WebsocketInterface.h"
 #include "../../lib/jobclient_schema.h"
-#include "../../DB/SqliteConnector.h"
 #include "../../tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../tests/fixtures/BundleFixture.h"
 #include "../../tests/fixtures/DatabaseFixture.h"
 
 extern std::map<std::string, std::promise<void>> pausedFileTransfers;
 
-struct FileDownloadTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture, public DatabaseFixture {
+struct FileDownloadTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::string token;
     std::queue<std::shared_ptr<Message>> receivedMessages;
@@ -73,9 +72,8 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) {
-        auto stringData = message->string();
-        receivedMessages.push( std::make_shared<Message>(std::vector<uint8_t>(stringData.begin(), stringData.end())));
+    void onWebsocketServerMessage(std::shared_ptr<Message> message) {
+        receivedMessages.push(message);
         lastMessageTime = std::chrono::system_clock::now();
     }
 
@@ -166,7 +164,7 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
 BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
     BOOST_AUTO_TEST_CASE(test_get_file_download_job_not_exist) {
         Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId + 1000);
+        msg.push_int(1234 + 1000);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(tempFile);
@@ -185,7 +183,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         database->operator()(update(jobTable).set(jobTable.submitting = 1).where(jobTable.id == jobId));
 
         Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(tempFile);
@@ -204,7 +202,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         database->operator()(update(jobTable).set(jobTable.workingDirectory = "/usr").where(jobTable.id == jobId));
 
         Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string("../" + tempFile);
@@ -221,7 +219,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
     BOOST_AUTO_TEST_CASE(test_get_file_download_job_file_not_exist) {
         Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(tempFile + ".not.real");
@@ -238,7 +236,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
     BOOST_AUTO_TEST_CASE(test_get_file_download_job_file_is_a_directory) {
         Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(boost::filesystem::path(tempDir2).filename().string());
@@ -319,7 +317,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         auto downloadUuid = generateUUID();
 
         Message msg(FILE_DOWNLOAD, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string(downloadUuid);
         msg.push_string("some_bundle_hash");
         msg.push_string(tempFile2.substr(tempDir.length()));

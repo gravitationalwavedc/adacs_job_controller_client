@@ -4,10 +4,11 @@
 
 #include "../lib/GeneralUtils.h"
 #include "WebsocketInterface.h"
-
 #include <utility>
 #include "../Settings.h"
 #include "../Core/MessageHandler.h"
+#include "subprocess.hpp"
+#include <boost/filesystem.hpp>
 
 static std::shared_ptr<WebsocketInterface> singleton;
 
@@ -17,10 +18,20 @@ WebsocketInterface::WebsocketInterface(const std::string& token) : bServerReady(
         abortApplication();
     }
 
+    // Find the path to the system certificate store and set the SSL_CERT_FILE environment variable
+    auto certPath = boost::filesystem::path(getOpensslCertPath()) / "cert.pem";
+    if (!boost::filesystem::exists(certPath)) {
+        LOG(ERROR) << "Generated OpenSSL cert file '" << certPath << "' doesn't exist. Please set it manually via the SSL_CERT_FILE environment variable";
+    }
+    setenv("SSL_CERT_FILE", certPath.c_str(), 0);
+
     // Create the list of priorities in order
     for (auto i = static_cast<uint32_t>(Message::Priority::Highest); i <= static_cast<uint32_t>(Message::Priority::Lowest); i++) {
         queue.emplace_back(std::make_shared<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<sDataItem, false>>>>());
     }
+
+    // Set up the db requests
+    dbRequestCounter = 0;
 
     auto config = readClientConfig();
     url = std::string{config["websocketEndpoint"]} + "?token=" + token;
@@ -373,4 +384,87 @@ void WebsocketInterface::checkPings() {
             // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers, readability-magic-numbers)
             137
     );
+}
+
+std::string WebsocketInterface::getOpensslCertPath() {
+    auto proc = subprocess::Popen(
+            {"openssl", "version", "-d"},
+            subprocess::output{subprocess::PIPE},
+            subprocess::error{subprocess::PIPE},
+            subprocess::shell{false}
+    );
+
+    // Get the output from the process
+    auto communication = proc.communicate();
+    auto obuf = communication.first;
+    auto ebuf = communication.second;
+
+    std::string sOut(obuf.buf.begin(), obuf.buf.end());
+    std::string sErr(ebuf.buf.begin(), ebuf.buf.end());
+
+    if (proc.retcode() != 0) {
+        LOG(ERROR) << "Error fetching openssl certificate directory";
+        LOG(ERROR) << "stdout: " << std::endl << sOut;
+        LOG(ERROR) << "stderr: " << std::endl << sErr;
+        abortApplication();
+    }
+
+    // Split the output and find the "OPENSSLDIR" line
+    std::string infoLine;
+    for (const auto& line : splitString(sOut, "\n")) {
+        if (line.starts_with("OPENSSLDIR")) {
+            infoLine = {line};
+            break;
+        }
+    }
+
+    if (infoLine.empty()) {
+        LOG(ERROR) << "Error fetching openssl certificate directory";
+        LOG(ERROR) << "stdout: " << std::endl << sOut;
+        LOG(ERROR) << "stderr: " << std::endl << sErr;
+        abortApplication();
+    }
+
+    // Get the path to the certificates
+    auto bits = splitString(infoLine, " ");
+    if (bits.size() != 2) {
+        LOG(ERROR) << "Error fetching openssl certificate directory";
+        LOG(ERROR) << "stdout: " << std::endl << sOut;
+        LOG(ERROR) << "stderr: " << std::endl << sErr;
+        abortApplication();
+    }
+
+    while (bits[1].find("\"") != std::string::npos) {
+        bits[1].replace(bits[1].find("\""), 1, "");
+    }
+
+    return bits[1];
+}
+
+auto WebsocketInterface::generateDbRequestId() -> uint64_t {
+    // Atomically increment the request counter and get the new value
+    auto result = dbRequestCounter++;
+
+    // Create a new promise for this request id
+    dbRequestPromises.emplace(result, std::promise<std::shared_ptr<Message>>{});
+
+    return result;
+}
+
+std::shared_ptr<Message> WebsocketInterface::getDbResponse(uint64_t dbRequestId) {
+    // Wait for the future to be set
+    auto result = dbRequestPromises[dbRequestId].get_future().get();
+
+    // We're done with the dbRequestId now, so remove it from the promises map
+    dbRequestPromises.erase(dbRequestId);
+
+    return result;
+}
+
+void WebsocketInterface::setDbRequestResponse(const std::shared_ptr<Message>& message) {
+    // The first ulong is always the db request id
+    auto dbRequestId = message->pop_ulong();
+
+    // Fulfil the promise
+    dbRequestPromises[dbRequestId].set_value(message);
 }

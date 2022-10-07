@@ -3,14 +3,12 @@
 //
 
 #include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../../Websocket/WebsocketInterface.h"
 #include "../../lib/jobclient_schema.h"
-#include "../../DB/SqliteConnector.h"
 #include "../../tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../tests/fixtures/BundleFixture.h"
 #include "../../tests/fixtures/DatabaseFixture.h"
 
-struct FileListTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture, public DatabaseFixture {
+struct FileListTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::string token;
     std::shared_ptr<Message> receivedMessage;
@@ -71,9 +69,8 @@ struct FileListTestDataFixture : public WebsocketServerFixture, public Temporary
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) {
-        auto stringData = message->string();
-        receivedMessage = std::make_shared<Message>(std::vector<uint8_t>(stringData.begin(), stringData.end()));
+    void onWebsocketServerMessage(std::shared_ptr<Message> message) {
+        receivedMessage = message;
         promMessageReceived.set_value();
     }
 };
@@ -81,7 +78,7 @@ struct FileListTestDataFixture : public WebsocketServerFixture, public Temporary
 BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_not_exist) {
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId + 1000);
+        msg.push_int(1234 + 1000);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(tempDir);
@@ -99,7 +96,7 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
         database->operator()(update(jobTable).set(jobTable.submitting = 1).where(jobTable.id == jobId));
 
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(tempDir);
@@ -117,7 +114,7 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
         database->operator()(update(jobTable).set(jobTable.workingDirectory = "/usr").where(jobTable.id == jobId));
 
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string("../" + tempDir);
@@ -133,7 +130,7 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_directory_not_exist) {
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(tempDir + "/not/real/");
@@ -149,7 +146,7 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_directory_is_a_file) {
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(boost::filesystem::path(tempFile).filename().string());
@@ -165,7 +162,7 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_recursive) {
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string("/");
@@ -193,7 +190,7 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_recursive_2) {
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(tempDir2.substr(tempDir.length()));
@@ -213,7 +210,7 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_not_recursive) {
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string("/");
@@ -237,7 +234,7 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_not_recursive_2) {
         Message msg(FILE_LIST, Message::Priority::Highest, SYSTEM_SOURCE);
-        msg.push_int(jobId);
+        msg.push_int(1234);
         msg.push_string("some_uuid");
         msg.push_string("some_bundle_hash");
         msg.push_string(tempDir2.substr(tempDir.length()));

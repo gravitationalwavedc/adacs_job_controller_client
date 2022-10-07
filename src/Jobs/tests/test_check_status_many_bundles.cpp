@@ -5,7 +5,6 @@
 #include "../../tests/fixtures/WebsocketServerFixture.h"
 #include "../../Websocket/WebsocketInterface.h"
 #include "../../lib/jobclient_schema.h"
-#include "../../DB/SqliteConnector.h"
 #include "../../tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../tests/fixtures/BundleFixture.h"
 #include "../JobHandling.h"
@@ -78,7 +77,7 @@ struct JobCheckStatusManyBundlesTestDataFixture
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(std::shared_ptr<TestWsServer::InMessage> message) {
+    void onWebsocketServerMessage(std::shared_ptr<Message> message) {
         receivedMessages++;
     }
 };

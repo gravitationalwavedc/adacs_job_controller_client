@@ -16,6 +16,7 @@ void abortApplication();
 auto getBundlePath() -> std::string;
 void dumpExceptions(const std::exception& exception);
 auto getDefaultJobDetails() -> nlohmann::json;
+auto splitString(const std::string& str, const std::string& delimiter) -> std::vector<std::string>;
 
 #ifdef BUILD_TESTS
 // NOLINTBEGIN

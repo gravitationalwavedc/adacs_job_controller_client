@@ -7,182 +7,150 @@
 
 #include <cstdint>
 #include <string>
-#include "SqliteConnector.h"
-#include "../lib/jobclient_schema.h"
+#include "../lib/Messaging/Message.h"
 #include <thread>
+#include "../Websocket/WebsocketInterface.h"
 
 
 struct sJob {
-    static auto fromRecord(auto record) -> sJob {
+    static auto fromMessage(const std::shared_ptr<Message>& msg) -> sJob {
         return {
-                static_cast<uint64_t>(record->id),
-                static_cast<uint64_t>(record->jobId),
-                static_cast<uint64_t>(record->schedulerId),
-                static_cast<uint32_t>(record->submitting) == 1,
-                static_cast<uint32_t>(record->submittingCount),
-                record->bundleHash,
-                record->workingDirectory,
-                static_cast<uint32_t>(record->queued) == 1,
-                record->params,
-                static_cast<uint32_t>(record->running) == 1
+                .id = msg->pop_ulong(),
+                .jobId = msg->pop_ulong(),
+                .schedulerId = msg->pop_ulong(),
+                .submitting = msg->pop_bool(),
+                .submittingCount = msg->pop_uint(),
+                .bundleHash = msg->pop_string(),
+                .workingDirectory = msg->pop_string(),
+                .queued = msg->pop_bool(),
+                .params = msg->pop_string(),
+                .running = msg->pop_bool()
         };
     }
 
-    static auto getOrCreateByJobId(auto jobId) -> sJob {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJob _jobTable;
+    static auto getOrCreateByJobId(uint64_t jobId) -> sJob {
+        // Request the data from the server
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOB_GET_BY_JOB_ID, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.push_ulong(jobId);
+        msg.send();
 
-        // Retry for up to 10 seconds
-        for (int count = 0; count < 100; count++) {
-            try {
-                auto jobResults =
-                        _database->operator()(
-                                select(all_of(_jobTable))
-                                        .from(_jobTable)
-                                        .where(
-                                                _jobTable.jobId == static_cast<uint64_t>(jobId)
-                                        )
-                        );
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
 
-                if (!jobResults.empty()) {
-                    return fromRecord(&jobResults.front());
-                }
-
-                return {};
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to get record");
         }
 
-        throw std::runtime_error("Unable to get record, even after retrying");
+        // Check that a record was provided
+        if (response->pop_uint() == 0) {
+            // No, return a new object
+            return {};
+        }
+
+        // Return a job object from the message
+        return sJob::fromMessage(response);
     }
 
     static std::vector<sJob> getRunningJobs() {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJob _jobTable;
+        // Request the running jobs from the server
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOB_GET_RUNNING_JOBS, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.send();
 
-        // Retry for up to 10 seconds
-        for (int count = 0; count < 100; count++) {
-            try {
-                auto jobResults =
-                        _database->operator()(
-                                select(all_of(_jobTable))
-                                        .from(_jobTable)
-                                        .where(
-                                                _jobTable.running == 1
-                                                and _jobTable.queued == 0
-                                                and _jobTable.jobId != 0
-                                                and _jobTable.submitting == 0
-                                        )
-                        );
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
 
-                std::vector<sJob> jobs;
-                for (const auto& job : jobResults) {
-                    jobs.push_back(fromRecord(&job));
-                }
-
-                return jobs;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to get record");
         }
 
-        throw std::runtime_error("Unable to get record, even after retrying");
+        // Get the number of returned records
+        auto numRecords = response->pop_uint();
+
+        // Read in the records as job objects
+        std::vector<sJob> jobs;
+        for (uint32_t index = 0; index < numRecords; index++) {
+            jobs.push_back(fromMessage(response));
+        }
+
+        return jobs;
     }
 
     void _delete() const {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJob _jobTable;
+        // Request the server delete this record
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOB_DELETE, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.push_ulong(id);
+        msg.send();
 
-        // Retry for up to 10 seconds
-        for (int count = 0; count < 100; count++) {
-            try {
-                _database->operator()(
-                        remove_from(_jobTable)
-                                .where(
-                                        _jobTable.id == static_cast<uint64_t>(id)
-                                )
-                );
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
 
-                return;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to delete record");
         }
-
-        throw std::runtime_error("Unable to delete record, even after retrying");
     }
 
     void save() {
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJob _jobTable;
+        // Request the server save the record
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOB_SAVE, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.push_ulong(id);
+        msg.push_ulong(jobId);
+        msg.push_ulong(schedulerId);
+        msg.push_bool(submitting);
+        msg.push_uint(submittingCount);
+        msg.push_string(bundleHash);
+        msg.push_string(workingDirectory);
+        msg.push_bool(queued);
+        msg.push_string(params);
+        msg.push_bool(running);
+        msg.send();
 
-        // Retry for up to 10 seconds
-        for (int count = 0; count < 100; count++) {
-            try {
-                if (id != 0) {
-                    // Update the record
-                    _database->operator()(
-                            update(_jobTable)
-                                    .set(
-                                            _jobTable.jobId = jobId,
-                                            _jobTable.schedulerId = schedulerId,
-                                            _jobTable.submitting = submitting ? 1 : 0,
-                                            _jobTable.submittingCount = submittingCount,
-                                            _jobTable.bundleHash = bundleHash,
-                                            _jobTable.workingDirectory = workingDirectory,
-                                            _jobTable.queued = queued ? 1 : 0,
-                                            _jobTable.params = params,
-                                            _jobTable.running = running ? 1 : 0
-                                    )
-                                    .where(
-                                            _jobTable.id == static_cast<uint64_t>(id)
-                                    )
-                    );
-                } else {
-                    // Create the record
-                    id = _database->operator()(
-                            insert_into(_jobTable)
-                                    .set(
-                                            _jobTable.jobId = jobId,
-                                            _jobTable.schedulerId = schedulerId,
-                                            _jobTable.submitting = submitting ? 1 : 0,
-                                            _jobTable.submittingCount = submittingCount,
-                                            _jobTable.bundleHash = bundleHash,
-                                            _jobTable.workingDirectory = workingDirectory,
-                                            _jobTable.queued = queued ? 1 : 0,
-                                            _jobTable.params = params,
-                                            _jobTable.running = running ? 1 : 0
-                                    )
-                    );
-                }
-                return;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
+
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to save record");
         }
 
-        throw std::runtime_error("Unable to save record, even after retrying");
+        // Set the job id
+        id = response->pop_ulong();
+    }
+
+    static sJob getJobById(uint64_t id) {
+        // Request the data from the server
+        auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+        auto msg = Message(DB_JOB_GET_BY_ID, Message::Priority::Medium, "database");
+        msg.push_ulong(dbRequestId);
+        msg.push_ulong(id);
+        msg.send();
+
+        // Wait for the response
+        auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
+
+        // Check for success
+        if (!response->pop_bool()) {
+            throw std::runtime_error("Unable to get record");
+        }
+
+        // Check that a record was provided
+        if (response->pop_uint() == 0) {
+            // Nope, record didn't exist
+            throw std::runtime_error("Unable to get record");
+        }
+
+        // Return a job object from the message
+        return sJob::fromMessage(response);
     }
 
     void refreshFromDb() {
@@ -190,36 +158,7 @@ struct sJob {
             throw std::runtime_error("Can't refresh a record without an id");
         }
 
-        SqliteConnector _database = SqliteConnector();
-        schema::JobclientJob _jobTable;
-
-        // Retry for up to 10 seconds
-        for (int count = 0; count < 100; count++) {
-            try {
-                auto jobResults =
-                        _database->operator()(
-                                select(all_of(_jobTable))
-                                        .from(_jobTable)
-                                        .where(
-                                                _jobTable.id == static_cast<uint64_t>(id)
-                                        )
-                        );
-
-                if (!jobResults.empty()) {
-                    *this = fromRecord(&jobResults.front());
-                }
-                return;
-            } catch (sqlpp::exception &except) {
-                if (std::string(except.what()).find("database is locked") != std::string::npos) {
-                    // Wait a small moment and try again
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
-                    throw except;
-                }
-            }
-        }
-
-        throw std::runtime_error("Unable to refresh record, even after retrying");
+        *this = getJobById(id);
     }
 
     uint64_t id = 0;
