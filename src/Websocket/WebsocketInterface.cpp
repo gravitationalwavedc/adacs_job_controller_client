@@ -451,7 +451,7 @@ auto WebsocketInterface::generateDbRequestId() -> uint64_t {
     return result;
 }
 
-std::shared_ptr<Message> WebsocketInterface::getDbResponse(uint64_t dbRequestId) {
+auto WebsocketInterface::getDbResponse(uint64_t dbRequestId) -> std::shared_ptr<Message> {
     // Wait for the future to be set
     auto result = dbRequestPromises[dbRequestId].get_future().get();
 
@@ -464,6 +464,11 @@ std::shared_ptr<Message> WebsocketInterface::getDbResponse(uint64_t dbRequestId)
 void WebsocketInterface::setDbRequestResponse(const std::shared_ptr<Message>& message) {
     // The first ulong is always the db request id
     auto dbRequestId = message->pop_ulong();
+
+    if (!dbRequestPromises.contains(dbRequestId)) {
+        LOG(WARNING) << "Got unexpected DB Request ID response " << dbRequestId;
+        return;
+    }
 
     // Fulfil the promise
     dbRequestPromises[dbRequestId].set_value(message);
