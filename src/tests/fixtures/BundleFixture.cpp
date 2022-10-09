@@ -54,3 +54,13 @@ def status(details, job_data):
     import json
     return json.loads("""iii""")
 )PY";
+
+std::string bundleDbCreateOrUpdateJob = R"PY(
+import _bundledb
+import json
+
+def submit(details, job_data):
+    job = json.loads("""xxx""")
+    _bundledb.create_or_update_job(job)
+    return job
+)PY";

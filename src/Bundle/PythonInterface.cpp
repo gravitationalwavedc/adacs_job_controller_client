@@ -9,6 +9,7 @@
 
 #include "PythonInterface.h"
 #include "../lib/GeneralUtils.h"
+#include "BundleDB.h"
 
 static void* _dlPythonLibHandle = nullptr;
 
@@ -83,6 +84,20 @@ PYWRAP_1(PyUnicode_FromString, const char *, obj)
 PYWRAP_1(PyImport_ImportModule, const char *, obj)
 PYWRAP_1(PySys_GetObject, const char *, obj)
 PYWRAP_2(PyList_Append, PyObject *, list, PyObject *, item)
+PYWRAP_2(PyModule_Create2, struct PyModuleDef*, moduleDef, int, apiver)
+PYWRAP_1(PyObject_Repr, PyObject *, object)
+PYWRAP_1(PyLong_FromLong, long, value)
+PYWRAP_3(PyDict_SetItem, PyObject*, dict, PyObject*, key, PyObject*, value)
+PYWRAP_1(PyObject_Type, PyObject*, object)
+PYWRAP_2(PyTuple_GetItem, PyObject*, tuple, Py_ssize_t, pos)
+
+// Exceptional functions (weird arguments or whatever)
+auto PyImport_AppendInittab(const char * name, PyObject* (*initfunc)(void)) -> decltype(getRetType(&PyImport_AppendInittab)) { \
+ using ReturnType = decltype( getRetType(&PyImport_AppendInittab ) );                       \
+ auto func = reinterpret_cast<ReturnType (*)(...)>(dlsym(PythonInterface::getPythonLibHandle(), "PyImport_AppendInittab"));\
+ ENSURE_DLFN(PyImport_AppendInittab, func) \
+ return func(name, initfunc); \
+};
 
 // Python 3.8+ changed this to a function
 #if PY_MINOR_VERSION >= 8
@@ -102,6 +117,12 @@ void PythonInterface::initPython(const std::string& sPythonLibrary) {
     // Set the library handle and initialise the python interpreter
     _dlPythonLibHandle = libHandle;
 
+    // Expose the _bundledb module, should be before Py_Initialize()
+    if (PyImport_AppendInittab("_bundledb", PyInit_bundledb) == -1) {
+        LOG(ERROR) << "Could not extend in-built modules table";
+        abortApplication();
+    }
+
     Py_Initialize();
     PyEval_InitThreads();
 }
@@ -117,7 +138,13 @@ auto PythonInterface::newInterpreter() -> std::shared_ptr<SubInterpreter> {
 }
 
 auto PythonInterface::MyPy_IsNone(PyObject *obj) -> bool {
-    auto *my_Py_NoneStruct = reinterpret_cast<PyObject*>(dlsym(PythonInterface::getPythonLibHandle(), "_Py_NoneStruct"));
+    static auto *my_Py_NoneStruct = reinterpret_cast<PyObject*>(dlsym(PythonInterface::getPythonLibHandle(), "_Py_NoneStruct"));
 
     return obj == my_Py_NoneStruct;
+}
+
+auto PythonInterface::My_Py_NoneStruct() -> PyObject * {
+    static auto *my_Py_NoneStruct = reinterpret_cast<PyObject*>(dlsym(PythonInterface::getPythonLibHandle(), "_Py_NoneStruct"));
+
+    return my_Py_NoneStruct;
 }

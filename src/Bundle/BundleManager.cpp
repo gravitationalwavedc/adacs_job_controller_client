@@ -29,6 +29,8 @@ auto BundleManager::Singleton() -> std::shared_ptr<BundleManager> {
 auto BundleManager::runBundle_string(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> std::string {
     auto bundle = loadBundle(bundleHash);
 
+    PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
+
     auto resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->toString(resultObject);
     bundle->disposeObject(resultObject);
@@ -38,6 +40,8 @@ auto BundleManager::runBundle_string(const std::string& bundleFunction, const st
 
 auto BundleManager::runBundle_uint64(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> uint64_t {
     auto bundle = loadBundle(bundleHash);
+
+    PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
 
     auto *resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->toUint64(resultObject);
@@ -49,6 +53,8 @@ auto BundleManager::runBundle_uint64(const std::string& bundleFunction, const st
 auto BundleManager::runBundle_json(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details,
                                    const std::string& jobData) -> nlohmann::json {
     auto bundle = loadBundle(bundleHash);
+
+    PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
 
     auto *resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->jsonDumps(resultObject);

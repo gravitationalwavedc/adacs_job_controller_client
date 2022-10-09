@@ -172,6 +172,8 @@ set(
         Jobs/ArchiveJob.cpp
         DB/sJob.h
         DB/sStatus.h
+        Bundle/BundleDB.cpp
+        Bundle/BundleDB.h
 )
 
 # Set the main executable and source files
@@ -206,6 +208,7 @@ add_executable(
         tests/db/SqliteConnector.h
         tests/db/sJobDb.h
         tests/db/sStatusDb.h
+        Bundle/tests/bundle_db_tests.cpp
 )
 
 # Set the link libraries

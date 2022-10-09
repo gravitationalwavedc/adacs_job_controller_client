@@ -108,11 +108,11 @@ public:
             return;
         }
 
-        onWebsocketServerMessage(std::make_shared<Message>(**message->getdata()));
+        onWebsocketServerMessage(std::make_shared<Message>(**message->getdata()), connection);
     }
 
-    virtual void onWebsocketServerOpen(std::shared_ptr<TestWsServer::Connection> connection) {}
-    virtual void onWebsocketServerMessage(std::shared_ptr<Message> message) {}
+    virtual void onWebsocketServerOpen(const std::shared_ptr<TestWsServer::Connection>& connection) {}
+    virtual void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {}
     virtual void onWebsocketServerPing() {}
 };
 

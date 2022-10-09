@@ -47,6 +47,8 @@ constexpr uint32_t DB_JOBSTATUS_SAVE = 6003;
 
 constexpr uint32_t DB_RESPONSE = 7000;
 
+constexpr uint32_t DB_BUNDLE_CREATE_OR_UPDATE_JOB = 8000;
+
 class Message {
 public:
     enum Priority {

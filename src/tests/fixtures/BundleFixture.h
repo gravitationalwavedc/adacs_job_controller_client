@@ -16,6 +16,7 @@ extern std::string jobSubmitScript;
 extern std::string jobSubmitErrorScript;
 extern std::string jobCheckStatusScript;
 extern std::string jobSubmitCheckStatusScript;
+extern std::string bundleDbCreateOrUpdateJob;
 
 class BundleFixture {
 private:
@@ -109,6 +110,20 @@ public:
         script.replace(script.find("ggg"), 3, schedulerId);
 
         script.replace(script.find("iii"), 3, statusResult.dump());
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeBundleDbCreateOrUpdateJob(const std::string& hash, const nlohmann::json& job) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{bundleDbCreateOrUpdateJob};
+
+        script.replace(script.find("xxx"), 3, job.dump());
 
         std::ofstream ostr((path / "bundle.py").string());
         ostr << script;

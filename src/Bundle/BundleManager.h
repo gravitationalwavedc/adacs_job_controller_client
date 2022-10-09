@@ -21,9 +21,9 @@ public:
     auto runBundle_uint64(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> uint64_t;
     auto runBundle_json(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> nlohmann::json;
 
-private:
     auto loadBundle(const std::string& bundleHash) -> std::shared_ptr<BundleInterface>;
 
+private:
     std::shared_ptr<PythonInterface> pythonInterface;
     std::map<std::string, std::shared_ptr<BundleInterface>> bundles;
 };

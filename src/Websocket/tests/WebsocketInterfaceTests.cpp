@@ -29,7 +29,7 @@ public:
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    void onWebsocketServerMessage(std::shared_ptr<Message> message) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
         receivedMessages.emplace_back(message->pop_bytes());
     }
 };

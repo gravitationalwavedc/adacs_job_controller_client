@@ -16,13 +16,15 @@ class BundleInterface {
 public:
     BundleInterface(const std::string& bundleHash);
 
-    auto run(const std::string& bundleFunction, const nlohmann::json& details, std::string jobData) -> PyObject *;
+    auto run(const std::string& bundleFunction, const nlohmann::json& details, const std::string& jobData) -> PyObject *;
     auto toString(PyObject*) -> std::string;
     auto toUint64(PyObject *value) -> uint64_t;
     auto jsonDumps(PyObject *obj) -> std::string;
     void disposeObject(PyObject*);
 
-    void f(const char *tname);
+    auto threadScope() -> PythonInterface::SubInterpreter::ThreadScope {
+        return {pythonInterpreter->interp()};
+    }
 
     class none_exception : public std::exception {
 
@@ -35,6 +37,8 @@ private:
     PyObject *pBundleModule;
 
     PyObject *jsonModule;
+
+    std::string bundleHash;
 
     auto jsonLoads(const std::string& content) -> PyObject *;
 };

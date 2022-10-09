@@ -60,7 +60,7 @@ struct JobSubmitTestDataFixture : public WebsocketServerFixture, public BundleFi
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(std::shared_ptr<Message> message) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
         receivedMessages.push(message);
     }
 };

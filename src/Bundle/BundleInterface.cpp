@@ -6,8 +6,11 @@
 #include "BundleInterface.h"
 #include <glog/logging.h>
 #include <iostream>
+#include <thread>
 
-BundleInterface::BundleInterface(const std::string& bundleHash) {
+std::map<std::thread::id, std::string> threadBundleHashMap;
+
+BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bundleHash) {
     static std::shared_mutex mutex_;
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
@@ -50,6 +53,9 @@ BundleInterface::BundleInterface(const std::string& bundleHash) {
 
     // Get the locals dict
     pLocal = PyModule_GetDict(pBundleModule);
+
+    // Make sure the bundle hash is set in the global object
+    PyDict_SetItemString(pLocal, "__bundle_hash__", PyUnicode_FromString(bundleHash.c_str()));
 }
 
 auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
@@ -74,9 +80,7 @@ auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
     return pValue;
 }
 
-auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::json& details, std::string jobData) -> PyObject* {
-    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
-
+auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::json& details, const std::string& jobData) -> PyObject* {
     // First we need to create a python object from the details json
     auto *jsonObj = jsonLoads(details.dump());
 
@@ -89,6 +93,9 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
     auto* pValue = PyUnicode_FromString(jobData.c_str());
     PyTuple_SetItem(pArgs, 1, pValue);
 
+    // Set up the thread bundle hash map
+    threadBundleHashMap.emplace(std::this_thread::get_id(), bundleHash);
+
     // Call the bundle function
     auto *pResult = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
@@ -96,6 +103,9 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
         PyErr_Print();
         abortApplication();
     }
+
+    // Clear the thread from the thread bundle hash map
+    threadBundleHashMap.erase(std::this_thread::get_id());
 
     Py_DECREF(pArgs);
     Py_XDECREF(pFunc);
@@ -108,20 +118,14 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
 }
 
 auto BundleInterface::toString(PyObject *value) -> std::string {
-    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
-
     return std::string{PyUnicode_AsUTF8(value)};
 }
 
 auto BundleInterface::toUint64(PyObject *value) -> uint64_t {
-    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
-
     return PyLong_AsLong(value);
 }
 
 auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
-    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
-
     // Get a pointer to the json.loads function
     auto* pFunc = PyObject_GetAttrString(jsonModule, "dumps");
 
@@ -143,7 +147,5 @@ auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
 }
 
 void BundleInterface::disposeObject(PyObject* object) {
-    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
-
     Py_DECREF(object);
 }
