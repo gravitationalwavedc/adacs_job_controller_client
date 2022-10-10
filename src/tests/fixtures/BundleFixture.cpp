@@ -61,6 +61,32 @@ import json
 
 def submit(details, job_data):
     job = json.loads("""xxx""")
-    _bundledb.create_or_update_job(job)
-    return job
+    try:
+        _bundledb.create_or_update_job(job)
+        return job
+    except Exception as e:
+        return dict({"error": str(e)})
+)PY";
+
+std::string bundleDbGetJobById = R"PY(
+import _bundledb
+
+def submit(details, job_data):
+    try:
+        return _bundledb.get_job_by_id(xxx)
+    except Exception as e:
+        return dict({"error": str(e)})
+)PY";
+
+std::string bundleDbDeleteJob = R"PY(
+import _bundledb
+import json
+
+def submit(details, job_data):
+    job = json.loads("""xxx""")
+    try:
+        _bundledb.delete_job(job)
+        return dict({"error": False})
+    except Exception as e:
+        return dict({"error": str(e)})
 )PY";

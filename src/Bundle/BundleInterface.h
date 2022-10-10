@@ -20,6 +20,7 @@ public:
     auto toString(PyObject*) -> std::string;
     auto toUint64(PyObject *value) -> uint64_t;
     auto jsonDumps(PyObject *obj) -> std::string;
+    auto jsonLoads(const std::string& content) -> PyObject *;
     void disposeObject(PyObject*);
 
     auto threadScope() -> PythonInterface::SubInterpreter::ThreadScope {
@@ -39,8 +40,6 @@ private:
     PyObject *jsonModule;
 
     std::string bundleHash;
-
-    auto jsonLoads(const std::string& content) -> PyObject *;
 };
 
 

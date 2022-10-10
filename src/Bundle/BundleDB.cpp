@@ -2,18 +2,18 @@
 // Created by lewis on 10/9/22.
 //
 
-#include <iostream>
+#include "../Websocket/WebsocketInterface.h"
 #include "BundleDB.h"
 #include "BundleManager.h"
-#include "../Websocket/WebsocketInterface.h"
-#include "../lib/Messaging/Message.h"
+#include <iostream>
 #include <thread>
 
 extern std::map<std::thread::id, std::string> threadBundleHashMap;
+static PyObject *bundleDbError;
 
-static PyObject * create_or_update_job(PyObject *self, PyObject *args)
+static auto create_or_update_job(PyObject *, PyObject *args) -> PyObject *
 {
-    auto dict = PyTuple_GetItem(args, 0);
+    auto *dict = PyTuple_GetItem(args, 0);
 
     // Get the bundle hash
     auto bundleHash = threadBundleHashMap[std::this_thread::get_id()];
@@ -47,12 +47,13 @@ static PyObject * create_or_update_job(PyObject *self, PyObject *args)
 
     // Check for success
     if (!response->pop_bool()) {
-        throw std::runtime_error("Unable to save record");
+        PyErr_SetString(bundleDbError, "Job was unable to be created or updated.");
+        return nullptr;
     }
 
     // Set the job id in the job data
     jobId = response->pop_ulong();
-    auto value = PyLong_FromLong(jobId);
+    auto *value = PyLong_FromUnsignedLongLong(jobId);
     PyDict_SetItemString(dict, "job_id", value);
 
     Py_DECREF(value);
@@ -61,21 +62,117 @@ static PyObject * create_or_update_job(PyObject *self, PyObject *args)
     return Py_NewRef(PythonInterface::My_Py_NoneStruct());
 }
 
+static auto get_job_by_id(PyObject *, PyObject *args) -> PyObject *
+{
+    auto *jobIdObj = PyTuple_GetItem(args, 0);
+    auto jobId = PyLong_AsUnsignedLongLong(jobIdObj);
+
+    // Get the bundle hash
+    auto bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    auto bundleInterface = BundleManager::Singleton()->loadBundle(bundleHash);
+
+    // Request the server save the record
+    auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+    auto msg = Message(DB_BUNDLE_GET_JOB_BY_ID, Message::Priority::Medium, "database");
+    msg.push_ulong(dbRequestId);
+    msg.push_string(bundleHash);
+    msg.push_ulong(jobId);
+
+    msg.send();
+
+    // Wait for the response
+    auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
+
+    // Check for success
+    if (!response->pop_bool()) {
+        PyErr_SetString(bundleDbError, ("Job with ID " + std::to_string(jobId) + " does not exist.").c_str());
+        return nullptr;
+    }
+
+    // Create a new dict from the result data
+    auto *dict = bundleInterface->jsonLoads(response->pop_string());
+
+    // Set the job id in the dict
+    auto *value = PyLong_FromUnsignedLongLong(jobId);
+    PyDict_SetItemString(dict, "job_id", value);
+
+    Py_DECREF(value);
+    Py_INCREF(dict);
+
+    return dict;
+}
+
+static auto delete_job(PyObject *, PyObject *args) -> PyObject *
+{
+    auto *dict = PyTuple_GetItem(args, 0);
+
+    // Get the bundle hash
+    auto bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    auto bundleInterface = BundleManager::Singleton()->loadBundle(bundleHash);
+
+    // Convert first argument to a json object
+    auto jobData = nlohmann::json::parse(bundleInterface->jsonDumps(dict));
+
+    // Request the server save the record
+    auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
+    auto msg = Message(DB_BUNDLE_DELETE_JOB, Message::Priority::Medium, "database");
+    msg.push_ulong(dbRequestId);
+    msg.push_string(bundleHash);
+
+    // Try to get the job_id from the job data
+    uint64_t jobId = 0;
+    if (jobData.contains("job_id")) {
+        jobId = jobData["job_id"];
+    }
+
+    if (jobId == 0) {
+        PyErr_SetString(bundleDbError, "Job ID must be provided.");
+        return NULL;
+    }
+
+    msg.push_ulong(jobId);
+
+    msg.send();
+
+    // Wait for the response
+    auto response = WebsocketInterface::Singleton()->getDbResponse(dbRequestId);
+
+    // Check for success
+    if (!response->pop_bool()) {
+        PyErr_SetString(bundleDbError, ("Job with ID " + std::to_string(jobId) + " does not exist.").c_str());
+        return NULL;
+    }
+
+    return Py_NewRef(PythonInterface::My_Py_NoneStruct());
+}
+
 static PyMethodDef BundleDbMethods[] = {
         {"create_or_update_job",  create_or_update_job, METH_VARARGS, "Updates a job record in the database if one already exists, otherwise inserts the job in to the database"},
-        {NULL, NULL, 0, NULL}        /* Sentinel */
+        {"get_job_by_id",  get_job_by_id, METH_VARARGS, "Gets a job record if one exists for the provided id"},
+        {"delete_job",  delete_job, METH_VARARGS, "Deletes a job record from the database"},
+        {NULL, NULL, 0, NULL}
 };
 
 static struct PyModuleDef bundledbmodule = {
         PyModuleDef_HEAD_INIT,
-        "_bundledb",    /* name of module */
-        NULL,           /* module documentation, may be NULL */
-        -1,             /* size of per-interpreter state of the module,
-                        or -1 if the module keeps state in global variables. */
+        "_bundledb",
+        NULL,
+        -1,
         BundleDbMethods
 };
 
 PyMODINIT_FUNC PyInit_bundledb(void)
 {
-    return PyModule_Create(&bundledbmodule);
+    auto m = PyModule_Create(&bundledbmodule);
+
+    bundleDbError = PyErr_NewException("_bundledb.error", NULL, NULL);
+    Py_XINCREF(bundleDbError);
+    if (PyModule_AddObject(m, "error", bundleDbError) < 0) {
+        Py_XDECREF(bundleDbError);
+        Py_CLEAR(bundleDbError);
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    return m;
 }

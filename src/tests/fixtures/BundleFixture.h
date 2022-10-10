@@ -2,14 +2,14 @@
 // Created by lewis on 9/5/22.
 //
 
-    #ifndef ADACS_JOB_CLIENT_BUNDLEFIXTURE_H
-    #define ADACS_JOB_CLIENT_BUNDLEFIXTURE_H
+#ifndef ADACS_JOB_CLIENT_BUNDLEFIXTURE_H
+#define ADACS_JOB_CLIENT_BUNDLEFIXTURE_H
 
-#include <fstream>
-#include "nlohmann/json.hpp"
 #include "../../Settings.h"
 #include "../../lib/GeneralUtils.h"
+#include "nlohmann/json.hpp"
 #include <boost/filesystem.hpp>
+#include <fstream>
 
 extern std::string fileListNoJobWorkingDirectoryScript;
 extern std::string jobSubmitScript;
@@ -17,6 +17,8 @@ extern std::string jobSubmitErrorScript;
 extern std::string jobCheckStatusScript;
 extern std::string jobSubmitCheckStatusScript;
 extern std::string bundleDbCreateOrUpdateJob;
+extern std::string bundleDbGetJobById;
+extern std::string bundleDbDeleteJob;
 
 class BundleFixture {
 private:
@@ -122,6 +124,34 @@ public:
         cleanupPaths.push_back(path.string());
 
         auto script = std::string{bundleDbCreateOrUpdateJob};
+
+        script.replace(script.find("xxx"), 3, job.dump());
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeBundleDbGetJobById(const std::string& hash, uint64_t jobId) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{bundleDbGetJobById};
+
+        script.replace(script.find("xxx"), 3, std::to_string(jobId));
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeBundleDbDeleteJob(const std::string& hash, const nlohmann::json& job) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{bundleDbDeleteJob};
 
         script.replace(script.find("xxx"), 3, job.dump());
 

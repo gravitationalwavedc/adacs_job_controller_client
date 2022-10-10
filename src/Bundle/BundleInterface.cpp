@@ -53,9 +53,6 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
 
     // Get the locals dict
     pLocal = PyModule_GetDict(pBundleModule);
-
-    // Make sure the bundle hash is set in the global object
-    PyDict_SetItemString(pLocal, "__bundle_hash__", PyUnicode_FromString(bundleHash.c_str()));
 }
 
 auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
@@ -118,11 +115,11 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
 }
 
 auto BundleInterface::toString(PyObject *value) -> std::string {
-    return std::string{PyUnicode_AsUTF8(value)};
+    return {PyUnicode_AsUTF8(value)};
 }
 
 auto BundleInterface::toUint64(PyObject *value) -> uint64_t {
-    return PyLong_AsLong(value);
+    return PyLong_AsUnsignedLongLong(value);
 }
 
 auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
