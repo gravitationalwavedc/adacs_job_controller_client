@@ -1,7 +1,7 @@
 ---
-Checks:          'clang-diagnostic-*,clang-analyzer-*,-*,mpi-buffer-deref,mpi-type-mismatch,portability-simd-intrinsics,boost-*,performance-*,google-*,concurrency-*,modernize-*,cppcoreguidelines-*,llvm-*,openmp-*,bugprone-*,readability-*,misc-*,cert-*,clang-analyzer-*,hicpp-*,-clang-analyzer-osx.coreFoundation.containers.PointerSizedValues,-clang-analyzer-osx.cocoa.RetainCount,-clang-analyzer-optin.osx.cocoa.localizability.EmptyLocalizationContextChecker,-clang-analyzer-osx.cocoa.SuperDealloc,-clang-analyzer-osx.cocoa.RunLoopAutoreleaseLeak,-clang-analyzer-osx.cocoa.VariadicMethodTypes,-clang-analyzer-osx.ObjCProperty,-clang-analyzer-osx.cocoa.UnusedIvars,-clang-analyzer-optin.cplusplus.UninitializedObject,-clang-analyzer-osx.coreFoundation.CFError,-clang-analyzer-osx.cocoa.IncompatibleMethodTypes,-clang-analyzer-osx.cocoa.RetainCountBase,-clang-analyzer-osx.MIG,-clang-analyzer-optin.osx.OSObjectCStyleCast,-clang-analyzer-osx.coreFoundation.CFNumber,-clang-analyzer-osx.cocoa.NonNilReturnValue,-clang-analyzer-osx.SecKeychainAPI,-clang-analyzer-osx.cocoa.SelfInit,-clang-analyzer-osx.cocoa.NSError,-clang-analyzer-fuchsia.HandleChecker,-clang-analyzer-osx.API,-clang-analyzer-optin.portability.UnixAPI,-clang-analyzer-osx.cocoa.MissingSuperCall,-clang-analyzer-osx.cocoa.AtSync,-google-readability-namespace-comments,-clang-analyzer-osx.cocoa.Loops,-clang-analyzer-osx.cocoa.NSAutoreleasePool,-clang-analyzer-osx.NumberObjectConversion,-clang-analyzer-osx.OSObjectRetainCount,-clang-analyzer-osx.cocoa.Dealloc,-clang-analyzer-osx.cocoa.AutoreleaseWrite,-clang-analyzer-osx.cocoa.ClassRelease,-clang-analyzer-osx.coreFoundation.containers.OutOfBounds,-clang-analyzer-optin.osx.cocoa.localizability.NonLocalizedStringChecker,-clang-analyzer-osx.NSOrCFErrorDerefChecker,-clang-analyzer-osx.coreFoundation.CFRetainRelease,-clang-analyzer-osx.cocoa.ObjCGenerics,-clang-analyzer-osx.cocoa.NilArg,-llvm-header-guard'
+Checks:          'clang-diagnostic-*,clang-analyzer-*,-*,mpi-buffer-deref,mpi-type-mismatch,portability-simd-intrinsics,boost-*,performance-*,google-*,concurrency-*,modernize-*,cppcoreguidelines-*,llvm-*,openmp-*,bugprone-*,readability-*,misc-*,cert-*,clang-analyzer-*,hicpp-*,-clang-analyzer-osx.coreFoundation.containers.PointerSizedValues,-clang-analyzer-osx.cocoa.RetainCount,-clang-analyzer-optin.osx.cocoa.localizability.EmptyLocalizationContextChecker,-clang-analyzer-osx.cocoa.SuperDealloc,-clang-analyzer-osx.cocoa.RunLoopAutoreleaseLeak,-clang-analyzer-osx.cocoa.VariadicMethodTypes,-clang-analyzer-osx.ObjCProperty,-clang-analyzer-osx.cocoa.UnusedIvars,-clang-analyzer-optin.cplusplus.UninitializedObject,-clang-analyzer-osx.coreFoundation.CFError,-clang-analyzer-osx.cocoa.IncompatibleMethodTypes,-clang-analyzer-osx.cocoa.RetainCountBase,-clang-analyzer-osx.MIG,-clang-analyzer-optin.osx.OSObjectCStyleCast,-clang-analyzer-osx.coreFoundation.CFNumber,-clang-analyzer-osx.cocoa.NonNilReturnValue,-clang-analyzer-osx.SecKeychainAPI,-clang-analyzer-osx.cocoa.SelfInit,-clang-analyzer-osx.cocoa.NSError,-clang-analyzer-fuchsia.HandleChecker,-clang-analyzer-osx.API,-clang-analyzer-optin.portability.UnixAPI,-clang-analyzer-osx.cocoa.MissingSuperCall,-clang-analyzer-osx.cocoa.AtSync,-google-readability-namespace-comments,-clang-analyzer-osx.cocoa.Loops,-clang-analyzer-osx.cocoa.NSAutoreleasePool,-clang-analyzer-osx.NumberObjectConversion,-clang-analyzer-osx.OSObjectRetainCount,-clang-analyzer-osx.cocoa.Dealloc,-clang-analyzer-osx.cocoa.AutoreleaseWrite,-clang-analyzer-osx.cocoa.ClassRelease,-clang-analyzer-osx.coreFoundation.containers.OutOfBounds,-clang-analyzer-optin.osx.cocoa.localizability.NonLocalizedStringChecker,-clang-analyzer-osx.NSOrCFErrorDerefChecker,-clang-analyzer-osx.coreFoundation.CFRetainRelease,-clang-analyzer-osx.cocoa.ObjCGenerics,-clang-analyzer-osx.cocoa.NilArg,-llvm-header-guard,-bugprone-easily-swappable-parameters,-cppcoreguidelines-avoid-non-const-global-variables,-cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-readability-magic-numbers,-cppcoreguidelines-macro-usage,-misc-non-private-member-variables-in-classes'
 WarningsAsErrors: ''
-HeaderFilterRegex: '.*/(Cluster|DB|HTTP|Lib|tests|utils|WebSocket)/*'
+HeaderFilterRegex: '.*/(!third_party)/*'
 AnalyzeTemporaryDtors: false
 FormatStyle:     none
 User:            lewis
@@ -54,8 +54,6 @@ CheckOptions:
     value:           llvm
   - key:             hicpp-signed-bitwise.IgnorePositiveIntegerLiterals
     value:           'false'
-  - key:             bugprone-easily-swappable-parameters.QualifiersMix
-    value:           'false'
   - key:             cert-err09-cpp.WarnOnLargeObjects
     value:           'false'
   - key:             bugprone-suspicious-string-compare.WarnOnImplicitComparison
@@ -80,8 +78,6 @@ CheckOptions:
     value:           ''
   - key:             cppcoreguidelines-narrowing-conversions.WarnOnIntegerNarrowingConversion
     value:           'true'
-  - key:             bugprone-easily-swappable-parameters.IgnoredParameterNames
-    value:           '"";iterator;Iterator;begin;Begin;end;End;first;First;last;Last;lhs;LHS;rhs;RHS'
   - key:             modernize-loop-convert.UseCxx20ReverseRanges
     value:           'true'
   - key:             cppcoreguidelines-prefer-member-initializer.UseAssignment
@@ -166,8 +162,6 @@ CheckOptions:
     value:           '25'
   - key:             readability-function-size.LineThreshold
     value:           '4294967295'
-  - key:             bugprone-easily-swappable-parameters.MinimumLength
-    value:           '2'
   - key:             portability-simd-intrinsics.Suggest
     value:           'false'
   - key:             cppcoreguidelines-pro-bounds-constant-array-index.GslHeader
@@ -398,8 +392,6 @@ CheckOptions:
     value:           'true'
   - key:             cppcoreguidelines-owning-memory.LegacyResourceProducers
     value:           '::malloc;::aligned_alloc;::realloc;::calloc;::fopen;::freopen;::tmpfile'
-  - key:             bugprone-easily-swappable-parameters.SuppressParametersUsedTogether
-    value:           'true'
   - key:             bugprone-argument-comment.StrictMode
     value:           '0'
   - key:             hicpp-uppercase-literal-suffix.IgnoreMacros
@@ -410,8 +402,6 @@ CheckOptions:
     value:           llvm
   - key:             modernize-use-bool-literals.IgnoreMacros
     value:           'true'
-  - key:             bugprone-easily-swappable-parameters.NamePrefixSuffixSilenceDissimilarityTreshold
-    value:           '1'
   - key:             bugprone-unhandled-self-assignment.WarnOnlyIfThisHasSuspiciousField
     value:           'true'
   - key:             google-readability-namespace-comments.ShortNamespaceLines
@@ -536,8 +526,6 @@ CheckOptions:
     value:           'false'
   - key:             readability-redundant-declaration.IgnoreMacros
     value:           'true'
-  - key:             bugprone-easily-swappable-parameters.IgnoredParameterTypeSuffixes
-    value:           'bool;Bool;_Bool;it;It;iterator;Iterator;inputit;InputIt;forwardit;ForwardIt;bidirit;BidirIt;constiterator;const_iterator;Const_Iterator;Constiterator;ConstIterator;RandomIt;randomit;random_iterator;ReverseIt;reverse_iterator;reverse_const_iterator;ConstReverseIterator;Const_Reverse_Iterator;const_reverse_iterator;Constreverseiterator;constreverseiterator'
   - key:             modernize-make-unique.MakeSmartPtrFunction
     value:           'std::make_unique'
   - key:             google-runtime-int.TypeSuffix
@@ -552,8 +540,6 @@ CheckOptions:
     value:           '<memory>'
   - key:             bugprone-signal-handler.AsyncSafeFunctionSet
     value:           POSIX
-  - key:             bugprone-easily-swappable-parameters.ModelImplicitConversions
-    value:           'true'
   - key:             readability-suspicious-call-argument.SubstringSimilarAbove
     value:           '50'
   - key:             cppcoreguidelines-narrowing-conversions.WarnWithinTemplateInstantiation

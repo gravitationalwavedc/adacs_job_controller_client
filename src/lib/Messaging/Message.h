@@ -63,7 +63,7 @@ public:
     explicit Message(uint32_t msgId);
 #endif
 
-    Message(uint32_t msgId, Priority priority, const std::string& source, std::function<void()> callback = [] {});
+    Message(uint32_t msgId, Priority priority, const std::string& source, std::function<void()>  callback = [] {});
     explicit Message(const std::vector<uint8_t>& vdata);
 
     void push_bool(bool value);
@@ -97,7 +97,7 @@ public:
     void send();
 
 #ifdef BUILD_TESTS
-    void send(std::shared_ptr<TestWsServer::Connection> connection);
+    void send(const std::shared_ptr<TestWsServer::Connection>& connection);
 #endif
 
     [[nodiscard]] auto getId() const -> uint32_t { return id; }

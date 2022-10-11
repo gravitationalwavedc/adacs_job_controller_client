@@ -3,8 +3,10 @@
 //
 
 #include "Message.h"
+
 #include "../../Settings.h"
 #include "../../Websocket/WebsocketInterface.h"
+#include <utility>
 
 #ifdef BUILD_TESTS
 Message::Message(uint32_t msgId) : index(0), id(msgId) {
@@ -14,8 +16,8 @@ Message::Message(uint32_t msgId) : index(0), id(msgId) {
 }
 #endif
 
-Message::Message(uint32_t msgId, Message::Priority priority, const std::string& source, std::function<void()> callback)
-: priority(priority), index(0), source(source), callback(callback) {
+Message::Message(uint32_t msgId, Message::Priority priority, const std::string& source, std::function<void()>  callback)
+: priority(priority), index(0), source(source), callback(std::move(callback)) {
     data = std::make_shared<std::vector<uint8_t>>();
     data->reserve(MESSAGE_INITIAL_VECTOR_SIZE);
 
@@ -127,7 +129,7 @@ void Message::send() {
 }
 
 #ifdef BUILD_TESTS
-void Message::send(std::shared_ptr<TestWsServer::Connection> connection) {
+void Message::send(const std::shared_ptr<TestWsServer::Connection>& connection) {
     auto outMessage = std::make_shared<TestWsServer::OutMessage>(data->size());
     std::copy(data->begin(), data->end(), std::ostream_iterator<uint8_t>(*outMessage));
     connection->send(outMessage);

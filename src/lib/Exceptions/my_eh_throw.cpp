@@ -25,6 +25,8 @@
 #include "unwind-cxx.h"
 #include "my_exception_tracer_lib.h"
 
+// NOLINTBEGIN
+
 using namespace __cxxabiv1;
 
 extern "C" void my__cxa_throw(void *obj, std::type_info *tinfo,
@@ -86,3 +88,5 @@ extern "C" void my__cxa_rethrow() {
     }
     std::terminate();
 }
+
+// NOLINTEND

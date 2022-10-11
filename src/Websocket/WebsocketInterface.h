@@ -5,11 +5,11 @@
 #ifndef ADACS_JOB_CLIENT_WEBSOCKETINTERFACE_H
 #define ADACS_JOB_CLIENT_WEBSOCKETINTERFACE_H
 
-#include "client_wss.hpp"
 #include "../lib/Messaging/Message.h"
-#include <shared_mutex>
+#include "client_wss.hpp"
 #include <folly/concurrency/ConcurrentHashMap.h>
 #include <folly/concurrency/UnboundedQueue.h>
+#include <shared_mutex>
 
 #ifndef BUILD_TESTS
 using WsClient = SimpleWeb::SocketClient<SimpleWeb::WSS>;
@@ -19,9 +19,9 @@ using WsClient = SimpleWeb::SocketClient<SimpleWeb::WS>;
 
 class WebsocketInterface {
 public:
-    WebsocketInterface() {};
-    WebsocketInterface(const std::string& token);
-    ~WebsocketInterface();
+    WebsocketInterface() = default;
+    explicit WebsocketInterface(const std::string& token);
+    virtual ~WebsocketInterface();
 
     static void SingletonFactory(const std::string& token);
     static auto Singleton() -> std::shared_ptr<WebsocketInterface>;
@@ -31,24 +31,24 @@ public:
     void stop();
 
     // virtual here so that we can override this function for testing
-    virtual void queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& data, Message::Priority priority, std::function<void()> callback = [] {});
+    virtual void queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& data, Message::Priority priority, std::function<void()> callback);
 
     void serverReady();
-    bool isServerReady() {
+    auto isServerReady() const -> bool {
         return bServerReady;
     }
 
     // Database helpers
     auto generateDbRequestId() -> uint64_t;
-    std::shared_ptr<Message> getDbResponse(uint64_t requestId);
-    void setDbRequestResponse(const std::shared_ptr<Message>& msg);
+    auto getDbResponse(uint64_t requestId) -> std::shared_ptr<Message>;
+    void setDbRequestResponse(const std::shared_ptr<Message>& message);
 private:
     std::shared_ptr<WsClient> client;
     std::shared_ptr<WsClient::Connection> pConnection = nullptr;
     std::thread clientThread;
     std::string url;
     std::promise<void> closePromise;
-    bool bServerReady;
+    bool bServerReady = false;
 
 #ifndef BUILD_TESTS
     [[noreturn]] void run();
@@ -63,7 +63,7 @@ private:
 
     auto doesHigherPriorityDataExist(uint64_t maxPriority) -> bool;
     static void reportWebsocketError(const SimpleWeb::error_code &errorCode);
-    std::string getOpensslCertPath();
+    static auto getOpensslCertPath() -> std::string;
 
     // Packet Queue is a:
     //  list of priorities - doesn't need any sync because it never changes
@@ -110,7 +110,7 @@ public:
     EXPOSE_FUNCTION_FOR_TESTING(checkPings)
     EXPOSE_FUNCTION_FOR_TESTING_ONE_PARAM(doesHigherPriorityDataExist, uint64_t)
 
-    static void setSingleton(std::shared_ptr<WebsocketInterface>);
+    static void setSingleton(const std::shared_ptr<WebsocketInterface>& newSingleton);
 #endif
 };
 

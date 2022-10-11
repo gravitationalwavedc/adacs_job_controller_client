@@ -11,6 +11,7 @@
 #include "../lib/GeneralUtils.h"
 #include "BundleDB.h"
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static void* _dlPythonLibHandle = nullptr;
 
 template<typename R, typename ... Args> R getRetType(R(*)(Args...));

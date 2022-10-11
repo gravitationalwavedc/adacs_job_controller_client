@@ -2,17 +2,16 @@
 // Created by lewis on 9/4/22.
 //
 
-#include "../lib/GeneralUtils.h"
-#include "WebsocketInterface.h"
-#include <utility>
-#include "../Settings.h"
 #include "../Core/MessageHandler.h"
+#include "../Settings.h"
+#include "WebsocketInterface.h"
 #include "subprocess.hpp"
 #include <boost/filesystem.hpp>
+#include <utility>
 
 static std::shared_ptr<WebsocketInterface> singleton;
 
-WebsocketInterface::WebsocketInterface(const std::string& token) : bServerReady(false) {
+WebsocketInterface::WebsocketInterface(const std::string& token) {
     if (singleton) {
         LOG(ERROR) << "WebsocketInterface singleton was already initialised!";
         abortApplication();
@@ -23,6 +22,7 @@ WebsocketInterface::WebsocketInterface(const std::string& token) : bServerReady(
     if (!boost::filesystem::exists(certPath)) {
         LOG(ERROR) << "Generated OpenSSL cert file '" << certPath << "' doesn't exist. Please set it manually via the SSL_CERT_FILE environment variable";
     }
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
     setenv("SSL_CERT_FILE", certPath.c_str(), 0);
 
     // Create the list of priorities in order
@@ -58,13 +58,14 @@ WebsocketInterface::WebsocketInterface(const std::string& token) : bServerReady(
         handlePong();
     };
 
-    client->on_message = [&](const std::shared_ptr<WsClient::Connection>&, std::shared_ptr<WsClient::InMessage> inMessage) {
+    client->on_message = [&](const std::shared_ptr<WsClient::Connection>&, const std::shared_ptr<WsClient::InMessage>& inMessage) {
         auto stringData = inMessage->string();
         auto message = std::make_shared<Message>(std::vector<uint8_t>(stringData.begin(), stringData.end()));
         handleMessage(message);
     };
 }
 
+// NOLINTNEXTLINE(bugprone-exception-escape)
 WebsocketInterface::~WebsocketInterface() {
     stop();
 }
@@ -79,6 +80,7 @@ void WebsocketInterface::start() {
     bReady.get_future().wait();
 }
 
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
 void WebsocketInterface::serverReady() {
     LOG(INFO) << "WS: Server ready - starting threads";
 #ifndef BUILD_TESTS
@@ -98,6 +100,7 @@ void WebsocketInterface::serverReady() {
     });
 #endif
 }
+// NOLINTEND(readability-convert-member-functions-to-static)
 
 void WebsocketInterface::join() {
     if (clientThread.joinable()) {
@@ -160,7 +163,7 @@ void WebsocketInterface::queueMessage(std::string source, const std::shared_ptr<
 }
 
 #ifdef BUILD_TESTS
-void WebsocketInterface::setSingleton(std::shared_ptr<WebsocketInterface> newSingleton) {
+void WebsocketInterface::setSingleton(const std::shared_ptr<WebsocketInterface>& newSingleton) {
     singleton = newSingleton;
 }
 #endif
@@ -386,7 +389,7 @@ void WebsocketInterface::checkPings() {
     );
 }
 
-std::string WebsocketInterface::getOpensslCertPath() {
+auto WebsocketInterface::getOpensslCertPath() -> std::string {
     auto proc = subprocess::Popen(
             {"openssl", "version", "-d"},
             subprocess::output{subprocess::PIPE},
@@ -434,8 +437,8 @@ std::string WebsocketInterface::getOpensslCertPath() {
         abortApplication();
     }
 
-    while (bits[1].find("\"") != std::string::npos) {
-        bits[1].replace(bits[1].find("\""), 1, "");
+    while (bits[1].find('\"') != std::string::npos) {
+        bits[1].replace(bits[1].find('\"'), 1, "");
     }
 
     return bits[1];

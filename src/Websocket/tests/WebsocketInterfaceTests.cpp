@@ -51,13 +51,13 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
                           (*WebsocketInterface::Singleton()->getqueue())[Message::Priority::Highest]->end(), true);
 
         auto s1_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s1", s1_d1, Message::Priority::Highest);
+        WebsocketInterface::Singleton()->queueMessage("s1", s1_d1, Message::Priority::Highest, [] {});
 
         auto s2_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s2", s2_d1, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s2", s2_d1, Message::Priority::Lowest, [] {});
 
         auto s3_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d1, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s3", s3_d1, Message::Priority::Lowest, [] {});
 
         // s1 should only exist in the highest priority queue
         BOOST_CHECK_EQUAL((*WebsocketInterface::Singleton()->getqueue())[Message::Priority::Highest]->find("s1") ==
@@ -105,12 +105,12 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
                                       s3_d1->begin(), s3_d1->end());
 
         auto s1_d2 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s1", s1_d2, Message::Priority::Highest);
+        WebsocketInterface::Singleton()->queueMessage("s1", s1_d2, Message::Priority::Highest, [] {});
         // s1 should 2 items
         BOOST_CHECK_EQUAL(find_s1->second->size(), 2);
 
         auto s1_d3 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s1", s1_d3, Message::Priority::Highest);
+        WebsocketInterface::Singleton()->queueMessage("s1", s1_d3, Message::Priority::Highest, [] {});
 
         // s1 should have 3 items
         BOOST_CHECK_EQUAL(find_s1->second->size(), 3);
@@ -128,23 +128,23 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
         BOOST_CHECK_EQUAL_COLLECTIONS(data.data->begin(), data.data->end(), s1_d3->begin(), s1_d3->end());
 
         auto s2_d2 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s2", s2_d2, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s2", s2_d2, Message::Priority::Lowest, [] {});
         // s2 should 2 items
         BOOST_CHECK_EQUAL(find_s2->second->size(), 2);
 
         auto s2_d3 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s2", s2_d3, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s2", s2_d3, Message::Priority::Lowest, [] {});
 
         // s2 should have 3 items
         BOOST_CHECK_EQUAL(find_s2->second->size(), 3);
 
         auto s3_d2 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d2, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s3", s3_d2, Message::Priority::Lowest, [] {});
         // s3 should 2 items
         BOOST_CHECK_EQUAL(find_s3->second->size(), 2);
 
         auto s3_d3 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d3, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s3", s3_d3, Message::Priority::Lowest, [] {});
 
         // s3 should have 3 items
         BOOST_CHECK_EQUAL(find_s3->second->size(), 3);
@@ -177,13 +177,13 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
     BOOST_AUTO_TEST_CASE(test_pruneSources) {
         // Create several sources and insert data in the queue
         auto s1_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s1", s1_d1, Message::Priority::Highest);
+        WebsocketInterface::Singleton()->queueMessage("s1", s1_d1, Message::Priority::Highest, [] {});
 
         auto s2_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s2", s2_d1, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s2", s2_d1, Message::Priority::Lowest, [] {});
 
         auto s3_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d1, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s3", s3_d1, Message::Priority::Lowest, [] {});
 
         // Pruning the sources should not perform any action since all sources have one item in the queue
         WebsocketInterface::Singleton()->callpruneSources();
@@ -359,27 +359,27 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
 
         // Insert some data
         auto s4_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s4", s4_d1, Message::Priority::Lowest);
+        WebsocketInterface::Singleton()->queueMessage("s4", s4_d1, Message::Priority::Lowest, [] {});
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Highest), false);
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Medium), false);
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Lowest), false);
 
         auto s3_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s3", s3_d1, Message::Priority::Medium);
+        WebsocketInterface::Singleton()->queueMessage("s3", s3_d1, Message::Priority::Medium, [] {});
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Highest), false);
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Medium), false);
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Lowest), true);
 
         auto s2_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s2", s2_d1, Message::Priority::Highest);
+        WebsocketInterface::Singleton()->queueMessage("s2", s2_d1, Message::Priority::Highest, [] {});
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Highest), false);
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Medium), true);
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Lowest), true);
 
         auto s1_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s1", s1_d1, Message::Priority::Highest);
+        WebsocketInterface::Singleton()->queueMessage("s1", s1_d1, Message::Priority::Highest, [] {});
         auto s0_d1 = generateRandomData(randomInt(0, 255));
-        WebsocketInterface::Singleton()->queueMessage("s0", s0_d1, Message::Priority::Highest);
+        WebsocketInterface::Singleton()->queueMessage("s0", s0_d1, Message::Priority::Highest, [] {});
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Highest), false);
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Medium), true);
         BOOST_CHECK_EQUAL(WebsocketInterface::Singleton()->calldoesHigherPriorityDataExist((uint64_t) Message::Priority::Lowest), true);

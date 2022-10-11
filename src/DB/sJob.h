@@ -54,7 +54,7 @@ struct sJob {
         return sJob::fromMessage(response);
     }
 
-    static std::vector<sJob> getRunningJobs() {
+    static auto getRunningJobs() -> std::vector<sJob> {
         // Request the running jobs from the server
         auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
         auto msg = Message(DB_JOB_GET_RUNNING_JOBS, Message::Priority::Medium, "database");
@@ -127,12 +127,12 @@ struct sJob {
         id = response->pop_ulong();
     }
 
-    static sJob getJobById(uint64_t id) {
+    static auto getJobById(uint64_t pkid) -> sJob {
         // Request the data from the server
         auto dbRequestId = WebsocketInterface::Singleton()->generateDbRequestId();
         auto msg = Message(DB_JOB_GET_BY_ID, Message::Priority::Medium, "database");
         msg.push_ulong(dbRequestId);
-        msg.push_ulong(id);
+        msg.push_ulong(pkid);
         msg.send();
 
         // Wait for the response
