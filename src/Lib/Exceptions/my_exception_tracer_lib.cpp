@@ -1,10 +1,12 @@
-#include <memory_patch.h>
-#include <bits/exception_ptr.h>
-#include <folly/experimental/exception_tracer/StackTrace.h>
-#include <folly/Indestructible.h>
-#include <execinfo.h>
+// NOLINTBEGIN
+
 #include "segvcatch.h"
 #include "my_exception_tracer_lib.h"
+#include <bits/exception_ptr.h>
+#include <execinfo.h>
+#include <folly/Indestructible.h>
+#include <folly/experimental/exception_tracer/StackTrace.h>
+#include <memory_patch.h>
 
 
 namespace __cxxabiv1 {
@@ -113,3 +115,5 @@ volatile void forceExceptionStackTraceRef()
     getCaughtExceptionStackTraceStack();
     getUncaughtExceptionStackTraceStack();
 }
+
+// NOLINTEND

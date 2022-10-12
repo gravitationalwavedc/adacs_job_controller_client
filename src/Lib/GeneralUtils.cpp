@@ -3,19 +3,19 @@
 //
 
 #include "../Settings.h"
-#include "GeneralUtils.h"
 #include "Exceptions/my_exception_tracer_lib.h"
+#include "GeneralUtils.h"
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/lexical_cast.hpp>
-#include <climits>
-#include <fstream>
-#include <thread>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include <iostream>
+#include <climits>
 #include <folly/experimental/exception_tracer/ExceptionTracer.h>
+#include <fstream>
+#include <iostream>
+#include <thread>
 
 #ifdef BUILD_TESTS
 bool applicationAborted = false;
@@ -36,9 +36,9 @@ auto getBundlePath() -> std::string {
 }
 
 auto getExecutablePath() -> boost::filesystem::path {
-    char result[PATH_MAX] = {0};
-    ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
-    return boost::filesystem::path{std::string(result, (count > 0) ? count : 0)}.parent_path();
+    std::array<char, PATH_MAX> result = {0};
+    ssize_t count = readlink("/proc/self/exe", result.data(), PATH_MAX);
+    return boost::filesystem::path{std::string(result.data(), (count > 0) ? count : 0)}.parent_path();
 }
 
 auto readClientConfig() -> nlohmann::json {
@@ -105,7 +105,7 @@ auto splitString(const std::string& str, const std::string& delimiter) -> std::v
 {
     std::vector<std::string> strings;
 
-    std::string::size_type pos = 0;
+    std::string::size_type pos; // NOLINT(cppcoreguidelines-init-variables)
     std::string::size_type prev = 0;
     while ((pos = str.find(delimiter, prev)) != std::string::npos)
     {

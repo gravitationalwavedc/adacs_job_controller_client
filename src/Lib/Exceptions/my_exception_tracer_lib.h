@@ -1,6 +1,8 @@
 #ifndef ADACS_JOB_CLIENT_MY_EXCEPTION_TRACER_LIB_H
 #define ADACS_JOB_CLIENT_MY_EXCEPTION_TRACER_LIB_H
 
+// NOLINTBEGIN
+
 #include <folly/experimental/exception_tracer/ExceptionTracerLib.h>
 
 #include <vector>
@@ -53,5 +55,7 @@ namespace folly {
 
     } // namespace exception_tracer
 } // namespace folly
+
+// NOLINTEND
 
 #endif //ADACS_JOB_CLIENT_MY_EXCEPTION_TRACER_LIB_H

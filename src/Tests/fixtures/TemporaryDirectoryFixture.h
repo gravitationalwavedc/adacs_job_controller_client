@@ -5,18 +5,18 @@
 #ifndef ADACS_JOB_CLIENT_TEMPORARYDIRECTORYFIXTURE_H
 #define ADACS_JOB_CLIENT_TEMPORARYDIRECTORYFIXTURE_H
 
-#include <vector>
-#include <string>
 #include <boost/filesystem.hpp>
+#include <string>
+#include <vector>
 
 class TemporaryDirectoryFixture {
 private:
     std::vector<std::string> tempDirs;
 
 public:
-    std::string createTemporaryDirectory(std::string parent = "") {
+    auto createTemporaryDirectory(const std::string& parent = "") -> std::string {
         boost::filesystem::path ph =
-                boost::filesystem::path(parent == "" ? boost::filesystem::temp_directory_path() : parent)
+                boost::filesystem::path(parent.empty() ? boost::filesystem::temp_directory_path() : parent)
                 / boost::filesystem::unique_path();
         boost::filesystem::create_directories(ph);
 
@@ -25,9 +25,9 @@ public:
         return ph.string();
     }
 
-    std::string createTemporaryFile(std::string parent = "") {
+    auto createTemporaryFile(const std::string& parent = "") -> std::string {
         boost::filesystem::path ph =
-                boost::filesystem::path(parent == "" ? boost::filesystem::temp_directory_path() : parent)
+                boost::filesystem::path(parent.empty() ? boost::filesystem::temp_directory_path() : parent)
                 / boost::filesystem::unique_path();
 
         boost::filesystem::create_directories(ph.parent_path());

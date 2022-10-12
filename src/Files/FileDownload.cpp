@@ -3,13 +3,13 @@
 //
 
 #include "FileHandling.h"
-#include <cstdint>
-#include <boost/filesystem.hpp>
-#include <fstream>
 #include "../Bundle/BundleManager.h"
-#include "glog/logging.h"
 #include "../DB/sJob.h"
 #include "../Settings.h"
+#include "glog/logging.h"
+#include <boost/filesystem.hpp>
+#include <cstdint>
+#include <fstream>
 #include <future>
 
 std::map<std::string, std::promise<void>> pausedFileTransfers;
@@ -133,12 +133,14 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
             // Read the next chunk and send it to the server
             std::vector<uint8_t> data(CHUNK_SIZE);
+            // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
             if (fileSize > CHUNK_SIZE) {
                 file.read(reinterpret_cast<char *>(data.data()), CHUNK_SIZE);
             } else {
                 data.resize(fileSize);
-                file.read(reinterpret_cast<char *>(data.data()), fileSize);
+                file.read(reinterpret_cast<char *>(data.data()), static_cast<std::streamsize>(fileSize));
             }
+            // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
 
             // Since we don't want to flood the packet scheduler (So that we can give the server a chance to
             // pause file transfers), we create an event that we wait for on every nth packet, and don't

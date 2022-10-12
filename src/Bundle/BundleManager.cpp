@@ -2,16 +2,15 @@
 // Created by lewis on 9/4/22.
 //
 
-#include <iostream>
 #include "BundleManager.h"
-#include "../lib/GeneralUtils.h"
+#include "../Lib/GeneralUtils.h"
+#include <iostream>
 
 static std::shared_ptr<BundleManager> singleton;
 
-BundleManager::BundleManager() {
+BundleManager::BundleManager() : pythonInterface(std::make_shared<PythonInterface>()) {
     auto config = readClientConfig();
 
-    pythonInterface = std::make_shared<PythonInterface>();
     pythonInterface->initPython(config["pythonLibrary"]);
 }
 
@@ -31,7 +30,7 @@ auto BundleManager::runBundle_string(const std::string& bundleFunction, const st
 
     PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
 
-    auto resultObject = bundle->run(bundleFunction, details, jobData);
+    auto *resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->toString(resultObject);
     bundle->disposeObject(resultObject);
 

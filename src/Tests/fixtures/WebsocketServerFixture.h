@@ -5,20 +5,19 @@
 #ifndef ADACS_JOB_CLIENT_WEBSOCKETSERVERFIXTURE_H
 #define ADACS_JOB_CLIENT_WEBSOCKETSERVERFIXTURE_H
 
+#include "../../Lib/GeneralUtils.h"
+#include "../../Lib/Messaging/Message.h"
 #include "../../Settings.h"
-#include "../../lib/GeneralUtils.h"
-#include "../../tests/utils.h"
+#include "../../Tests/utils.h"
+#include "../../Websocket/WebsocketInterface.h"
 #include "../utils.h"
+#include "DatabaseFixture.h"
 #include "JsonConfigFixture.h"
 #include <boost/test/unit_test.hpp>
 #include <fstream>
-#include "../../lib/Messaging/Message.h"
-#include "../../Websocket/WebsocketInterface.h"
-#include "DatabaseFixture.h"
 
 class WebsocketServerFixture : public JsonConfigFixture, public DatabaseFixture {
 public:
-    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::shared_ptr<TestWsServer> websocketServer;
     std::thread serverThread;
     bool clientRunning = true;
@@ -26,7 +25,6 @@ public:
     std::promise<void> websocketServerConnectionPromise;
     std::shared_ptr<TestWsServer::Connection> pWebsocketServerConnection;
     bool bServerConnectionClosed = true;
-    // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     explicit WebsocketServerFixture(bool run = true) {
         websocketServer = std::make_shared<TestWsServer>();
@@ -70,7 +68,7 @@ public:
         };
     }
 
-    ~WebsocketServerFixture() {
+    virtual ~WebsocketServerFixture() {
         // Shut down the client, send any message at all to trigger the internal run event and escape the loop
         clientRunning = false;
         Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);

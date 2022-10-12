@@ -2,9 +2,8 @@
 // Created by lewis on 4/10/22.
 //
 
-#include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../../lib/jobclient_schema.h"
-#include "../../tests/fixtures/TemporaryDirectoryFixture.h"
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
+#include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../JobHandling.h"
 #include <boost/filesystem.hpp>
 

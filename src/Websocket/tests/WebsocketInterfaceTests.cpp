@@ -2,9 +2,8 @@
 // Created by lewis on 9/5/22.
 //
 
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
 #include <boost/test/unit_test.hpp>
-#include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../WebsocketInterface.h"
 
 struct WebsocketInterfaceFixture : public WebsocketServerFixture {
 public:
@@ -19,7 +18,7 @@ public:
         startWebSocketServer();
     }
 
-    virtual ~WebsocketInterfaceFixture() {
+    ~WebsocketInterfaceFixture() override {
         WebsocketInterface::Singleton()->stop();
     }
 
@@ -29,7 +28,7 @@ public:
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& /*connection*/) override {
         receivedMessages.emplace_back(message->pop_bytes());
     }
 };
@@ -45,7 +44,7 @@ BOOST_FIXTURE_TEST_SUITE(websocket_interface_tests, WebsocketInterfaceFixture)
         );
     }
 
-    BOOST_AUTO_TEST_CASE(test_queueMessage) {
+    BOOST_AUTO_TEST_CASE(test_queueMessage) { // NOLINT(readability-function-cognitive-complexity)
         // Check the source doesn't exist
         BOOST_CHECK_EQUAL((*WebsocketInterface::Singleton()->getqueue())[Message::Priority::Highest]->find("s1") ==
                           (*WebsocketInterface::Singleton()->getqueue())[Message::Priority::Highest]->end(), true);

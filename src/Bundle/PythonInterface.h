@@ -13,62 +13,45 @@
 
 #include <Python.h>
 #include <memory>
-#include <shared_mutex>
 #include <mutex>
+#include <shared_mutex>
 
 class PythonInterface {
 public:
     static void initPython(const std::string& sPythonLibrary);
     static auto getPythonLibHandle() -> void*;
     static auto MyPy_IsNone(PyObject* obj) -> bool;
-    static PyObject *My_Py_NoneStruct();
+    static auto My_Py_NoneStruct() -> PyObject *;
 
 private:
     class RestoreThreadStateScope
     {
     public:
-        RestoreThreadStateScope()
-        {
-            _ts = PyThreadState_Get();
-        }
-
-        ~RestoreThreadStateScope()
-        {
-            PyThreadState_Swap(_ts);
-        }
+        RestoreThreadStateScope() : _ts(PyThreadState_Get()) {}
+        ~RestoreThreadStateScope() { PyThreadState_Swap(_ts); }
 
     private:
-
         PyThreadState* _ts;
     };
 
-// swap the current thread state with ts, restore when the object goes out of scope
+    // swap the current thread state with ts, restore when the object goes out of scope
     class SwapThreadStateScope
     {
     public:
-        explicit SwapThreadStateScope(PyThreadState* ts)
-        {
-            _ts = PyThreadState_Swap(ts);
-        }
-
-        ~SwapThreadStateScope()
-        {
-            PyThreadState_Swap(_ts);
-        }
+        explicit SwapThreadStateScope(PyThreadState* threadState) : _ts(PyThreadState_Swap(threadState)) {}
+        ~SwapThreadStateScope() { PyThreadState_Swap(_ts); }
 
     private:
-
         PyThreadState* _ts;
     };
 
-// create new thread state for interpreter interp, make it current, and clean up on destruction
+    // create new thread state for interpreter interp, make it current, and clean up on destruction
     class ThreadState
     {
     public:
 
-        explicit ThreadState(PyInterpreterState* interp)
+        explicit ThreadState(PyInterpreterState* interp) : _ts(PyThreadState_New(interp))
         {
-            _ts = PyThreadState_New(interp);
             PyEval_RestoreThread(_ts);
         }
 
@@ -78,18 +61,10 @@ private:
             PyThreadState_DeleteCurrent();
         }
 
-        operator PyThreadState*()
-        {
-            return _ts;
-        }
-
-        static PyThreadState* current()
-        {
-            return PyThreadState_Get();
-        }
+        explicit operator PyThreadState*() { return _ts; }
+        static auto current() -> PyThreadState* { return PyThreadState_Get(); }
 
     private:
-
         PyThreadState* _ts;
     };
 
@@ -102,43 +77,32 @@ public:
         struct ThreadScope
         {
             ThreadState _state;
-            SwapThreadStateScope _swap{_state };
+            SwapThreadStateScope _swap{ _state.operator PyThreadState *() };
 
-            ThreadScope(PyInterpreterState* interp) :
-                    _state(interp)
-            {
-            }
+            explicit ThreadScope(PyInterpreterState* interp) : _state(interp) {}
         };
 
         SubInterpreter()
         {
             RestoreThreadStateScope restore;
-
-            _ts = Py_NewInterpreter();
+            _ts = Py_NewInterpreter(); // NOLINT(cppcoreguidelines-prefer-member-initializer)
         }
 
         ~SubInterpreter()
         {
-            if( _ts )
+            if(_ts != nullptr)
             {
                 SwapThreadStateScope sts(_ts);
-
                 Py_EndInterpreter(_ts);
             }
         }
 
-        PyInterpreterState* interp()
+        auto interp() -> PyInterpreterState*
         {
             return _ts->interp;
         }
 
-        static PyInterpreterState* current()
-        {
-            return ThreadState::current()->interp;
-        }
-
     private:
-
         PyThreadState* _ts;
     };
 

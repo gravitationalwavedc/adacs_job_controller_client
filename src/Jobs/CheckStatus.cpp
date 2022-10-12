@@ -4,9 +4,9 @@
 
 #include "JobHandling.h"
 #include "../Bundle/BundleManager.h"
-#include "../lib/JobStatus.h"
-#include "glog/logging.h"
 #include "../DB/sStatus.h"
+#include "../Lib/JobStatus.h"
+#include "glog/logging.h"
 #include <thread>
 
 void checkJobStatusImpl(sJob job, bool forceNotification) {
@@ -131,6 +131,7 @@ void checkAllJobsStatus() {
 
     // Get all running jobs
     auto jobs = sJob::getRunningJobs();
+    checkThreads.reserve(jobs.size());
 
     // Start checking the status of all jobs
     for (const auto& job : jobs) {

@@ -5,10 +5,10 @@
 #ifndef ADACS_JOB_CLIENT_SSTATUSDB_H
 #define ADACS_JOB_CLIENT_SSTATUSDB_H
 
+#include "../../Lib/jobclient_schema.h"
+#include "SqliteConnector.h"
 #include <cstdint>
 #include <string>
-#include "SqliteConnector.h"
-#include "../../lib/jobclient_schema.h"
 #include <thread>
 
 

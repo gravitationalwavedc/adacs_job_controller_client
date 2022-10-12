@@ -2,16 +2,12 @@
 // Created by lewis on 4/10/22.
 //
 
-#include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../../Websocket/WebsocketInterface.h"
-#include "../../lib/jobclient_schema.h"
-#include "../../tests/fixtures/TemporaryDirectoryFixture.h"
-#include "../../tests/fixtures/BundleFixture.h"
 #include "../JobHandling.h"
-#include "../../tests/fixtures/DatabaseFixture.h"
-#include "../../tests/fixtures/AbortHelperFixture.h"
-#include "../../lib/JobStatus.h"
 #include "../../DB/sStatus.h"
+#include "../../Tests/fixtures/AbortHelperFixture.h"
+#include "../../Tests/fixtures/BundleFixture.h"
+#include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
 
 void checkJobStatusImpl(sJob job, bool forceNotification);
 
@@ -34,7 +30,7 @@ struct JobCheckStatusManyBundlesTestDataFixture
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    std::string generateWorkingDirectory() {
+    auto generateWorkingDirectory() -> std::string {
         // Create temporary files and directories
         std::string symlinkDir = createTemporaryDirectory();
         std::string symlinkFile = createTemporaryFile(symlinkDir);
@@ -61,7 +57,7 @@ struct JobCheckStatusManyBundlesTestDataFixture
         return tempDir;
     }
 
-    sJob generateJob(uint64_t index, std::string bundleHash, std::string workingDirectory) {
+    static auto generateJob(uint64_t index, const std::string& bundleHash, const std::string& workingDirectory) -> sJob {
         auto job = sJob::getOrCreateByJobId(1234 + index);
         job.jobId = 1234 + index;
         job.schedulerId = 432100 + index;
@@ -73,11 +69,11 @@ struct JobCheckStatusManyBundlesTestDataFixture
         return job;
     }
 
-    virtual ~JobCheckStatusManyBundlesTestDataFixture() {
+    ~JobCheckStatusManyBundlesTestDataFixture() override {
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& /*message*/, const std::shared_ptr<TestWsServer::Connection>& /*connection*/) override {
         receivedMessages++;
     }
 };

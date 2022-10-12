@@ -11,7 +11,7 @@
 extern std::map<std::thread::id, std::string> threadBundleHashMap;
 static PyObject *bundleDbError;
 
-static auto create_or_update_job(PyObject *, PyObject *args) -> PyObject *
+static auto create_or_update_job(PyObject * /*self*/, PyObject *args) -> PyObject *
 {
     auto *dict = PyTuple_GetItem(args, 0);
 
@@ -62,7 +62,7 @@ static auto create_or_update_job(PyObject *, PyObject *args) -> PyObject *
     return Py_NewRef(PythonInterface::My_Py_NoneStruct());
 }
 
-static auto get_job_by_id(PyObject *, PyObject *args) -> PyObject *
+static auto get_job_by_id(PyObject * /*self*/, PyObject *args) -> PyObject *
 {
     auto *jobIdObj = PyTuple_GetItem(args, 0);
     auto jobId = PyLong_AsUnsignedLongLong(jobIdObj);
@@ -102,7 +102,7 @@ static auto get_job_by_id(PyObject *, PyObject *args) -> PyObject *
     return dict;
 }
 
-static auto delete_job(PyObject *, PyObject *args) -> PyObject *
+static auto delete_job(PyObject * /*self*/, PyObject *args) -> PyObject *
 {
     auto *dict = PyTuple_GetItem(args, 0);
 
@@ -127,7 +127,7 @@ static auto delete_job(PyObject *, PyObject *args) -> PyObject *
 
     if (jobId == 0) {
         PyErr_SetString(bundleDbError, "Job ID must be provided.");
-        return NULL;
+        return nullptr;
     }
 
     msg.push_ulong(jobId);
@@ -140,39 +140,39 @@ static auto delete_job(PyObject *, PyObject *args) -> PyObject *
     // Check for success
     if (!response->pop_bool()) {
         PyErr_SetString(bundleDbError, ("Job with ID " + std::to_string(jobId) + " does not exist.").c_str());
-        return NULL;
+        return nullptr;
     }
 
     return Py_NewRef(PythonInterface::My_Py_NoneStruct());
 }
 
-static PyMethodDef BundleDbMethods[] = {
+static std::array<PyMethodDef, 4> BundleDbMethods = {{
         {"create_or_update_job",  create_or_update_job, METH_VARARGS, "Updates a job record in the database if one already exists, otherwise inserts the job in to the database"},
         {"get_job_by_id",  get_job_by_id, METH_VARARGS, "Gets a job record if one exists for the provided id"},
         {"delete_job",  delete_job, METH_VARARGS, "Deletes a job record from the database"},
-        {NULL, NULL, 0, NULL}
-};
+        {nullptr, nullptr, 0, nullptr}
+}};
 
 static struct PyModuleDef bundledbmodule = {
         PyModuleDef_HEAD_INIT,
         "_bundledb",
-        NULL,
+        nullptr,
         -1,
-        BundleDbMethods
+        BundleDbMethods.data()
 };
 
-PyMODINIT_FUNC PyInit_bundledb(void)
+PyMODINIT_FUNC PyInit_bundledb(void) // NOLINT(modernize-use-trailing-return-type)
 {
-    auto m = PyModule_Create(&bundledbmodule);
+    auto *pModule = PyModule_Create(&bundledbmodule);
 
-    bundleDbError = PyErr_NewException("_bundledb.error", NULL, NULL);
+    bundleDbError = PyErr_NewException("_bundledb.error", nullptr, nullptr);
     Py_XINCREF(bundleDbError);
-    if (PyModule_AddObject(m, "error", bundleDbError) < 0) {
+    if (PyModule_AddObject(pModule, "error", bundleDbError) < 0) {
         Py_XDECREF(bundleDbError);
         Py_CLEAR(bundleDbError);
-        Py_DECREF(m);
-        return NULL;
+        Py_DECREF(pModule);
+        return nullptr;
     }
 
-    return m;
+    return pModule;
 }

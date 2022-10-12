@@ -1,12 +1,12 @@
-#include <iostream>
 #include "Bundle/BundleManager.h"
-#include "Websocket/WebsocketInterface.h"
-#include "Settings.h"
 #include "Jobs/JobHandling.h"
+#include "Settings.h"
+#include "Websocket/WebsocketInterface.h"
 #include <boost/filesystem.hpp>
+#include <iostream>
 
 
-[[noreturn]] int run(std::string wsToken) {
+[[noreturn]] auto run(const std::string& wsToken) -> int {
     // Start and connect the websocket
     WebsocketInterface::SingletonFactory(wsToken);
     auto websocketInterface = WebsocketInterface::Singleton();
@@ -36,9 +36,12 @@ auto main(int argc, char* argv[]) -> int {
     boost::filesystem::create_directories(FLAGS_log_dir);
 
     FLAGS_minloglevel = GLOG_MIN_LOG_LEVEL;
+
+    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     google::InitGoogleLogging(argv[0]);
 
     auto wsToken = std::string(argv[1]);
+    // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
     /*
         do the UNIX double-fork magic, see Stevens' "Advanced
@@ -78,13 +81,15 @@ auto main(int argc, char* argv[]) -> int {
     std::cout << std::flush;
     std::cerr << std::flush;
 
-    auto si = open((const char*) STDIN_FILENO, O_RDONLY);
-    auto so = open((const char*) STDOUT_FILENO, O_APPEND | O_WRONLY);
-    auto se = open((const char*) STDERR_FILENO, O_APPEND | O_WRONLY);
+    // NOLINTBEGIN(cppcoreguidelines-pro-type-vararg,clang-analyzer-core.NonNullParamChecker,cppcoreguidelines-pro-type-vararg,hicpp-vararg,google-readability-casting,cppcoreguidelines-pro-type-cstyle-cast)
+    auto sIn = open((const char*) STDIN_FILENO, O_RDONLY);
+    auto sOut = open((const char*) STDOUT_FILENO, O_APPEND | O_WRONLY);
+    auto sErr = open((const char*) STDERR_FILENO, O_APPEND | O_WRONLY);
+    // NOLINTEND(cppcoreguidelines-pro-type-vararg,clang-analyzer-core.NonNullParamChecker,cppcoreguidelines-pro-type-vararg,hicpp-vararg,google-readability-casting,cppcoreguidelines-pro-type-cstyle-cast)
 
-    dup2(si, STDIN_FILENO);
-    dup2(so, STDOUT_FILENO);
-    dup2(se, STDERR_FILENO);
+    dup2(sIn, STDIN_FILENO);
+    dup2(sOut, STDOUT_FILENO);
+    dup2(sErr, STDERR_FILENO);
 
-    return run(wsToken);
+    run(wsToken);
 }

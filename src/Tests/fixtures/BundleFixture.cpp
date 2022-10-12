@@ -4,6 +4,8 @@
 
 #include <string>
 
+// NOLINTBEGIN(cert-err58-cpp)
+
 std::string fileListNoJobWorkingDirectoryScript = R"PY(
 def working_directory(details, job_data):
     return "xxx"
@@ -90,3 +92,5 @@ def submit(details, job_data):
     except Exception as e:
         return dict({"error": str(e)})
 )PY";
+
+// NOLINTEND(cert-err58-cpp)

@@ -145,30 +145,30 @@ set(
         Bundle/BundleManager.h
         Websocket/WebsocketInterface.cpp
         Websocket/WebsocketInterface.h
-        lib/GeneralUtils.cpp
-        lib/GeneralUtils.h
-        lib/Messaging/Message.cpp
-        lib/Messaging/Message.h
+        Lib/GeneralUtils.cpp
+        Lib/GeneralUtils.h
+        Lib/Messaging/Message.cpp
+        Lib/Messaging/Message.h
         Core/MessageHandler.cpp
         Core/MessageHandler.h
         Files/FileList.cpp
         Files/FileDownload.cpp
         Files/FileHandling.h
-        lib/jobclient_schema.h
-        lib/Exceptions/my_eh_throw.cpp
-        lib/Exceptions/unwind-cxx.h
-        lib/Exceptions/eh_atomics.h
-        lib/Exceptions/my_exception_tracer_lib.h
-        lib/Exceptions/my_eh_ptr.cpp
-        lib/Exceptions/my_eh_catch.cpp
-        lib/Exceptions/my_exception_tracer_lib.cpp
-        lib/Exceptions/segvcatch.h
-        lib/Exceptions/segvcatch.cpp
-        lib/Exceptions/x86_64-signal.h
+        Lib/jobclient_schema.h
+        Lib/Exceptions/my_eh_throw.cpp
+        Lib/Exceptions/unwind-cxx.h
+        Lib/Exceptions/eh_atomics.h
+        Lib/Exceptions/my_exception_tracer_lib.h
+        Lib/Exceptions/my_eh_ptr.cpp
+        Lib/Exceptions/my_eh_catch.cpp
+        Lib/Exceptions/my_exception_tracer_lib.cpp
+        Lib/Exceptions/segvcatch.h
+        Lib/Exceptions/segvcatch.cpp
+        Lib/Exceptions/x86_64-signal.h
         Jobs/Submit.cpp
         Jobs/JobHandling.h
         Jobs/CheckStatus.cpp
-        lib/JobStatus.h
+        Lib/JobStatus.h
         Jobs/ArchiveJob.cpp
         DB/sJob.h
         DB/sStatus.h
@@ -187,27 +187,27 @@ add_executable(
 add_executable(
         Boost_Tests_run
         ${SOURCE_FILES}
-        tests/test_main.cpp
-        tests/utils.h
-        tests/fixtures/WebsocketServerFixture.h
+        Tests/test_main.cpp
+        Tests/utils.h
+        Tests/fixtures/WebsocketServerFixture.h
         Websocket/tests/WebsocketInterfaceTests.cpp
-        tests/fixtures/JsonConfigFixture.h
-        lib/Messaging/tests.cpp
-        tests/utils.cpp
+        Tests/fixtures/JsonConfigFixture.h
+        Lib/Messaging/tests.cpp
+        Tests/utils.cpp
         Websocket/tests/ping_pong_tests.cpp
         Files/tests/test_file_list.cpp
-        tests/fixtures/TemporaryDirectoryFixture.h
-        tests/fixtures/BundleFixture.h
+        Tests/fixtures/TemporaryDirectoryFixture.h
+        Tests/fixtures/BundleFixture.h
         Files/tests/test_file_download.cpp
-        tests/fixtures/BundleFixture.cpp
+        Tests/fixtures/BundleFixture.cpp
         Jobs/tests/test_job_submit.cpp
-        tests/fixtures/DatabaseFixture.h
+        Tests/fixtures/DatabaseFixture.h
         Jobs/tests/test_check_status.cpp
         Jobs/tests/test_archive_job.cpp
         Jobs/tests/test_check_status_many_bundles.cpp
-        tests/db/SqliteConnector.h
-        tests/db/sJobDb.h
-        tests/db/sStatusDb.h
+        Tests/db/SqliteConnector.h
+        Tests/db/sJobDb.h
+        Tests/db/sStatusDb.h
         Bundle/tests/bundle_db_tests.cpp
 )
 

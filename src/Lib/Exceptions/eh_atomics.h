@@ -28,6 +28,8 @@
  *  Do not attempt to use it directly.
  */
 
+// NOLINTBEGIN
+
 #ifndef _EH_ATOMICS_H
 #define _EH_ATOMICS_H 1
 
@@ -82,3 +84,5 @@ namespace __gnu_cxx
 #pragma GCC visibility pop
 
 #endif // _EH_ATOMICS_H
+
+// NOLINTEND

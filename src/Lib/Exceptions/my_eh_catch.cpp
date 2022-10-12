@@ -22,6 +22,8 @@
 // see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 // <http://www.gnu.org/licenses/>.
 
+// NOLINTBEGIN
+
 #include "unwind-cxx.h"
 #include "my_exception_tracer_lib.h"
 
@@ -124,3 +126,5 @@ extern "C" void my__cxa_end_catch ()
 
     header->handlerCount = count;
 }
+
+// NOLINTEND

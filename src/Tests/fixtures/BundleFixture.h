@@ -5,8 +5,8 @@
 #ifndef ADACS_JOB_CLIENT_BUNDLEFIXTURE_H
 #define ADACS_JOB_CLIENT_BUNDLEFIXTURE_H
 
+#include "../../Lib/GeneralUtils.h"
 #include "../../Settings.h"
-#include "../../lib/GeneralUtils.h"
 #include "nlohmann/json.hpp"
 #include <boost/filesystem.hpp>
 #include <fstream>

@@ -5,10 +5,10 @@
 #ifndef ADACS_JOB_CLIENT_SJOBDB_H
 #define ADACS_JOB_CLIENT_SJOBDB_H
 
+#include "../../Lib/jobclient_schema.h"
+#include "SqliteConnector.h"
 #include <cstdint>
 #include <string>
-#include "SqliteConnector.h"
-#include "../../lib/jobclient_schema.h"
 #include <thread>
 
 
@@ -62,7 +62,7 @@ struct sJobDb {
         throw std::runtime_error("Unable to get record, even after retrying");
     }
 
-    static std::vector<sJobDb> getRunningJobs() {
+    static auto getRunningJobs() -> std::vector<sJobDb> {
         SqliteConnector _database = SqliteConnector();
         schema::JobclientJob _jobTable;
 
@@ -128,7 +128,7 @@ struct sJobDb {
         throw std::runtime_error("Unable to delete record, even after retrying");
     }
 
-    void save() {
+    void save() { // NOLINT(readability-function-cognitive-complexity)
         SqliteConnector _database = SqliteConnector();
         schema::JobclientJob _jobTable;
 
@@ -185,7 +185,7 @@ struct sJobDb {
         throw std::runtime_error("Unable to save record, even after retrying");
     }
 
-    static sJobDb getById(uint64_t id) {
+    static auto getById(uint64_t id) -> sJobDb {
         SqliteConnector _database = SqliteConnector();
         schema::JobclientJob _jobTable;
 

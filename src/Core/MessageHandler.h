@@ -5,9 +5,9 @@
 #ifndef ADACS_JOB_CLIENT_MESSAGEHANDLER_H
 #define ADACS_JOB_CLIENT_MESSAGEHANDLER_H
 
-#include "../lib/Messaging/Message.h"
+#include "../Lib/Messaging/Message.h"
 
-void handleMessage(const std::shared_ptr<Message>&);
+void handleMessage(const std::shared_ptr<Message>& message);
 
 
 #endif //ADACS_JOB_CLIENT_MESSAGEHANDLER_H

@@ -5,7 +5,7 @@
 #ifndef GWCLOUD_JOB_SERVER_DATABASEFIXTURE_H
 #define GWCLOUD_JOB_SERVER_DATABASEFIXTURE_H
 
-#include "../../lib/jobclient_schema.h"
+#include "../../Lib/jobclient_schema.h"
 #include "../db/SqliteConnector.h"
 #include "../db/sJobDb.h"
 #include "../db/sStatusDb.h"
@@ -32,7 +32,7 @@ struct DatabaseFixture {
     DatabaseFixture(DatabaseFixture&&) = delete;
     auto operator=(DatabaseFixture&&) -> DatabaseFixture& = delete;
 
-    bool maybeHandleDbMessage(auto connection, auto message) {
+    auto maybeHandleDbMessage(auto connection, auto message) -> bool {
         switch (message->getId()) {
             case DB_JOB_GET_BY_JOB_ID: {
                 auto dbRequestId = message->pop_ulong();

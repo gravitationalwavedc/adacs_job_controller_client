@@ -5,11 +5,11 @@
 #ifndef ADACS_JOB_CLIENT_SJOB_H
 #define ADACS_JOB_CLIENT_SJOB_H
 
+#include "../Lib/Messaging/Message.h"
+#include "../Websocket/WebsocketInterface.h"
 #include <cstdint>
 #include <string>
-#include "../lib/Messaging/Message.h"
 #include <thread>
-#include "../Websocket/WebsocketInterface.h"
 
 
 struct sJob {

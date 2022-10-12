@@ -13,7 +13,7 @@
 #include <vector>
 
 #ifdef BUILD_TESTS
-#include "../../tests/utils.h"
+#include "../../Tests/utils.h"
 #endif
 
 constexpr const char* SYSTEM_SOURCE = "system";

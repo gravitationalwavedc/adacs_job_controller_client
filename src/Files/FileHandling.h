@@ -5,7 +5,7 @@
 #ifndef ADACS_JOB_CLIENT_FILEHANDLING_H
 #define ADACS_JOB_CLIENT_FILEHANDLING_H
 
-#include "../lib/Messaging/Message.h"
+#include "../Lib/Messaging/Message.h"
 
 void handleFileList(const std::shared_ptr<Message>& msg);
 void handleFileDownload(const std::shared_ptr<Message>& msg);

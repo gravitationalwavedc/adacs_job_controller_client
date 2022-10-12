@@ -5,7 +5,7 @@
 #ifndef ADACS_JOB_CLIENT_WEBSOCKETINTERFACE_H
 #define ADACS_JOB_CLIENT_WEBSOCKETINTERFACE_H
 
-#include "../lib/Messaging/Message.h"
+#include "../Lib/Messaging/Message.h"
 #include "client_wss.hpp"
 #include <folly/concurrency/ConcurrentHashMap.h>
 #include <folly/concurrency/UnboundedQueue.h>
@@ -21,7 +21,7 @@ class WebsocketInterface {
 public:
     WebsocketInterface() = default;
     explicit WebsocketInterface(const std::string& token);
-    virtual ~WebsocketInterface();
+    virtual ~WebsocketInterface(); // NOLINT(bugprone-exception-escape)
 
     static void SingletonFactory(const std::string& token);
     static auto Singleton() -> std::shared_ptr<WebsocketInterface>;
@@ -81,7 +81,7 @@ private:
     bool dataReady{};
     std::condition_variable dataCV;
     struct sDataItem {
-        std::shared_ptr<std::vector<uint8_t>> data;
+        std::shared_ptr<std::vector<uint8_t>> data = nullptr;
         std::function<void()> callback;
     };
     std::vector<std::shared_ptr<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<sDataItem, false>>>>> queue;

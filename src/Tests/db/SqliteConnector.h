@@ -7,8 +7,8 @@
 
 #ifdef BUILD_TESTS
 
+#include "../../Lib/GeneralUtils.h"
 #include "../../Settings.h"
-#include "../../lib/GeneralUtils.h"
 #include <sqlpp11/sqlite3/connection.h>
 #include <sqlpp11/sqlite3/connection_config.h>
 #include <sqlpp11/sqlpp11.h>
@@ -20,7 +20,7 @@ public:
     SqliteConnector() {
         sqlite::connection_config config;
         config.path_to_database = (getExecutablePath() / DATABASE_FILE).string();
-        config.flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+        config.flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE; // NOLINT(hicpp-signed-bitwise)
         config.debug = false;
         database = std::make_shared<sqlite::connection>(config);
     }

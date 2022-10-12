@@ -2,12 +2,9 @@
 // Created by lewis on 9/28/22.
 //
 
-#include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../../Websocket/WebsocketInterface.h"
-#include "../../lib/jobclient_schema.h"
-#include "../../tests/fixtures/TemporaryDirectoryFixture.h"
-#include "../../tests/fixtures/BundleFixture.h"
-#include "../../tests/fixtures/DatabaseFixture.h"
+#include "../../Tests/fixtures/BundleFixture.h"
+#include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
 
 extern std::map<std::string, std::promise<void>> pausedFileTransfers;
 
@@ -68,16 +65,16 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    virtual ~FileDownloadTestDataFixture() {
+    ~FileDownloadTestDataFixture() override {
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& /*connection*/) override {
         receivedMessages.push(message);
         lastMessageTime = std::chrono::system_clock::now();
     }
 
-    std::shared_ptr<std::vector<uint8_t>> writeFileData() {
+    [[nodiscard]] auto writeFileData() const -> std::shared_ptr<std::vector<uint8_t>> {
         // Write out some random data to one of the temp files
         std::ofstream file(tempFile2, std::ios::trunc | std::ios::binary);
 
@@ -85,16 +82,17 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
         auto dataLength = randomInt(1024ULL*1024ULL*64ULL, 1024ULL*1024ULL*128ULL);
         auto fileData = generateRandomData(dataLength);
 
-        file.write(reinterpret_cast<char*>(fileData->data()), fileData->size());
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+        file.write(reinterpret_cast<char*>(fileData->data()), static_cast<std::streamsize>(fileData->size()));
         file.flush();
         file.close();
 
         return fileData;
     }
 
-    void doFileDownload(std::shared_ptr<std::vector<uint8_t>> fileData, std::string downloadUuid) {
+    void doFileDownload(const std::shared_ptr<std::vector<uint8_t>>& fileData, const std::string& downloadUuid) { // NOLINT(readability-function-cognitive-complexity)
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_DETAILS);
@@ -134,7 +132,7 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
 
                     bPauseChecked = true;
                 }
-            };
+            }
 
             auto msg = receivedMessages.front();
             if (msg->pop_string() != downloadUuid) {
@@ -171,7 +169,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.send(pWebsocketServerConnection);
 
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
@@ -190,7 +188,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.send(pWebsocketServerConnection);
 
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
@@ -209,7 +207,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.send(pWebsocketServerConnection);
 
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
@@ -226,7 +224,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.send(pWebsocketServerConnection);
 
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
@@ -243,7 +241,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.send(pWebsocketServerConnection);
 
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
@@ -263,7 +261,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.send(pWebsocketServerConnection);
 
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
@@ -283,7 +281,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.send(pWebsocketServerConnection);
 
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
@@ -303,7 +301,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.send(pWebsocketServerConnection);
 
         // Spin waiting for the next message
-        while (receivedMessages.empty()) {};
+        while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);

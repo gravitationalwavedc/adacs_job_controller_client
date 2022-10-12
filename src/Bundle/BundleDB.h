@@ -7,6 +7,7 @@
 
 #include <Python.h>
 
+// NOLINTNEXTLINE(modernize-use-trailing-return-type)
 PyMODINIT_FUNC PyInit_bundledb(void);
 
 #endif //ADACS_JOB_CLIENT_BUNDLEDB_H

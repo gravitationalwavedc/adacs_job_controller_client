@@ -2,16 +2,13 @@
 // Created by lewis on 8/17/22.
 //
 
-#include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../WebsocketInterface.h"
-#include "../../tests/fixtures/AbortHelperFixture.h"
+#include "../../Tests/fixtures/AbortHelperFixture.h"
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
 
 struct PingPongTestDataFixture : public WebsocketServerFixture, public AbortHelperFixture {
-    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     bool bReceivedPing = false;
     std::chrono::time_point<std::chrono::system_clock> zeroTime = {};
     std::string token;
-    // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     PingPongTestDataFixture() {
         token = generateUUID();
@@ -25,7 +22,7 @@ struct PingPongTestDataFixture : public WebsocketServerFixture, public AbortHelp
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    virtual ~PingPongTestDataFixture() {
+    ~PingPongTestDataFixture() override {
         WebsocketInterface::Singleton()->stop();
     }
 

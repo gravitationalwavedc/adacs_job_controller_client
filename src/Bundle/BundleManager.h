@@ -5,11 +5,11 @@
 #ifndef ADACS_JOB_CLIENT_BUNDLEMANAGER_H
 #define ADACS_JOB_CLIENT_BUNDLEMANAGER_H
 
-#include <string>
-#include <memory>
+#include "BundleInterface.h"
 #include "PythonInterface.h"
 #include "nlohmann/json.hpp"
-#include "BundleInterface.h"
+#include <memory>
+#include <string>
 
 class BundleManager {
 public:

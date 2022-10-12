@@ -22,12 +22,13 @@
 // see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 // <http://www.gnu.org/licenses/>.
 
+// NOLINTBEGIN
+
 #include "eh_atomics.h"
 
 #define _GLIBCXX_EH_PTR_COMPAT
 
 #include <exception>
-#include <bits/exception_ptr.h>
 #include "unwind-cxx.h"
 #include "my_exception_tracer_lib.h"
 
@@ -106,3 +107,5 @@ void my_rethrow_exception(std::exception_ptr _ep)
 }
 
 #undef _GLIBCXX_EH_PTR_COMPAT
+
+// NOLINTEND

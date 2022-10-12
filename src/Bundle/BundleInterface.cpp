@@ -2,7 +2,7 @@
 // Created by lewis on 9/3/22.
 //
 
-#include "../lib/GeneralUtils.h"
+#include "../Lib/GeneralUtils.h"
 #include "BundleInterface.h"
 #include <glog/logging.h>
 #include <iostream>
@@ -50,9 +50,6 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
         PyErr_Print();
         abortApplication();
     }
-
-    // Get the locals dict
-    pLocal = PyModule_GetDict(pBundleModule);
 }
 
 auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
@@ -114,8 +111,8 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
     return pResult;
 }
 
-auto BundleInterface::toString(PyObject *value) -> std::string {
-    return {PyUnicode_AsUTF8(value)};
+auto BundleInterface::toString(PyObject *object) -> std::string {
+    return {PyUnicode_AsUTF8(object)};
 }
 
 auto BundleInterface::toUint64(PyObject *value) -> uint64_t {

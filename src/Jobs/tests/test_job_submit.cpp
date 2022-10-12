@@ -2,16 +2,13 @@
 // Created by lewis on 9/28/22.
 //
 
-#include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../../Websocket/WebsocketInterface.h"
-#include "../../lib/jobclient_schema.h"
-#include "../../tests/fixtures/TemporaryDirectoryFixture.h"
-#include "../../tests/fixtures/BundleFixture.h"
 #include "../JobHandling.h"
-#include "../../tests/fixtures/DatabaseFixture.h"
-#include "../../tests/fixtures/AbortHelperFixture.h"
-#include "../../lib/JobStatus.h"
 #include "../../DB/sStatus.h"
+#include "../../Lib/JobStatus.h"
+#include "../../Tests/fixtures/AbortHelperFixture.h"
+#include "../../Tests/fixtures/BundleFixture.h"
+#include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
 
 struct JobSubmitTestDataFixture : public WebsocketServerFixture, public BundleFixture, public AbortHelperFixture, public TemporaryDirectoryFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
@@ -56,17 +53,17 @@ struct JobSubmitTestDataFixture : public WebsocketServerFixture, public BundleFi
         ofs2.close();
     }
 
-    virtual ~JobSubmitTestDataFixture() {
+    ~JobSubmitTestDataFixture() override {
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& /*connection*/) override {
         receivedMessages.push(message);
     }
 };
 
 BOOST_FIXTURE_TEST_SUITE(job_submit_test_suite, JobSubmitTestDataFixture)
-    BOOST_AUTO_TEST_CASE(test_submit_timeout) {
+    BOOST_AUTO_TEST_CASE(test_submit_timeout) { // NOLINT(readability-function-cognitive-complexity)
         auto job = sJob::getOrCreateByJobId(1234);
         job.jobId = 1234;
         job.submitting = true;
@@ -104,7 +101,7 @@ BOOST_FIXTURE_TEST_SUITE(job_submit_test_suite, JobSubmitTestDataFixture)
 
         // Wait until job.workingDirectory is not empty, which indicates that the job has been "resubmitted"
         int retry = 0;
-        for (; retry < 10 && job.workingDirectory == ""; retry++) {
+        for (; retry < 10 && job.workingDirectory.empty(); retry++) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             job.refreshFromDb();
         }
@@ -148,7 +145,7 @@ BOOST_FIXTURE_TEST_SUITE(job_submit_test_suite, JobSubmitTestDataFixture)
         BOOST_CHECK_EQUAL(checkAborted(), false);
     }
 
-    BOOST_AUTO_TEST_CASE(test_submit_error_none) {
+    BOOST_AUTO_TEST_CASE(test_submit_error_none) { // NOLINT(readability-function-cognitive-complexity)
         // If the submit function returns 0 or None, then the job should be in an error state
         writeJobSubmitError(bundleHash, "return None");
 
@@ -185,7 +182,7 @@ BOOST_FIXTURE_TEST_SUITE(job_submit_test_suite, JobSubmitTestDataFixture)
         BOOST_CHECK_EQUAL(resultMsg->pop_uint(), JobStatus::ERROR);
         BOOST_CHECK_EQUAL(resultMsg->pop_string(), "Unable to submit job. Please check the logs as to why.");
 
-        for (int count = 0; count = 100; count++) {
+        for (int count = 0; count < 100; count++) {
             try {
                 auto jobResults =
                         database->operator()(
@@ -215,7 +212,7 @@ BOOST_FIXTURE_TEST_SUITE(job_submit_test_suite, JobSubmitTestDataFixture)
         BOOST_CHECK_EQUAL(checkAborted(), false);
     }
 
-    BOOST_AUTO_TEST_CASE(test_submit_error_zero) {
+    BOOST_AUTO_TEST_CASE(test_submit_error_zero) { // NOLINT(readability-function-cognitive-complexity)
         // If the submit function returns 0 or None, then the job should be in an error state
         writeJobSubmitError(bundleHash, "return 0");
 
@@ -252,7 +249,7 @@ BOOST_FIXTURE_TEST_SUITE(job_submit_test_suite, JobSubmitTestDataFixture)
         BOOST_CHECK_EQUAL(resultMsg->pop_uint(), JobStatus::ERROR);
         BOOST_CHECK_EQUAL(resultMsg->pop_string(), "Unable to submit job. Please check the logs as to why.");
 
-        for (int count = 0; count = 100; count++) {
+        for (int count = 0; count < 100; count++) {
             try {
                 auto jobResults =
                         database->operator()(

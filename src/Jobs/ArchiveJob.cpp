@@ -3,8 +3,8 @@
 //
 
 #include "JobHandling.h"
-#include "subprocess.hpp"
 #include "glog/logging.h"
+#include "subprocess.hpp"
 
 auto archiveJob(const sJob& job) -> bool {
     /*

@@ -2,22 +2,18 @@
 // Created by lewis on 4/10/22.
 //
 
-#include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../../Websocket/WebsocketInterface.h"
-#include "../../lib/jobclient_schema.h"
-#include "../../tests/fixtures/TemporaryDirectoryFixture.h"
-#include "../../tests/fixtures/BundleFixture.h"
 #include "../JobHandling.h"
-#include "../../tests/fixtures/DatabaseFixture.h"
-#include "../../tests/fixtures/AbortHelperFixture.h"
-#include "../../lib/JobStatus.h"
 #include "../../DB/sStatus.h"
+#include "../../Lib/JobStatus.h"
+#include "../../Tests/fixtures/AbortHelperFixture.h"
+#include "../../Tests/fixtures/BundleFixture.h"
+#include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
 
 void checkJobStatusImpl(sJob job, bool forceNotification);
 
 struct JobCheckStatusTestDataFixture
         : public WebsocketServerFixture, public BundleFixture, public DatabaseFixture, public AbortHelperFixture, public TemporaryDirectoryFixture {
-    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::string token;
     std::queue<std::shared_ptr<Message>> receivedMessages;
     std::string bundleHash = generateUUID();
@@ -30,7 +26,6 @@ struct JobCheckStatusTestDataFixture
     std::string tempFile = createTemporaryFile(tempDir);
     std::string tempDir2 = createTemporaryDirectory(tempDir);
     std::string tempFile2 = createTemporaryFile(tempDir2);
-    // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     JobCheckStatusTestDataFixture() {
         token = generateUUID();
@@ -67,11 +62,11 @@ struct JobCheckStatusTestDataFixture
         job.save();
     }
 
-    virtual ~JobCheckStatusTestDataFixture() {
+    ~JobCheckStatusTestDataFixture() override {
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& /*connection*/) override {
         receivedMessages.push(message);
     }
 };
@@ -745,7 +740,7 @@ BOOST_FIXTURE_TEST_SUITE(job_check_status_test_suite, JobCheckStatusTestDataFixt
         BOOST_CHECK_EQUAL(resultMsg->pop_string(), "Some info");
     }
 
-    BOOST_AUTO_TEST_CASE(test_check_status_job_running_error_1) {
+    BOOST_AUTO_TEST_CASE(test_check_status_job_running_error_1) { // NOLINT(readability-function-cognitive-complexity)
         nlohmann::json result = {
                 {
                         "status", nlohmann::json::array(
@@ -823,7 +818,7 @@ BOOST_FIXTURE_TEST_SUITE(job_check_status_test_suite, JobCheckStatusTestDataFixt
         BOOST_CHECK_EQUAL(resultMsg->pop_string(), "Job has completed");
     }
 
-    BOOST_AUTO_TEST_CASE(test_check_status_job_running_error_2) {
+    BOOST_AUTO_TEST_CASE(test_check_status_job_running_error_2) { // NOLINT(readability-function-cognitive-complexity)
         nlohmann::json result = {
                 {
                         "status", nlohmann::json::array(
@@ -971,7 +966,7 @@ BOOST_FIXTURE_TEST_SUITE(job_check_status_test_suite, JobCheckStatusTestDataFixt
         BOOST_CHECK_EQUAL(resultMsg->pop_string(), "Some info");
     }
 
-    BOOST_AUTO_TEST_CASE(test_check_status_job_steps_complete_bundle_complete) {
+    BOOST_AUTO_TEST_CASE(test_check_status_job_steps_complete_bundle_complete) { // NOLINT(readability-function-cognitive-complexity)
         nlohmann::json result = {
                 {
                         "status", nlohmann::json::array(

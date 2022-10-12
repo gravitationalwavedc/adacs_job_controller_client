@@ -17,7 +17,7 @@ public:
         applicationAborted = false;
     }
 
-    bool checkAborted() {
+    static auto checkAborted() -> bool {
         return applicationAborted;
     }
 };

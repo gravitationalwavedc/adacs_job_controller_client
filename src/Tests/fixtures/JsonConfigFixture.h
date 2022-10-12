@@ -5,10 +5,10 @@
 #ifndef ADACS_JOB_CLIENT_JSONCONFIGFIXTURE_H
 #define ADACS_JOB_CLIENT_JSONCONFIGFIXTURE_H
 
-#include <fstream>
-#include "nlohmann/json.hpp"
+#include "../../Lib/GeneralUtils.h"
 #include "../../Settings.h"
-#include "../../lib/GeneralUtils.h"
+#include "nlohmann/json.hpp"
+#include <fstream>
 
 class JsonConfigFixture {
 public:
@@ -29,7 +29,7 @@ public:
         std::filesystem::remove(clientConfigFile);
     }
 
-    void writeClientConfig() {
+    void writeClientConfig() const {
         std::ofstream file(clientConfigFile, std::ios_base::trunc);
         file << clientConfig.dump();
     }

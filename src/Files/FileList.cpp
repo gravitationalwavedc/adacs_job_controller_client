@@ -3,12 +3,13 @@
 //
 
 #include "FileHandling.h"
-#include <cstdint>
-#include <boost/filesystem.hpp>
 #include "../Bundle/BundleManager.h"
-#include "glog/logging.h"
 #include "../DB/sJob.h"
+#include "glog/logging.h"
+#include <boost/filesystem.hpp>
+#include <cstdint>
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     // Get the job details
     auto jobId = msg->pop_uint();

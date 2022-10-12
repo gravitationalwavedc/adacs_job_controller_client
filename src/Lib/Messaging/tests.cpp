@@ -21,7 +21,7 @@ private:
         Message::Priority ePriority = Message::Priority::Lowest;
 
     private:
-        void queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& data, Message::Priority priority, std::function<void()> callback = [] {}) override {
+        void queueMessage(std::string source, const std::shared_ptr<std::vector<uint8_t>>& data, Message::Priority priority, std::function<void()> /*callback*/) override {
             vData = data;
             sSource = source;
             ePriority = priority;

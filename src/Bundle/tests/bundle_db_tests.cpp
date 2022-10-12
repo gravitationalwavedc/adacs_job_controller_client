@@ -3,18 +3,18 @@
 //
 
 
-#include "../../tests/fixtures/BundleFixture.h"
-#include "../../tests/fixtures/JsonConfigFixture.h"
+#include "../../Tests/fixtures/BundleFixture.h"
+#include "../../Tests/fixtures/JsonConfigFixture.h"
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
 #include "../BundleManager.h"
-#include "../../tests/fixtures/WebsocketServerFixture.h"
 #include <boost/test/unit_test.hpp>
 
 struct BundleDbTestFixture : public BundleFixture, public WebsocketServerFixture {
     std::string token;
     std::queue<std::shared_ptr<Message>> receivedMessages;
     nlohmann::json getJobByIdResult;
-    uint64_t getJobByIdRequestId;
-    uint64_t deletedJobId;
+    uint64_t getJobByIdRequestId = 0;
+    uint64_t deletedJobId = 0;
     std::string bundleHashRequest;
     bool returnSuccess = true;
 
@@ -30,11 +30,11 @@ struct BundleDbTestFixture : public BundleFixture, public WebsocketServerFixture
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    ~BundleDbTestFixture() {
+    ~BundleDbTestFixture() override {
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) override {
         switch (message->getId()) {
             case DB_BUNDLE_CREATE_OR_UPDATE_JOB: {
                 auto dbRequestId = message->pop_ulong();

@@ -2,14 +2,11 @@
 // Created by lewis on 9/28/22.
 //
 
-#include "../../tests/fixtures/WebsocketServerFixture.h"
-#include "../../lib/jobclient_schema.h"
-#include "../../tests/fixtures/TemporaryDirectoryFixture.h"
-#include "../../tests/fixtures/BundleFixture.h"
-#include "../../tests/fixtures/DatabaseFixture.h"
+#include "../../Tests/fixtures/WebsocketServerFixture.h"
+#include "../../Tests/fixtures/BundleFixture.h"
+#include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
 
 struct FileListTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
-    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::string token;
     std::shared_ptr<Message> receivedMessage;
     std::promise<void> promMessageReceived;
@@ -20,7 +17,6 @@ struct FileListTestDataFixture : public WebsocketServerFixture, public Temporary
     std::string tempFile = createTemporaryFile(tempDir);
     std::string tempDir2 = createTemporaryDirectory(tempDir);
     std::string tempFile2 = createTemporaryFile(tempDir2);
-    // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     FileListTestDataFixture() {
         // Create symlinks
@@ -65,11 +61,11 @@ struct FileListTestDataFixture : public WebsocketServerFixture, public Temporary
         while (!*WebsocketInterface::Singleton()->getpConnection()) {}
     }
 
-    virtual ~FileListTestDataFixture() {
+    ~FileListTestDataFixture() override {
         WebsocketInterface::Singleton()->stop();
     }
 
-    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& connection) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& message, const std::shared_ptr<TestWsServer::Connection>& /*connection*/) override {
         receivedMessage = message;
         promMessageReceived.set_value();
     }

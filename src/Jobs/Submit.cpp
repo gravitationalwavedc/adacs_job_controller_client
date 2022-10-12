@@ -4,7 +4,7 @@
 
 #include "JobHandling.h"
 #include "../Bundle/BundleManager.h"
-#include "../lib/JobStatus.h"
+#include "../Lib/JobStatus.h"
 #include "glog/logging.h"
 #include <shared_mutex>
 
