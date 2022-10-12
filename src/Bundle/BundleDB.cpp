@@ -59,7 +59,9 @@ static auto create_or_update_job(PyObject * /*self*/, PyObject *args) -> PyObjec
     Py_DECREF(value);
     Py_INCREF(dict);
 
-    return Py_NewRef(PythonInterface::My_Py_NoneStruct());
+    auto *result = PythonInterface::My_Py_NoneStruct();
+    Py_INCREF(result);
+    return result;
 }
 
 static auto get_job_by_id(PyObject * /*self*/, PyObject *args) -> PyObject *
@@ -143,7 +145,9 @@ static auto delete_job(PyObject * /*self*/, PyObject *args) -> PyObject *
         return nullptr;
     }
 
-    return Py_NewRef(PythonInterface::My_Py_NoneStruct());
+    auto *result = PythonInterface::My_Py_NoneStruct();
+    Py_INCREF(result);
+    return result;
 }
 
 static std::array<PyMethodDef, 4> BundleDbMethods = {{

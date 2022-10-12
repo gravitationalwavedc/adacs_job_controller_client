@@ -54,7 +54,6 @@ PYWRAP_0(Py_Initialize)
 PYWRAP_0(PyDict_New)
 PYWRAP_0(PyEval_GetBuiltins)
 PYWRAP_3(PyDict_SetItemString, PyObject *, dp, const char *, key, PyObject *, item)
-PYWRAP_1(PyModule_GetDict, PyObject *, o)
 PYWRAP_0(PyErr_Occurred)
 PYWRAP_0(PyErr_Print)
 PYWRAP_2(PyObject_GetAttrString, PyObject *, a, const char *, b)
@@ -78,11 +77,7 @@ PYWRAP_1(PyImport_ImportModule, const char *, obj)
 PYWRAP_1(PySys_GetObject, const char *, obj)
 PYWRAP_2(PyList_Append, PyObject *, list, PyObject *, item)
 PYWRAP_2(PyModule_Create2, struct PyModuleDef*, moduleDef, int, apiver)
-PYWRAP_1(PyObject_Repr, PyObject *, object)
-PYWRAP_1(PyObject_Type, PyObject *, object)
-PYWRAP_1(PyObject_Str, PyObject *, object)
 PYWRAP_1(PyLong_FromUnsignedLongLong, unsigned long long, value)
-PYWRAP_3(PyDict_SetItem, PyObject*, dict, PyObject*, key, PyObject*, value)
 PYWRAP_2(PyTuple_GetItem, PyObject*, tuple, Py_ssize_t, pos)
 PYWRAP_2(PyErr_SetString, PyObject*, error, const char*, message)
 PYWRAP_3(PyErr_NewException, const char *, name, PyObject *, base, PyObject *, dict)
@@ -100,6 +95,7 @@ auto PyImport_AppendInittab(const char * name, PyObject* (*initfunc)()) -> declt
 #if PY_MINOR_VERSION >= 8
 PYWRAP_1(_Py_Dealloc, PyObject *, obj)
 #endif
+
 // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast,readability-identifier-length)
 }
 
