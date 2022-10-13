@@ -97,9 +97,11 @@ void dumpExceptions(const std::exception& exception) {
         LOG(INFO) << exc;
     }
 
+    // NOLINTBEGIN(cert-err33-c)
     google::FlushLogFilesUnsafe(google::INFO);
     fflush(stdout);
     fflush(stderr);
+    // NOLINTEND(cert-err33-c)
 }
 
 auto getDefaultJobDetails() -> nlohmann::json {

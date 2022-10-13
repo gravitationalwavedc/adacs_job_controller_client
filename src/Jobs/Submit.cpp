@@ -2,11 +2,11 @@
 // Created by lewis on 10/2/22.
 //
 
-#include "JobHandling.h"
 #include "../Bundle/BundleManager.h"
 #include "../Lib/JobStatus.h"
-#include "glog/logging.h"
 #include "../Settings.h"
+#include "JobHandling.h"
+#include "glog/logging.h"
 #include <shared_mutex>
 
 static std::shared_mutex mutex_;
