@@ -27,6 +27,9 @@ void abortApplication() {
     std::cerr << "APPLICATION ABORTING" << std::endl;
     throw std::runtime_error("Aborted");
 #else
+    google::FlushLogFilesUnsafe(google::INFO);
+    fflush(stdout);
+    fflush(stderr);
     std::abort();
 #endif
 }
@@ -42,8 +45,14 @@ auto getExecutablePath() -> boost::filesystem::path {
 }
 
 auto readClientConfig() -> nlohmann::json {
-    std::ifstream file((getExecutablePath() / CLIENT_CONFIG_FILE).string());
-    return nlohmann::json::parse(file);
+    static nlohmann::json configData;
+
+    if (configData.empty()) {
+        std::ifstream file((getExecutablePath() / CLIENT_CONFIG_FILE).string());
+        configData = nlohmann::json::parse(file);
+    }
+
+    return configData;
 }
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
@@ -87,6 +96,10 @@ void dumpExceptions(const std::exception& exception) {
     for (auto& exc : exceptions) {
         LOG(INFO) << exc;
     }
+
+    google::FlushLogFilesUnsafe(google::INFO);
+    fflush(stdout);
+    fflush(stderr);
 }
 
 auto getDefaultJobDetails() -> nlohmann::json {

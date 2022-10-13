@@ -5,6 +5,8 @@
 #include "PythonInterface.h"
 #include "../Lib/GeneralUtils.h"
 #include "BundleDB.h"
+#include "memory_patch.h"
+#include "subhook.h"
 #include <Python.h>
 #include <dlfcn.h>
 #include <glog/logging.h>
@@ -96,6 +98,16 @@ auto PyImport_AppendInittab(const char * name, PyObject* (*initfunc)()) -> declt
 PYWRAP_1(_Py_Dealloc, PyObject *, obj)
 #endif
 
+PyAPI_FUNC(PyGILState_STATE) myPyGILState_Ensure(void) {
+    LOG(INFO) << "myPyGILState_Ensure called";
+
+    return PyGILState_LOCKED;
+}
+
+PyAPI_FUNC(void) myPyGILState_Release(PyGILState_STATE) {
+    LOG(INFO) << "myPyGILState_Release called";
+}
+
 // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast,readability-identifier-length)
 }
 
@@ -109,6 +121,21 @@ void PythonInterface::initPython(const std::string& sPythonLibrary) {
 
     // Set the library handle and initialise the python interpreter
     dlPythonLibHandle = libHandle;
+
+    // pybind11 workarounds start
+    // Patch GIL functions - since we ensure our own GIL access to all python modules
+    auto *pPyGILState_Ensure = dlsym(PythonInterface::getPythonLibHandle(), "PyGILState_Ensure");
+    auto *pPyGILState_Release = dlsym(PythonInterface::getPythonLibHandle(), "PyGILState_Release");
+    auto *hook = subhook_new(pPyGILState_Ensure, reinterpret_cast<void*>(&myPyGILState_Ensure), SUBHOOK_OPTION_64BIT_OFFSET);
+    if (subhook_install(hook) < 0) {
+        throw std::runtime_error("PyGILState_Ensure redirection failed to install");
+    }
+
+    hook = subhook_new(pPyGILState_Release, reinterpret_cast<void*>(&myPyGILState_Release), SUBHOOK_OPTION_64BIT_OFFSET);
+    if (subhook_install(hook) < 0) {
+        throw std::runtime_error("myPyGILState_Release redirection failed to install");
+    }
+    // pybind11 workarounds end
 
     // Expose the _bundledb module, should be before Py_Initialize()
     if (PyImport_AppendInittab("_bundledb", PyInit_bundledb) == -1) {

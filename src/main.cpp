@@ -81,15 +81,19 @@ auto main(int argc, char* argv[]) -> int {
     std::cout << std::flush;
     std::cerr << std::flush;
 
-    // NOLINTBEGIN(cppcoreguidelines-pro-type-vararg,clang-analyzer-core.NonNullParamChecker,cppcoreguidelines-pro-type-vararg,hicpp-vararg,google-readability-casting,cppcoreguidelines-pro-type-cstyle-cast)
+    // NOLINTBEGIN(cppcoreguidelines-pro-type-vararg,clang-analyzer-core.NonNullParamChecker,cppcoreguidelines-pro-type-vararg,hicpp-vararg,google-readability-casting,cppcoreguidelines-pro-type-cstyle-cast,cppcoreguidelines-owning-memory)
     auto sIn = open((const char*) STDIN_FILENO, O_RDONLY);
     auto sOut = open((const char*) STDOUT_FILENO, O_APPEND | O_WRONLY);
     auto sErr = open((const char*) STDERR_FILENO, O_APPEND | O_WRONLY);
-    // NOLINTEND(cppcoreguidelines-pro-type-vararg,clang-analyzer-core.NonNullParamChecker,cppcoreguidelines-pro-type-vararg,hicpp-vararg,google-readability-casting,cppcoreguidelines-pro-type-cstyle-cast)
 
     dup2(sIn, STDIN_FILENO);
     dup2(sOut, STDOUT_FILENO);
     dup2(sErr, STDERR_FILENO);
+
+    // Redirect stdout and stderr to file in case glog doesn't catch something
+    freopen((boost::filesystem::path(FLAGS_log_dir) / "stdout.log").c_str(), "a", stdout);
+    freopen((boost::filesystem::path(FLAGS_log_dir) / "stderr.log").c_str(), "a", stderr);
+    // NOLINTEND(cppcoreguidelines-pro-type-vararg,clang-analyzer-core.NonNullParamChecker,cppcoreguidelines-pro-type-vararg,hicpp-vararg,google-readability-casting,cppcoreguidelines-pro-type-cstyle-cast,cppcoreguidelines-owning-memory)
 
     run(wsToken);
 }

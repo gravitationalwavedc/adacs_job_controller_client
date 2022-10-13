@@ -210,38 +210,6 @@ namespace schema
       };
       using _traits = sqlpp::make_traits<sqlpp::text, sqlpp::tag::can_be_null>;
     };
-    struct Queued
-    {
-      struct _alias_t
-      {
-        static constexpr const char _literal[] =  "queued";
-        using _name_t = sqlpp::make_char_sequence<sizeof(_literal), _literal>;
-        template<typename T>
-        struct _member_t
-          {
-            T queued;
-            T& operator()() { return queued; }
-            const T& operator()() const { return queued; }
-          };
-      };
-      using _traits = sqlpp::make_traits<sqlpp::integer, sqlpp::tag::require_insert>;
-    };
-    struct Params
-    {
-      struct _alias_t
-      {
-        static constexpr const char _literal[] =  "params";
-        using _name_t = sqlpp::make_char_sequence<sizeof(_literal), _literal>;
-        template<typename T>
-        struct _member_t
-          {
-            T params;
-            T& operator()() { return params; }
-            const T& operator()() const { return params; }
-          };
-      };
-      using _traits = sqlpp::make_traits<sqlpp::text, sqlpp::tag::can_be_null>;
-    };
     struct Running
     {
       struct _alias_t
@@ -268,8 +236,6 @@ namespace schema
                JobclientJob_::SubmittingCount,
                JobclientJob_::BundleHash,
                JobclientJob_::WorkingDirectory,
-               JobclientJob_::Queued,
-               JobclientJob_::Params,
                JobclientJob_::Running>
   {
     struct _alias_t

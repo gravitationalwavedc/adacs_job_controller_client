@@ -65,7 +65,7 @@ auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
     pValue = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
         PyErr_Print();
-        abortApplication();
+        throw std::runtime_error("Error calling json.loads");
     }
 
     Py_DECREF(pArgs);
@@ -95,7 +95,7 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
     if (PyErr_Occurred() != nullptr) {
         LOG(ERROR) << "Error calling bundle function " << bundleFunction;
         PyErr_Print();
-        abortApplication();
+        throw std::runtime_error("Error calling bundle function " + bundleFunction);
     }
 
     // Clear the thread from the thread bundle hash map
@@ -131,7 +131,7 @@ auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
     auto *pValue = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
         PyErr_Print();
-        abortApplication();
+        throw std::runtime_error("Error calling json.dumps");
     }
 
     Py_DECREF(pArgs);

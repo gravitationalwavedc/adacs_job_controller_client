@@ -130,8 +130,10 @@ void checkAllJobsStatus() {
     std::vector<std::thread> checkThreads;
 
     // Get all running jobs
+    LOG(INFO) << "Checking status of running jobs...";
     auto jobs = sJob::getRunningJobs();
     checkThreads.reserve(jobs.size());
+    LOG(INFO) << "There are " << jobs.size() << " running jobs.";
 
     // Start checking the status of all jobs
     for (const auto& job : jobs) {

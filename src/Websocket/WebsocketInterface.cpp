@@ -12,15 +12,23 @@
 static std::shared_ptr<WebsocketInterface> singleton;
 
 WebsocketInterface::WebsocketInterface(const std::string& token) {
+    auto config = readClientConfig();
+
     if (singleton) {
         LOG(ERROR) << "WebsocketInterface singleton was already initialised!";
         abortApplication();
     }
 
+    bool insecure = false;
+    if (config.contains("insecure")) {
+        insecure = static_cast<bool>(config["insecure"]);
+    }
+
     // Find the path to the system certificate store and set the SSL_CERT_FILE environment variable
     auto certPath = boost::filesystem::path(getOpensslCertPath()) / "cert.pem";
-    if (!boost::filesystem::exists(certPath)) {
+    if (!boost::filesystem::exists(certPath) && !insecure) {
         LOG(ERROR) << "Generated OpenSSL cert file '" << certPath << "' doesn't exist. Please set it manually via the SSL_CERT_FILE environment variable";
+        abortApplication();
     }
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     setenv("SSL_CERT_FILE", certPath.c_str(), 0);
@@ -33,10 +41,12 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
     // Set up the db requests
     dbRequestCounter = 0;
 
-    auto config = readClientConfig();
     url = std::string{config["websocketEndpoint"]} + "?token=" + token;
+#ifndef BUILD_TESTS
+    client = std::make_shared<WsClient>(url, !insecure);
+#else
     client = std::make_shared<WsClient>(url);
-
+#endif
     client->on_error = [&](auto, auto error) {
         LOG(ERROR) << "WS: Error with connection to " << url;
         LOG(ERROR) << error.message();
@@ -98,6 +108,8 @@ void WebsocketInterface::serverReady() {
     pingThread = std::thread([this] {
         this->runPings();
     });
+
+    bServerReady = true;
 #endif
 }
 // NOLINTEND(readability-convert-member-functions-to-static)
@@ -449,6 +461,7 @@ auto WebsocketInterface::generateDbRequestId() -> uint64_t {
     auto result = dbRequestCounter++;
 
     // Create a new promise for this request id
+    std::unique_lock<std::shared_mutex> lock(requestAccessMutex);
     dbRequestPromises.emplace(result, std::promise<std::shared_ptr<Message>>{});
 
     return result;
@@ -459,6 +472,7 @@ auto WebsocketInterface::getDbResponse(uint64_t dbRequestId) -> std::shared_ptr<
     auto result = dbRequestPromises[dbRequestId].get_future().get();
 
     // We're done with the dbRequestId now, so remove it from the promises map
+    std::unique_lock<std::shared_mutex> lock(requestAccessMutex);
     dbRequestPromises.erase(dbRequestId);
 
     return result;
@@ -468,6 +482,7 @@ void WebsocketInterface::setDbRequestResponse(const std::shared_ptr<Message>& me
     // The first ulong is always the db request id
     auto dbRequestId = message->pop_ulong();
 
+    std::unique_lock<std::shared_mutex> lock(requestAccessMutex);
     if (!dbRequestPromises.contains(dbRequestId)) {
         LOG(WARNING) << "Got unexpected DB Request ID response " << dbRequestId;
         return;

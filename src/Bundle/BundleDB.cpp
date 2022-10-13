@@ -91,6 +91,9 @@ static auto get_job_by_id(PyObject * /*self*/, PyObject *args) -> PyObject *
         return nullptr;
     }
 
+    // We can ignore the jobId
+    response->pop_ulong();
+
     // Create a new dict from the result data
     auto *dict = bundleInterface->jsonLoads(response->pop_string());
 

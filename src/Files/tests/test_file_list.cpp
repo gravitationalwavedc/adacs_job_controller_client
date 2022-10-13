@@ -42,10 +42,8 @@ struct FileListTestDataFixture : public WebsocketServerFixture, public Temporary
                                 jobTable.bundleHash = "my_hash",
                                 jobTable.workingDirectory = tempDir,
                                 jobTable.submitting = 0,
-                                jobTable.queued = 0,
                                 jobTable.running = 0,
-                                jobTable.submittingCount = 0,
-                                jobTable.params = ""
+                                jobTable.submittingCount = 0
                         )
         );
 

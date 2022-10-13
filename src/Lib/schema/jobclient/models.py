@@ -19,12 +19,6 @@ class Job(models.Model):
     # The working directory of this job
     working_directory = models.CharField(max_length=512)
 
-    # If the job is queued and waiting for a bundle
-    queued = models.BooleanField(default=False, db_index=True)
-
-    # The job parameters if the job is to be queued
-    params = models.TextField()
-
     # If the job is currently running
     running = models.BooleanField(default=True)
 

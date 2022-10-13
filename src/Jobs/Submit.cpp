@@ -6,6 +6,7 @@
 #include "../Bundle/BundleManager.h"
 #include "../Lib/JobStatus.h"
 #include "glog/logging.h"
+#include "../Settings.h"
 #include <shared_mutex>
 
 static std::shared_mutex mutex_;
@@ -30,7 +31,7 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
         // If the job is still waiting to be submitted - there is nothing more to do
         if (job.submitting) {
             job.submittingCount++;
-            if (job.submittingCount >= 10) {
+            if (job.submittingCount >= MAX_SUBMIT_COUNT) {
                 LOG(WARNING) << "Job with ID " << jobId
                           << " took too long to submit - assuming it's failed and trying again...";
 

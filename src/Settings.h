@@ -32,4 +32,8 @@ const uint64_t MESSAGE_INITIAL_VECTOR_SIZE = (1024ULL*64ULL);
 
 #define JOB_CHECK_SECONDS 60
 
+// Wait up to 60 minutes for the job to submit, before giving up and retrying. This can happen if the bundle is under
+// a lot of load and it takes a long time to respond.
+#define MAX_SUBMIT_COUNT 60
+
 #endif //ADACS_JOB_CLIENT_SETTINGS_H

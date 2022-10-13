@@ -48,8 +48,6 @@ struct DatabaseFixture {
                 result.push_uint(job.submittingCount);
                 result.push_string(job.bundleHash);
                 result.push_string(job.workingDirectory);
-                result.push_bool(job.queued);
-                result.push_string(job.params);
                 result.push_bool(job.running);
                 result.send(connection);
                 return true;
@@ -68,8 +66,6 @@ struct DatabaseFixture {
                 result.push_uint(job.submittingCount);
                 result.push_string(job.bundleHash);
                 result.push_string(job.workingDirectory);
-                result.push_bool(job.queued);
-                result.push_string(job.params);
                 result.push_bool(job.running);
                 result.send(connection);
                 return true;
@@ -89,8 +85,6 @@ struct DatabaseFixture {
                     result.push_uint(job.submittingCount);
                     result.push_string(job.bundleHash);
                     result.push_string(job.workingDirectory);
-                    result.push_bool(job.queued);
-                    result.push_string(job.params);
                     result.push_bool(job.running);
                 }
                 result.send(connection);
@@ -119,8 +113,6 @@ struct DatabaseFixture {
                         .submittingCount = message->pop_uint(),
                         .bundleHash = message->pop_string(),
                         .workingDirectory = message->pop_string(),
-                        .queued = message->pop_bool(),
-                        .params = message->pop_string(),
                         .running = message->pop_bool()
                 };
 

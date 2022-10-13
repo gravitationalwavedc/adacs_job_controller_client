@@ -22,8 +22,6 @@ struct sJobDb {
                 static_cast<uint32_t>(record->submittingCount),
                 record->bundleHash,
                 record->workingDirectory,
-                static_cast<uint32_t>(record->queued) == 1,
-                record->params,
                 static_cast<uint32_t>(record->running) == 1
         };
     }
@@ -75,7 +73,6 @@ struct sJobDb {
                                         .from(_jobTable)
                                         .where(
                                                 _jobTable.running == 1
-                                                and _jobTable.queued == 0
                                                 and _jobTable.jobId != 0
                                                 and _jobTable.submitting == 0
                                         )
@@ -146,8 +143,6 @@ struct sJobDb {
                                             _jobTable.submittingCount = submittingCount,
                                             _jobTable.bundleHash = bundleHash,
                                             _jobTable.workingDirectory = workingDirectory,
-                                            _jobTable.queued = queued ? 1 : 0,
-                                            _jobTable.params = params,
                                             _jobTable.running = running ? 1 : 0
                                     )
                                     .where(
@@ -165,8 +160,6 @@ struct sJobDb {
                                             _jobTable.submittingCount = submittingCount,
                                             _jobTable.bundleHash = bundleHash,
                                             _jobTable.workingDirectory = workingDirectory,
-                                            _jobTable.queued = queued ? 1 : 0,
-                                            _jobTable.params = params,
                                             _jobTable.running = running ? 1 : 0
                                     )
                     );
@@ -234,8 +227,6 @@ struct sJobDb {
     uint32_t submittingCount = 0;
     std::string bundleHash;
     std::string workingDirectory;
-    bool queued = false;
-    std::string params;
     bool running = false;
 };
 

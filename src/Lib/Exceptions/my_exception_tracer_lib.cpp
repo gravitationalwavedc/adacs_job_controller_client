@@ -53,6 +53,10 @@ void handleSegv()
     fprintf(stderr, "Error: SEGFAULT:\n");
     backtrace_symbols_fd(array, size, STDERR_FILENO);
 
+    google::FlushLogFilesUnsafe(google::INFO);
+    fflush(stdout);
+    fflush(stderr);
+
     throw std::runtime_error("Seg Fault Error");
     // NOLINTEND
 }
@@ -69,6 +73,10 @@ void handleFpe()
     // print out all the frames to stderr
     fprintf(stderr, "Error: SEGFPE:\n");
     backtrace_symbols_fd(array, size, STDERR_FILENO);
+
+    google::FlushLogFilesUnsafe(google::INFO);
+    fflush(stdout);
+    fflush(stderr);
 
     throw std::runtime_error("Floating Point Error");
     // NOLINTEND

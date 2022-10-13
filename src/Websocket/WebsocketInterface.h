@@ -93,6 +93,7 @@ private:
     std::thread schedulerThread;
     std::thread pruneThread;
 
+    std::shared_mutex requestAccessMutex;
     std::map<uint64_t, std::promise<std::shared_ptr<Message>>> dbRequestPromises;
     std::atomic<uint64_t> dbRequestCounter;
 

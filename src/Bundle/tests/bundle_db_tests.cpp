@@ -55,6 +55,7 @@ struct BundleDbTestFixture : public BundleFixture, public WebsocketServerFixture
                 auto result = Message(DB_RESPONSE, Message::Priority::Medium, "database");
                 result.push_ulong(dbRequestId);
                 result.push_bool(returnSuccess);
+                result.push_ulong(4321);
                 result.push_string(getJobByIdResult.dump());
                 result.send(connection);
                 return;

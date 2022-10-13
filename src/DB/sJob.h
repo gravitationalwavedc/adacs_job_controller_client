@@ -22,8 +22,6 @@ struct sJob {
                 .submittingCount = msg->pop_uint(),
                 .bundleHash = msg->pop_string(),
                 .workingDirectory = msg->pop_string(),
-                .queued = msg->pop_bool(),
-                .params = msg->pop_string(),
                 .running = msg->pop_bool()
         };
     }
@@ -110,8 +108,6 @@ struct sJob {
         msg.push_uint(submittingCount);
         msg.push_string(bundleHash);
         msg.push_string(workingDirectory);
-        msg.push_bool(queued);
-        msg.push_string(params);
         msg.push_bool(running);
         msg.send();
 
@@ -168,9 +164,7 @@ struct sJob {
     uint32_t submittingCount = 0;
     std::string bundleHash;
     std::string workingDirectory;
-    bool queued = false;
-    std::string params;
-    bool running = false;
+    bool running = true;
 };
 
 
