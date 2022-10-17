@@ -63,7 +63,6 @@ private:
 
     auto doesHigherPriorityDataExist(uint64_t maxPriority) -> bool;
     static void reportWebsocketError(const SimpleWeb::error_code &errorCode);
-    static auto getOpensslCertPath() -> std::string;
 
     // Packet Queue is a:
     //  list of priorities - doesn't need any sync because it never changes

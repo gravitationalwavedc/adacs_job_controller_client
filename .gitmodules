@@ -49,3 +49,15 @@
 [submodule "src/third_party/cpp-subprocess"]
 	path = src/third_party/cpp-subprocess
 	url = https://github.com/arun11299/cpp-subprocess.git
+[submodule "src/third_party/Simple-Web-Server"]
+	path = src/third_party/Simple-Web-Server
+	url = https://gitlab.com/llakerink/Simple-Web-Server.git
+[submodule "src/third_party/semver"]
+	path = src/third_party/semver
+	url = https://github.com/Neargye/semver.git
+[submodule "src/url"]
+	path = src/url
+	url = https://github.com/boostorg/url.git
+[submodule "src/third_party/url"]
+	path = src/third_party/url
+	url = https://github.com/boostorg/url.git

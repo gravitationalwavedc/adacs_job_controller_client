@@ -36,4 +36,7 @@ const uint64_t MESSAGE_INITIAL_VECTOR_SIZE = (1024ULL*64ULL);
 // a lot of load and it takes a long time to respond.
 #define MAX_SUBMIT_COUNT 60
 
+#define GITHUB_ENDPOINT "api.github.com"
+#define GITHUB_LATEST_URL "/repos/gravitationalwavedc/adacs_job_controller_client/releases/latest"
+
 #endif //ADACS_JOB_CLIENT_SETTINGS_H

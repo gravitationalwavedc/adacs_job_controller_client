@@ -5,6 +5,7 @@
 #include "../Settings.h"
 #include "Exceptions/my_exception_tracer_lib.h"
 #include "GeneralUtils.h"
+#include "subprocess.hpp"
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -132,4 +133,59 @@ auto splitString(const std::string& str, const std::string& delimiter) -> std::v
     strings.push_back(str.substr(prev));
 
     return strings;
+}
+
+auto getOpensslCertPath() -> std::string {
+    auto proc = subprocess::Popen(
+            {"openssl", "version", "-d"},
+            subprocess::output{subprocess::PIPE},
+            subprocess::error{subprocess::PIPE},
+            subprocess::shell{false}
+    );
+
+    // Get the output from the process
+    auto communication = proc.communicate();
+    auto obuf = communication.first;
+    auto ebuf = communication.second;
+
+    std::string sOut(obuf.buf.begin(), obuf.buf.end());
+    std::string sErr(ebuf.buf.begin(), ebuf.buf.end());
+
+    if (proc.retcode() != 0) {
+        LOG(ERROR) << "Error fetching openssl certificate directory";
+        LOG(ERROR) << "stdout: " << std::endl << sOut;
+        LOG(ERROR) << "stderr: " << std::endl << sErr;
+        abortApplication();
+    }
+
+    // Split the output and find the "OPENSSLDIR" line
+    std::string infoLine;
+    for (const auto& line : splitString(sOut, "\n")) {
+        if (line.starts_with("OPENSSLDIR")) {
+            infoLine = {line};
+            break;
+        }
+    }
+
+    if (infoLine.empty()) {
+        LOG(ERROR) << "Error fetching openssl certificate directory";
+        LOG(ERROR) << "stdout: " << std::endl << sOut;
+        LOG(ERROR) << "stderr: " << std::endl << sErr;
+        abortApplication();
+    }
+
+    // Get the path to the certificates
+    auto bits = splitString(infoLine, " ");
+    if (bits.size() != 2) {
+        LOG(ERROR) << "Error fetching openssl certificate directory";
+        LOG(ERROR) << "stdout: " << std::endl << sOut;
+        LOG(ERROR) << "stderr: " << std::endl << sErr;
+        abortApplication();
+    }
+
+    while (bits[1].find('\"') != std::string::npos) {
+        bits[1].replace(bits[1].find('\"'), 1, "");
+    }
+
+    return bits[1];
 }

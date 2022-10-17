@@ -5,8 +5,13 @@
 #include <boost/filesystem.hpp>
 #include <iostream>
 
+extern void checkForUpdates();
 
 [[noreturn]] auto run(const std::string& wsToken) -> int {
+    // Check for updates at startup, before connecting the websocket. If this function finds an update it will kill
+    // the client and the server will try the connection again in a minute or so.
+    checkForUpdates();
+
     // Start and connect the websocket
     WebsocketInterface::SingletonFactory(wsToken);
     auto websocketInterface = WebsocketInterface::Singleton();
@@ -43,6 +48,24 @@ auto main(int argc, char* argv[]) -> int {
     auto wsToken = std::string(argv[1]);
     // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
+    // Correctly set the SSL certificate chain
+    auto config = readClientConfig();
+    bool insecure = false;
+    if (config.contains("insecure")) {
+        insecure = static_cast<bool>(config["insecure"]);
+    }
+
+    // Find the path to the system certificate store and set the SSL_CERT_FILE environment variable
+    auto certPath = boost::filesystem::path(getOpensslCertPath()) / "cert.pem";
+    if (!boost::filesystem::exists(certPath) && !insecure) {
+        LOG(ERROR) << "Generated OpenSSL cert file '" << certPath << "' doesn't exist. Please set it manually via the SSL_CERT_FILE environment variable";
+        abortApplication();
+    }
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
+    setenv("SSL_CERT_FILE", certPath.c_str(), 0);
+
+    run(wsToken);
+    return 0;
     /*
         do the UNIX double-fork magic, see Stevens' "Advanced
         Programming in the UNIX Environment" for details (ISBN 0201563177)

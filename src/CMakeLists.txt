@@ -86,10 +86,12 @@ link_libraries(${Boost_UNIT_TEST_FRAMEWORK_LIBRARY})
 
 include_directories(
         third_party/boost_install/include
+        third_party/url/include
         third_party/json/include
         third_party/date/include
         third_party/sqlpp11/include
         third_party/Simple-WebSocket-Server
+        third_party/Simple-Web-Server
         third_party/folly
         third_party/fmt/include
         third_party/libevent/include
@@ -97,6 +99,7 @@ include_directories(
         third_party/mempatch
         third_party/elfutils_install/include
         third_party/cpp-subprocess
+        third_party/semver/include
         ${CMAKE_BINARY_DIR}/third_party/folly
         ${CMAKE_BINARY_DIR}/third_party/openssl-cmake/include
         ${CMAKE_BINARY_DIR}/third_party/glog
@@ -119,20 +122,15 @@ file(WRITE third_party/folly/folly/experimental/exception_tracer/ExceptionTracer
 set(LIBGFLAGS_FOUND FALSE)
 
 add_subdirectory(third_party/folly)
-
 add_subdirectory(third_party/fmt)
-
 add_subdirectory(third_party/openssl-cmake)
-
 add_subdirectory(third_party/Simple-WebSocket-Server)
-
+add_subdirectory(third_party/Simple-Web-Server)
 add_subdirectory(third_party/sqlpp11)
-
 add_subdirectory(third_party/sqlite3-cmake)
-
 add_subdirectory(third_party/mempatch)
-
 add_subdirectory(third_party/cpp-subprocess)
+add_subdirectory(third_party/semver)
 
 # Define the source files
 set(
@@ -174,7 +172,7 @@ set(
         DB/sStatus.h
         Bundle/BundleDB.cpp
         Bundle/BundleDB.h
-)
+        Lib/UpdateCheck.cpp Version.h)
 
 # Set the main executable and source files
 add_executable(
