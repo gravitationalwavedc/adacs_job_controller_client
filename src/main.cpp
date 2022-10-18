@@ -2,6 +2,7 @@
 #include "Jobs/JobHandling.h"
 #include "Settings.h"
 #include "Websocket/WebsocketInterface.h"
+#include "Version.h"
 #include <boost/filesystem.hpp>
 #include <iostream>
 
@@ -36,6 +37,8 @@ auto main(int argc, char* argv[]) -> int {
         return 1;
     }
 
+    std::cout << "ADACS Job Controller Client version " << VERSION << std::endl;
+
     // Set logging defaults
     FLAGS_log_dir = (getExecutablePath() / "logs").string();
     boost::filesystem::create_directories(FLAGS_log_dir);
@@ -64,8 +67,6 @@ auto main(int argc, char* argv[]) -> int {
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     setenv("SSL_CERT_FILE", certPath.c_str(), 0);
 
-    run(wsToken);
-    return 0;
     /*
         do the UNIX double-fork magic, see Stevens' "Advanced
         Programming in the UNIX Environment" for details (ISBN 0201563177)

@@ -18,11 +18,6 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
         abortApplication();
     }
 
-    bool insecure = false;
-    if (config.contains("insecure")) {
-        insecure = static_cast<bool>(config["insecure"]);
-    }
-
     // Create the list of priorities in order
     for (auto i = static_cast<uint32_t>(Message::Priority::Highest); i <= static_cast<uint32_t>(Message::Priority::Lowest); i++) {
         queue.emplace_back(std::make_shared<folly::ConcurrentHashMap<std::string, std::shared_ptr<folly::UMPSCQueue<sDataItem, false>>>>());
@@ -33,6 +28,11 @@ WebsocketInterface::WebsocketInterface(const std::string& token) {
 
     url = std::string{config["websocketEndpoint"]} + "?token=" + token;
 #ifndef BUILD_TESTS
+    bool insecure = false;
+    if (config.contains("insecure")) {
+        insecure = static_cast<bool>(config["insecure"]);
+    }
+
     client = std::make_shared<WsClient>(url, !insecure);
 #else
     client = std::make_shared<WsClient>(url);

@@ -172,7 +172,9 @@ set(
         DB/sStatus.h
         Bundle/BundleDB.cpp
         Bundle/BundleDB.h
-        Lib/UpdateCheck.cpp Version.h)
+        Lib/UpdateCheck.cpp
+        Version.h
+)
 
 # Set the main executable and source files
 add_executable(
