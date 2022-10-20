@@ -62,7 +62,6 @@ auto main(int argc, char* argv[]) -> int {
     auto certPath = boost::filesystem::path(getOpensslCertPath()) / "cert.pem";
     if (!boost::filesystem::exists(certPath) && !insecure) {
         LOG(ERROR) << "Generated OpenSSL cert file '" << certPath << "' doesn't exist. Please set it manually via the SSL_CERT_FILE environment variable";
-        abortApplication();
     }
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     setenv("SSL_CERT_FILE", certPath.c_str(), 0);
