@@ -49,6 +49,8 @@ struct DatabaseFixture {
                 result.push_string(job.bundleHash);
                 result.push_string(job.workingDirectory);
                 result.push_bool(job.running);
+                result.push_bool(job.deleting);
+                result.push_bool(job.deleted);
                 result.send(connection);
                 return true;
             }
@@ -67,6 +69,8 @@ struct DatabaseFixture {
                 result.push_string(job.bundleHash);
                 result.push_string(job.workingDirectory);
                 result.push_bool(job.running);
+                result.push_bool(job.deleting);
+                result.push_bool(job.deleted);
                 result.send(connection);
                 return true;
             }
@@ -86,6 +90,8 @@ struct DatabaseFixture {
                     result.push_string(job.bundleHash);
                     result.push_string(job.workingDirectory);
                     result.push_bool(job.running);
+                    result.push_bool(job.deleting);
+                    result.push_bool(job.deleted);
                 }
                 result.send(connection);
                 return true;
@@ -113,7 +119,9 @@ struct DatabaseFixture {
                         .submittingCount = message->pop_uint(),
                         .bundleHash = message->pop_string(),
                         .workingDirectory = message->pop_string(),
-                        .running = message->pop_bool()
+                        .running = message->pop_bool(),
+                        .deleting = message->pop_bool(),
+                        .deleted = message->pop_bool()
                 };
 
                 job.save();

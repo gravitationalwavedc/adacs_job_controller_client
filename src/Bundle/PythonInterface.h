@@ -22,6 +22,7 @@ public:
     static auto getPythonLibHandle() -> void*;
     static auto MyPy_IsNone(PyObject* obj) -> bool;
     static auto My_Py_NoneStruct() -> PyObject *;
+    static auto My_Py_TrueStruct() -> PyObject *;
 
 private:
     class RestoreThreadStateScope

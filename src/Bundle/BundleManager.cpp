@@ -49,6 +49,18 @@ auto BundleManager::runBundle_uint64(const std::string& bundleFunction, const st
     return result;
 }
 
+auto BundleManager::runBundle_bool(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> bool {
+    auto bundle = loadBundle(bundleHash);
+
+    PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
+
+    auto *resultObject = bundle->run(bundleFunction, details, jobData);
+    auto result = bundle->toBool(resultObject);
+    bundle->disposeObject(resultObject);
+
+    return result;
+}
+
 auto BundleManager::runBundle_json(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details,
                                    const std::string& jobData) -> nlohmann::json {
     auto bundle = loadBundle(bundleHash);

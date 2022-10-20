@@ -119,6 +119,10 @@ auto BundleInterface::toUint64(PyObject *value) -> uint64_t {
     return PyLong_AsUnsignedLongLong(value);
 }
 
+auto BundleInterface::toBool(PyObject *value) -> bool {
+    return value == PythonInterface::My_Py_TrueStruct();
+}
+
 auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
     // Get a pointer to the json.loads function
     auto* pFunc = PyObject_GetAttrString(jsonModule, "dumps");

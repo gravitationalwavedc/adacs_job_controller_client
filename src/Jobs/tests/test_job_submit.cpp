@@ -70,7 +70,7 @@ BOOST_FIXTURE_TEST_SUITE(job_submit_test_suite, JobSubmitTestDataFixture)
         job.save();
 
         // Try to submit the job 10 times after marking the job as submitting
-        for (int count = 1; count < 10; count++) {
+        for (int count = 1; count < MAX_SUBMIT_COUNT; count++) {
             Message msg(SUBMIT_JOB, Message::Priority::Medium, SYSTEM_SOURCE);
             msg.push_uint(job.jobId);
             msg.push_string(bundleHash);
@@ -277,29 +277,6 @@ BOOST_FIXTURE_TEST_SUITE(job_submit_test_suite, JobSubmitTestDataFixture)
 
         // The application should not have aborted
         BOOST_CHECK_EQUAL(checkAborted(), false);
-    }
-
-    BOOST_AUTO_TEST_CASE(test_submit_error_abort) {
-        // If the submit function returns 0 or None, then the job should be in an error state
-        writeJobSubmitError(bundleHash, "assert False");
-
-        uint32_t jobId = 1234;
-
-        Message msg(SUBMIT_JOB, Message::Priority::Medium, SYSTEM_SOURCE);
-        msg.push_uint(jobId);
-        msg.push_string(bundleHash);
-        msg.push_string("test params");
-        msg.send(pWebsocketServerConnection);
-
-        // The client should abort due to the uncaught error in the bundle submit.
-        int retry = 0;
-        for (; retry < 10 && !checkAborted(); retry++) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
-        if (retry == 10) {
-            BOOST_FAIL("Client never aborted");
-        }
     }
 
     BOOST_AUTO_TEST_CASE(test_submit_already_submitted) {

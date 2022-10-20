@@ -226,6 +226,38 @@ namespace schema
       };
       using _traits = sqlpp::make_traits<sqlpp::integer, sqlpp::tag::require_insert>;
     };
+    struct Deleted
+    {
+      struct _alias_t
+      {
+        static constexpr const char _literal[] =  "deleted";
+        using _name_t = sqlpp::make_char_sequence<sizeof(_literal), _literal>;
+        template<typename T>
+        struct _member_t
+          {
+            T deleted;
+            T& operator()() { return deleted; }
+            const T& operator()() const { return deleted; }
+          };
+      };
+      using _traits = sqlpp::make_traits<sqlpp::integer, sqlpp::tag::require_insert>;
+    };
+    struct Deleting
+    {
+      struct _alias_t
+      {
+        static constexpr const char _literal[] =  "deleting";
+        using _name_t = sqlpp::make_char_sequence<sizeof(_literal), _literal>;
+        template<typename T>
+        struct _member_t
+          {
+            T deleting;
+            T& operator()() { return deleting; }
+            const T& operator()() const { return deleting; }
+          };
+      };
+      using _traits = sqlpp::make_traits<sqlpp::integer, sqlpp::tag::require_insert>;
+    };
   } // namespace JobclientJob_
 
   struct JobclientJob: sqlpp::table_t<JobclientJob,
@@ -236,7 +268,9 @@ namespace schema
                JobclientJob_::SubmittingCount,
                JobclientJob_::BundleHash,
                JobclientJob_::WorkingDirectory,
-               JobclientJob_::Running>
+               JobclientJob_::Running,
+               JobclientJob_::Deleted,
+               JobclientJob_::Deleting>
   {
     struct _alias_t
     {

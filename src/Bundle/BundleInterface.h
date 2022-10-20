@@ -19,6 +19,7 @@ public:
     auto run(const std::string& bundleFunction, const nlohmann::json& details, const std::string& jobData) -> PyObject *;
     static auto toString(PyObject* object) -> std::string;
     static auto toUint64(PyObject *value) -> uint64_t;
+    static auto toBool(PyObject *value) -> bool;
     auto jsonDumps(PyObject *obj) -> std::string;
     auto jsonLoads(const std::string& content) -> PyObject *;
     static void disposeObject(PyObject* object);

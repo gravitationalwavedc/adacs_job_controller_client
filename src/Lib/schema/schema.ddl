@@ -28,7 +28,7 @@ CREATE TABLE `django_migrations` (
   `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `applied` datetime(6) NOT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -47,6 +47,8 @@ CREATE TABLE `jobclient_job` (
   `bundle_hash` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
   `working_directory` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL,
   `running` tinyint(1) NOT NULL,
+  `deleted` tinyint(1) NOT NULL,
+  `deleting` tinyint(1) NOT NULL,
   PRIMARY KEY (`id`),
   KEY `jobclient_job_job_id_b6cab13c` (`job_id`),
   KEY `jobclient_job_scheduler_id_46e6b6a1` (`scheduler_id`)
@@ -81,4 +83,4 @@ CREATE TABLE `jobclient_jobstatus` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2022-10-13 12:57:37
+-- Dump completed on 2022-10-20 18:18:44

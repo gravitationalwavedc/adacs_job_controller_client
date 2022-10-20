@@ -22,7 +22,9 @@ struct sJob {
                 .submittingCount = msg->pop_uint(),
                 .bundleHash = msg->pop_string(),
                 .workingDirectory = msg->pop_string(),
-                .running = msg->pop_bool()
+                .running = msg->pop_bool(),
+                .deleting = msg->pop_bool(),
+                .deleted = msg->pop_bool()
         };
     }
 
@@ -109,6 +111,8 @@ struct sJob {
         msg.push_string(bundleHash);
         msg.push_string(workingDirectory);
         msg.push_bool(running);
+        msg.push_bool(deleting);
+        msg.push_bool(deleted);
         msg.send();
 
         // Wait for the response
@@ -165,6 +169,8 @@ struct sJob {
     std::string bundleHash;
     std::string workingDirectory;
     bool running = true;
+    bool deleting = false;
+    bool deleted = false;
 };
 
 

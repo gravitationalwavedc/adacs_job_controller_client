@@ -47,7 +47,9 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
                                 jobTable.workingDirectory = tempDir,
                                 jobTable.submitting = 0,
                                 jobTable.running = 0,
-                                jobTable.submittingCount = 0
+                                jobTable.submittingCount = 0,
+                                jobTable.deleting = 0,
+                                jobTable.deleted = 0
                         )
         );
 

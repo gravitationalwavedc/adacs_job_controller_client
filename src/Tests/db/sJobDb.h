@@ -22,7 +22,9 @@ struct sJobDb {
                 static_cast<uint32_t>(record->submittingCount),
                 record->bundleHash,
                 record->workingDirectory,
-                static_cast<uint32_t>(record->running) == 1
+                static_cast<uint32_t>(record->running) == 1,
+                static_cast<uint32_t>(record->deleting) == 1,
+                static_cast<uint32_t>(record->deleted) == 1
         };
     }
 
@@ -143,7 +145,9 @@ struct sJobDb {
                                             _jobTable.submittingCount = submittingCount,
                                             _jobTable.bundleHash = bundleHash,
                                             _jobTable.workingDirectory = workingDirectory,
-                                            _jobTable.running = running ? 1 : 0
+                                            _jobTable.running = running ? 1 : 0,
+                                            _jobTable.deleting = deleting ? 1 : 0,
+                                            _jobTable.deleted = deleted ? 1 : 0
                                     )
                                     .where(
                                             _jobTable.id == static_cast<uint64_t>(id)
@@ -160,7 +164,9 @@ struct sJobDb {
                                             _jobTable.submittingCount = submittingCount,
                                             _jobTable.bundleHash = bundleHash,
                                             _jobTable.workingDirectory = workingDirectory,
-                                            _jobTable.running = running ? 1 : 0
+                                            _jobTable.running = running ? 1 : 0,
+                                            _jobTable.deleting = deleting ? 1 : 0,
+                                            _jobTable.deleted = deleted ? 1 : 0
                                     )
                     );
                 }
@@ -228,6 +234,8 @@ struct sJobDb {
     std::string bundleHash;
     std::string workingDirectory;
     bool running = false;
+    bool deleting = false;
+    bool deleted = false;
 };
 
 

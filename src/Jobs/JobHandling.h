@@ -16,4 +16,7 @@ void checkAllJobsStatus();
 
 auto archiveJob(const sJob& job) -> bool;
 
+void handleJobCancel(const std::shared_ptr<Message> &msg);
+void handleJobDelete(const std::shared_ptr<Message> &msg);
+
 #endif //ADACS_JOB_CLIENT_JOBHANDLING_H

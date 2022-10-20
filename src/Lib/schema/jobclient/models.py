@@ -22,6 +22,12 @@ class Job(models.Model):
     # If the job is currently running
     running = models.BooleanField(default=True)
 
+    # If the job is currently in a deleting state
+    deleting = models.BooleanField(default=False)
+
+    # If the job has been deleted or not
+    deleted = models.BooleanField(default=False)
+
 
 class JobStatus(models.Model):
     # The job this status object is for

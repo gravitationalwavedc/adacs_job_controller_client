@@ -171,4 +171,10 @@ auto PythonInterface::My_Py_NoneStruct() -> PyObject * {
 
     return my_Py_NoneStruct;
 }
+
+auto PythonInterface::My_Py_TrueStruct() -> PyObject * {
+    static auto *my_Py_TrueStruct = reinterpret_cast<PyObject*>(dlsym(PythonInterface::getPythonLibHandle(), "_Py_TrueStruct"));
+
+    return my_Py_TrueStruct;
+}
 // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
