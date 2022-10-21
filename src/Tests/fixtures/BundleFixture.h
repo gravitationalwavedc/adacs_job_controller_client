@@ -19,6 +19,9 @@ extern std::string jobSubmitCheckStatusScript;
 extern std::string bundleDbCreateOrUpdateJob;
 extern std::string bundleDbGetJobById;
 extern std::string bundleDbDeleteJob;
+extern std::string jobCancelCheckStatusScript;
+extern std::string jobDeleteScript;
+
 
 class BundleFixture {
 private:
@@ -154,6 +157,47 @@ public:
         auto script = std::string{bundleDbDeleteJob};
 
         script.replace(script.find("xxx"), 3, job.dump());
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeJobCancelCheckStatus(const std::string& hash, uint64_t schedulerId, uint64_t jobId, const std::string& cluster, const nlohmann::json& statusResult, const std::string& cancelResult) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{jobCancelCheckStatusScript};
+
+        script.replace(script.find("bbb"), 3, std::to_string(jobId));
+        script.replace(script.find("bbb"), 3, std::to_string(jobId));
+        script.replace(script.find("ccc"), 3, cluster);
+        script.replace(script.find("ccc"), 3, cluster);
+        script.replace(script.find("ddd"), 3, cancelResult);
+
+        script.replace(script.find("ggg"), 3, std::to_string(schedulerId));
+        script.replace(script.find("ggg"), 3, std::to_string(schedulerId));
+
+        script.replace(script.find("iii"), 3, statusResult.dump());
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeJobDelete(const std::string& hash, uint64_t schedulerId, uint64_t jobId, const std::string& cluster, const std::string& deleteResult) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{jobDeleteScript};
+
+        script.replace(script.find("bbb"), 3, std::to_string(jobId));
+        script.replace(script.find("ccc"), 3, cluster);
+        script.replace(script.find("ddd"), 3, deleteResult);
+
+        script.replace(script.find("ggg"), 3, std::to_string(schedulerId));
 
         std::ofstream ostr((path / "bundle.py").string());
         ostr << script;

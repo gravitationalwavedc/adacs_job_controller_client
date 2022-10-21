@@ -93,4 +93,27 @@ def submit(details, job_data):
         return dict({"error": str(e)})
 )PY";
 
+std::string jobCancelCheckStatusScript = R"PY(
+def cancel(details, job_data):
+    assert details["job_id"] == bbb
+    assert details["cluster"] == "ccc"
+    assert details["scheduler_id"] == ggg
+    return ddd
+
+def status(details, job_data):
+    assert details["job_id"] == bbb
+    assert details["scheduler_id"] == ggg
+    assert details["cluster"] == "ccc"
+    import json
+    return json.loads("""iii""")
+)PY";
+
+std::string jobDeleteScript = R"PY(
+def delete(details, job_data):
+    assert details["job_id"] == bbb
+    assert details["cluster"] == "ccc"
+    assert details["scheduler_id"] == ggg
+    return ddd
+)PY";
+
 // NOLINTEND(cert-err58-cpp)

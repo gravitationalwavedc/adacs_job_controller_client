@@ -212,6 +212,7 @@ add_executable(
         Tests/db/sStatusDb.h
         Bundle/tests/bundle_db_tests.cpp
         Jobs/tests/test_cancel_job.cpp
+        Jobs/tests/test_delete_job.cpp
 )
 
 # Set the link libraries
@@ -241,7 +242,7 @@ set_target_properties(
 set_target_properties(
         Boost_Tests_run
         PROPERTIES
-#        CXX_CLANG_TIDY "clang-tidy"
+        CXX_CLANG_TIDY "clang-tidy"
         CXX_FLAGS_DEBUG " -g -O0 -rdynamic -gdwarf-4 -fpermissive -Wall -static-libstdc++ -static-libgcc "
 )
 

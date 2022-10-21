@@ -16,17 +16,19 @@ void handleJobCancelImpl(const std::shared_ptr<Message> &msg) {
     auto jobId = msg->pop_uint();
 
     auto job = sJob::getOrCreateByJobId(jobId);
-    if (job.id == 0 or job.running == false or job.submitting == true) {
+    if (job.id == 0 or !job.running or job.submitting) {
         // Job not found or is in an invalid state, report error
         LOG(ERROR) << "Job does not exist (" << jobId << "), or job is in an invalid state";
 
-        // Notify the server that the job has been cancelled
-        auto result = Message(UPDATE_JOB, Message::Priority::Medium, std::to_string(jobId));
-        result.push_uint(jobId);
-        result.push_string("_job_completion_");
-        result.push_uint(JobStatus::CANCELLED);
-        result.push_string("Job has been cancelled");
-        result.send();
+        if (!job.submitting) {
+            // Notify the server that the job has been cancelled
+            auto result = Message(UPDATE_JOB, Message::Priority::Medium, std::to_string(jobId));
+            result.push_uint(jobId);
+            result.push_string("_job_completion_");
+            result.push_uint(JobStatus::CANCELLED);
+            result.push_string("Job has been cancelled");
+            result.send();
+        }
 
         return;
     }
@@ -37,7 +39,7 @@ void handleJobCancelImpl(const std::shared_ptr<Message> &msg) {
         job.refreshFromDb();
 
         // Check if the job is running after the status update
-        if (job.running == false) {
+        if (!job.running) {
             // The job is no longer running - there is nothing to do
             LOG(WARNING) << "Job " << jobId << " is not running so cannot be cancelled, nothing to do.";
             return;
@@ -52,7 +54,7 @@ void handleJobCancelImpl(const std::shared_ptr<Message> &msg) {
 
         // Get the status of the job
         auto bCancelled = BundleManager::Singleton()->runBundle_bool("cancel", job.bundleHash, details, "");
-        if (bCancelled == false) {
+        if (!bCancelled) {
             LOG(WARNING) << "Job " << jobId << " could not be cancelled by the bundle.";
             return;
         }
