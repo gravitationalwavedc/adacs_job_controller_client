@@ -261,7 +261,9 @@ void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-comple
                             if (pConnection != nullptr) {
                                 pConnection->send(
                                         outMessage,
-                                        [this](const SimpleWeb::error_code &errorCode) {
+                                        [&, data](const SimpleWeb::error_code &errorCode) {
+                                            (*data).callback();
+
                                             // Kill the connection only if the error was not indicating success
                                             if (!errorCode) {
                                                 return;
@@ -277,8 +279,6 @@ void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-comple
                                         // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
                                         130
                                 );
-
-                                (*data).callback();
                             }
                         }
                     } catch (std::exception& exception) {

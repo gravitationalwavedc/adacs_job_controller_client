@@ -90,13 +90,12 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
         return fileData;
     }
 
-    void doFileDownload(const std::shared_ptr<std::vector<uint8_t>>& fileData, const std::string& downloadUuid) { // NOLINT(readability-function-cognitive-complexity)
+    void doFileDownload(const std::shared_ptr<std::vector<uint8_t>>& fileData) { // NOLINT(readability-function-cognitive-complexity)
         // Spin waiting for the next message
         while (receivedMessages.empty()) {}
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_DETAILS);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), downloadUuid);
         BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), fileData->size());
 
         // Clean up the front of the queue
@@ -127,7 +126,6 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
 
                     // Resume the transfer
                     Message msg(RESUME_FILE_CHUNK_STREAM, Message::Priority::Highest, SYSTEM_SOURCE);
-                    msg.push_string(downloadUuid);
                     msg.send(pWebsocketServerConnection);
 
                     bPauseChecked = true;
@@ -135,11 +133,6 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
             }
 
             auto msg = receivedMessages.front();
-            if (msg->pop_string() != downloadUuid) {
-                BOOST_FAIL("Download UUID didn't match");
-                return;
-            }
-
             auto data = msg->pop_bytes();
             dataReceived.insert(dataReceived.end(), data.begin(), data.end());
 
@@ -149,7 +142,6 @@ struct FileDownloadTestDataFixture : public WebsocketServerFixture, public Tempo
             if (!bPaused) {
                 bPaused = true;
                 Message msg(PAUSE_FILE_CHUNK_STREAM, Message::Priority::Highest, SYSTEM_SOURCE);
-                msg.push_string(downloadUuid);
                 msg.send(pWebsocketServerConnection);
                 pauseTime = std::chrono::system_clock::now();
             }
@@ -173,7 +165,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Job does not exist");
     }
 
@@ -192,7 +183,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Job is not submitted");
     }
 
@@ -211,7 +201,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download is outside the working directory");
     }
 
@@ -228,7 +217,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download does not exist");
     }
 
@@ -245,7 +233,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download is not a file");
     }
 
@@ -265,7 +252,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download is outside the working directory");
     }
 
@@ -285,7 +271,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download does not exist");
     }
 
@@ -305,7 +290,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
 
         auto receivedMessage = receivedMessages.front();
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_DOWNLOAD_ERROR);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Path to file download is not a file");
     }
 
@@ -321,7 +305,7 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string(tempFile2.substr(tempDir.length()));
         msg.send(pWebsocketServerConnection);
 
-        doFileDownload(fileData, downloadUuid);
+        doFileDownload(fileData);
     }
 
     BOOST_AUTO_TEST_CASE(test_get_file_download_no_job_success) {
@@ -339,6 +323,6 @@ BOOST_FIXTURE_TEST_SUITE(file_download_test_suite, FileDownloadTestDataFixture)
         msg.push_string(tempFile2.substr(tempDir.length()));
         msg.send(pWebsocketServerConnection);
 
-        doFileDownload(fileData, downloadUuid);
+        doFileDownload(fileData);
     }
 BOOST_AUTO_TEST_SUITE_END()

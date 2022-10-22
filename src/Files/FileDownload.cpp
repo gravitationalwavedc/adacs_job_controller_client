@@ -2,24 +2,130 @@
 // Created by lewis on 9/28/22.
 //
 
-#include "FileHandling.h"
 #include "../Bundle/BundleManager.h"
 #include "../DB/sJob.h"
 #include "../Settings.h"
+#include "FileHandling.h"
 #include "glog/logging.h"
 #include <boost/filesystem.hpp>
 #include <cstdint>
 #include <fstream>
 #include <future>
 
-std::map<std::string, std::promise<void>> pausedFileTransfers;
+//        case PAUSE_FILE_CHUNK_STREAM:
+//            // Pause a file download (Remote end's transmission buffer is above the "high" threshold)
+//            pausedFileTransfers.try_emplace(message->pop_string(), std::promise<void>());
+//            break;
+//        case RESUME_FILE_CHUNK_STREAM: {
+//            // Resume a file download (Remote end's transmission buffer is below the "low" threshold)
+//            auto prom = pausedFileTransfers.find(message->pop_string());
+//            if (prom != pausedFileTransfers.end()) {
+//                prom->second.set_value();
+//                pausedFileTransfers.erase(prom);
+//            }
+//            break;
+//        }
 
-void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
+void sendMessage(Message& message, const std::shared_ptr<WsClient::Connection>& pConnection, const std::function<void()>& callback = [] {}) {
+    if (!pConnection) {
+        throw std::runtime_error("File transfer connection was closed.");
+    }
+
+    auto msgData = message.getData();
+    auto outMessage = std::make_shared<WsClient::OutMessage>(msgData->size());
+    std::copy(msgData->begin(), msgData->end(), std::ostream_iterator<uint8_t>(*outMessage));
+    pConnection->send(
+            outMessage,
+            [&, callback](const SimpleWeb::error_code &/*errorCode*/) {
+                callback();
+            },
+            // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+            130
+    );
+}
+
+void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(readability-function-cognitive-complexity)
     // Get the job details
     auto jobId = msg->pop_uint();
     auto uuid = msg->pop_string();
     auto bundleHash = msg->pop_string();
     auto filePath = msg->pop_string();
+
+    std::shared_ptr<WsClient> client;
+    std::shared_ptr<WsClient::Connection> pConnection = nullptr;
+
+    auto config = readClientConfig();
+
+    auto url = std::string{config["websocketEndpoint"]} + "?token=" + uuid;
+#ifndef BUILD_TESTS
+    bool insecure = false;
+    if (config.contains("insecure")) {
+        insecure = static_cast<bool>(config["insecure"]);
+    }
+
+    client = std::make_shared<WsClient>(url, !insecure);
+#else
+    client = std::make_shared<WsClient>(url);
+#endif
+
+    std::promise<void> onOpenPromise;
+    std::shared_mutex pauseLock;
+    std::shared_ptr<std::promise<void>> pausePromise;
+
+    client->on_open = [&](const std::shared_ptr<WsClient::Connection>& connection) {
+        LOG(INFO) << "WS: File download " << uuid << " connection opened to " << url;
+        pConnection = connection;
+        onOpenPromise.set_value();
+    };
+
+    client->on_close = [&](const std::shared_ptr<WsClient::Connection>&, int, const std::string &) {
+        LOG(INFO) << "WS: File download " << uuid << " connection closed to " << url;
+        pConnection = nullptr;
+
+        std::unique_lock<std::shared_mutex> lock(pauseLock);
+        if (pausePromise) {
+            pausePromise->set_value();
+            pausePromise = nullptr;
+        }
+    };
+
+    client->on_message = [&](const std::shared_ptr<WsClient::Connection>&, const std::shared_ptr<WsClient::InMessage>& inMessage) {
+        auto stringData = inMessage->string();
+        auto message = std::make_shared<Message>(std::vector<uint8_t>(stringData.begin(), stringData.end()));
+
+        if (message->getId() == PAUSE_FILE_CHUNK_STREAM) {
+            std::unique_lock<std::shared_mutex> lock(pauseLock);
+            if (!pausePromise) {
+                pausePromise = std::make_shared<std::promise<void>>();
+            }
+
+        } else if (message->getId() == RESUME_FILE_CHUNK_STREAM) {
+            std::unique_lock<std::shared_mutex> lock(pauseLock);
+            if (pausePromise) {
+                pausePromise->set_value();
+                pausePromise = nullptr;
+            }
+        } else {
+            LOG(WARNING) << "Got invalid message ID from server: " << message->getId();
+        }
+    };
+
+    std::promise<void> bReady;
+    auto clientThread = std::thread([&]() {
+        // Start client
+        client->start([&]() { bReady.set_value(); });
+    });
+
+    bReady.get_future().wait();
+    onOpenPromise.get_future().wait();
+
+    std::function<void()> closeConnection = [&]() {
+        if (pConnection) {
+            pConnection->close();
+        }
+        client->stop();
+        clientThread.join();
+    };
 
     std::string workingDirectory;
 
@@ -37,9 +143,10 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
             // Report that the job doesn't exist
             auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
-            result.push_string(uuid);
             result.push_string("Job does not exist");
-            result.send();
+            sendMessage(result, pConnection);
+
+            closeConnection();
             return;
         }
 
@@ -48,9 +155,10 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
             // Report that the job hasn't been submitted
             auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
-            result.push_string(uuid);
             result.push_string("Job is not submitted");
-            result.send();
+            sendMessage(result, pConnection);
+
+            closeConnection();
             return;
         }
 
@@ -76,9 +184,10 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
         // Report that the file doesn't exist
         auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
-        result.push_string(uuid);
         result.push_string("Path to file download does not exist");
-        result.send();
+        sendMessage(result, pConnection);
+
+        closeConnection();
         return;
     }
     // Verify that this directory really sits under the working directory
@@ -87,9 +196,10 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
         // Report that the file doesn't exist
         auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
-        result.push_string(uuid);
         result.push_string("Path to file download is outside the working directory");
-        result.send();
+        sendMessage(result, pConnection);
+
+        closeConnection();
         return;
     }
 
@@ -99,9 +209,10 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
         // Report that the file doesn't exist
         auto result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
-        result.push_string(uuid);
         result.push_string("Path to file download is not a file");
-        result.send();
+        sendMessage(result, pConnection);
+
+        closeConnection();
         return;
     }
 
@@ -113,9 +224,8 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
     // Send the file size to the server
     auto result = Message(FILE_DOWNLOAD_DETAILS, Message::Priority::Highest, uuid);
-    result.push_string(uuid);
     result.push_ulong(fileSize);
-    result.send();
+    sendMessage(result, pConnection);
 
     try {
         // Open the file and stream it to the server
@@ -123,12 +233,17 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
         uint64_t packetCount = 0;
 
-        // Loop until all bytes of the file have been read
-        while (fileSize != 0) {
+        // Loop until all bytes of the file have been read or the connection is closed
+        while (fileSize != 0 && pConnection) {
             // Check if the server has asked us to pause the stream
-            auto pausePromise = pausedFileTransfers.find(uuid);
-            if (pausePromise != pausedFileTransfers.end()) {
-                (*pausePromise).second.get_future().wait();
+            std::shared_ptr<std::promise<void>> ourPausePromise;
+            {
+                std::unique_lock<std::shared_mutex> lock(pauseLock);
+                ourPausePromise = pausePromise;
+            }
+
+            if (ourPausePromise) {
+                ourPausePromise->get_future().wait();
             }
 
             // Read the next chunk and send it to the server
@@ -149,10 +264,9 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
             auto event = std::make_shared<std::promise<void>>();
 
             // Send the packet to the scheduler
-            result = Message(FILE_CHUNK, Message::Priority::Lowest, uuid, [event] { event->set_value(); });
-            result.push_string(uuid);
+            result = Message(FILE_CHUNK, Message::Priority::Lowest, uuid);
             result.push_bytes(data);
-            result.send();
+            sendMessage(result, pConnection, [event] { event->set_value(); });
 
             // If this is the nth packet, wait for it to be sent before sending additional packets
             if (packetCount % CHUNK_WAIT_COUNT == 0) {
@@ -171,10 +285,11 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) {
 
         // Report that there was a file exception
         result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
-        result.push_string(uuid);
         result.push_string("Exception reading file");
-        result.send();
+        sendMessage(result, pConnection);
     }
+
+    closeConnection();
 }
 
 void handleFileDownload(const std::shared_ptr<Message> &msg) {

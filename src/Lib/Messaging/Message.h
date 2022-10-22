@@ -101,6 +101,9 @@ public:
 #endif
 
     [[nodiscard]] auto getId() const -> uint32_t { return id; }
+    auto getData() {
+        return data;
+    }
 
 private:
     std::shared_ptr<std::vector<uint8_t>> data;

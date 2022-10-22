@@ -25,6 +25,7 @@ public:
     std::promise<void> websocketServerConnectionPromise;
     std::shared_ptr<TestWsServer::Connection> pWebsocketServerConnection;
     bool bServerConnectionClosed = true;
+    bool bFirst = true;
 
     explicit WebsocketServerFixture(bool run = true) {
         websocketServer = std::make_shared<TestWsServer>();
@@ -35,19 +36,23 @@ public:
             pWebsocketServerConnection = connection;
             onWebsocketServerOpen(connection);
 
-            websocketServerConnectionPromise.set_value();
+            if (bFirst) {
+                bFirst = false;
 
-            Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
-            msg.send(connection);
+                websocketServerConnectionPromise.set_value();
 
-            if (run) {
-                // Start the scheduler thread
-                clientThread = std::thread([&] {
-                    while (clientRunning) {
-                        WebsocketInterface::Singleton()->callrun();
-                        WebsocketInterface::Singleton()->callpruneSources();
-                    }
-                });
+                Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
+                msg.send(connection);
+
+                if (run) {
+                    // Start the scheduler thread
+                    clientThread = std::thread([&] {
+                        while (clientRunning) {
+                            WebsocketInterface::Singleton()->callrun();
+                            WebsocketInterface::Singleton()->callpruneSources();
+                        }
+                    });
+                }
             }
         };
 
