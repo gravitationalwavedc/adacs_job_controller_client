@@ -12,28 +12,15 @@
 #include <fstream>
 #include <future>
 
-//        case PAUSE_FILE_CHUNK_STREAM:
-//            // Pause a file download (Remote end's transmission buffer is above the "high" threshold)
-//            pausedFileTransfers.try_emplace(message->pop_string(), std::promise<void>());
-//            break;
-//        case RESUME_FILE_CHUNK_STREAM: {
-//            // Resume a file download (Remote end's transmission buffer is below the "low" threshold)
-//            auto prom = pausedFileTransfers.find(message->pop_string());
-//            if (prom != pausedFileTransfers.end()) {
-//                prom->second.set_value();
-//                pausedFileTransfers.erase(prom);
-//            }
-//            break;
-//        }
-
 void sendMessage(Message& message, const std::shared_ptr<WsClient::Connection>& pConnection, const std::function<void()>& callback = [] {}) {
+    auto msgData = message.getData();
+    auto outMessage = std::make_shared<WsClient::OutMessage>(msgData->size());
+    std::copy(msgData->begin(), msgData->end(), std::ostream_iterator<uint8_t>(*outMessage));
+
     if (!pConnection) {
         throw std::runtime_error("File transfer connection was closed.");
     }
 
-    auto msgData = message.getData();
-    auto outMessage = std::make_shared<WsClient::OutMessage>(msgData->size());
-    std::copy(msgData->begin(), msgData->end(), std::ostream_iterator<uint8_t>(*outMessage));
     pConnection->send(
             outMessage,
             [&, callback](const SimpleWeb::error_code &/*errorCode*/) {
@@ -68,14 +55,24 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(rea
     client = std::make_shared<WsClient>(url);
 #endif
 
-    std::promise<void> onOpenPromise;
+    std::promise<void> serverReadyPromise;
     std::shared_mutex pauseLock;
     std::shared_ptr<std::promise<void>> pausePromise;
 
     client->on_open = [&](const std::shared_ptr<WsClient::Connection>& connection) {
         LOG(INFO) << "WS: File download " << uuid << " connection opened to " << url;
         pConnection = connection;
-        onOpenPromise.set_value();
+    };
+
+    client->on_error = [&](auto, auto) {
+        LOG(INFO) << "WS: File download " << uuid << " connection closed uncleanly to " << url;
+        pConnection = nullptr;
+
+        std::unique_lock<std::shared_mutex> lock(pauseLock);
+        if (pausePromise) {
+            pausePromise->set_value();
+            pausePromise = nullptr;
+        }
     };
 
     client->on_close = [&](const std::shared_ptr<WsClient::Connection>&, int, const std::string &) {
@@ -105,23 +102,24 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(rea
                 pausePromise->set_value();
                 pausePromise = nullptr;
             }
+        } else if (message->getId() == SERVER_READY) {
+            serverReadyPromise.set_value();
         } else {
             LOG(WARNING) << "Got invalid message ID from server: " << message->getId();
         }
     };
 
-    std::promise<void> bReady;
     auto clientThread = std::thread([&]() {
         // Start client
-        client->start([&]() { bReady.set_value(); });
+        client->start();
     });
 
-    bReady.get_future().wait();
-    onOpenPromise.get_future().wait();
+    serverReadyPromise.get_future().wait();
 
     std::function<void()> closeConnection = [&]() {
         if (pConnection) {
-            pConnection->close();
+            pConnection->send_close(1000, "Closing connection.");
+            pConnection = nullptr;
         }
         client->stop();
         clientThread.join();
@@ -234,6 +232,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(rea
         uint64_t packetCount = 0;
 
         // Loop until all bytes of the file have been read or the connection is closed
+        auto event = std::make_shared<std::promise<void>>();
         while (fileSize != 0 && pConnection) {
             // Check if the server has asked us to pause the stream
             std::shared_ptr<std::promise<void>> ourPausePromise;
@@ -261,7 +260,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(rea
             // pause file transfers), we create an event that we wait for on every nth packet, and don't
             // transfer any more packets until the marked packet has been sent. There will always be some
             // amount of buffer overrun on the server, but at localhost speeds it's about 8Mb which is tolerable
-            auto event = std::make_shared<std::promise<void>>();
+            event = std::make_shared<std::promise<void>>();
 
             // Send the packet to the scheduler
             result = Message(FILE_CHUNK, Message::Priority::Lowest, uuid);
@@ -278,6 +277,10 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(rea
             packetCount++;
         }
 
+        try {
+            event->get_future().wait();
+        } catch (std::exception&) {}
+
         LOG(INFO) << "Finished file transfer for " << filePath;
     } catch (std::exception &error) {
         LOG(ERROR) << "Error in file transfer";
@@ -286,7 +289,9 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(rea
         // Report that there was a file exception
         result = Message(FILE_DOWNLOAD_ERROR, Message::Priority::Highest, uuid);
         result.push_string("Exception reading file");
-        sendMessage(result, pConnection);
+        try {
+            sendMessage(result, pConnection);
+        } catch (std::exception&) {}
     }
 
     closeConnection();

@@ -41,9 +41,6 @@ public:
 
                 websocketServerConnectionPromise.set_value();
 
-                Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
-                msg.send(connection);
-
                 if (run) {
                     // Start the scheduler thread
                     clientThread = std::thread([&] {
@@ -54,6 +51,9 @@ public:
                     });
                 }
             }
+
+            Message msg(SERVER_READY, Message::Priority::Highest, SYSTEM_SOURCE);
+            msg.send(connection);
         };
 
         websocketServer->endpoint["^(.*?)$"].on_message = [&](auto connection, auto in_message) {
