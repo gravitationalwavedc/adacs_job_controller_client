@@ -18,13 +18,7 @@ RUN rm -rf /src/third_party && mv /third_party /src/
 # Set up the build directory and configure the project with cmake
 RUN mkdir /src/build
 WORKDIR /src/build
-RUN source /opt/rh/devtoolset-11/enable && which cmake3 && /usr/bin/cmake3 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja -G Ninja ..
-
-# Build dependencies
-#RUN cmake --build . --target folly -- -j `nproc`
-#RUN cmake --build . --target folly_exception_tracer -- -j `nproc`
-#RUN cmake --build . --target folly_exception_counter -- -j `nproc`
-
+RUN source /opt/rh/devtoolset-11/enable && which cmake3 && /usr/bin/cmake3 -DCMAKE_BUILD_TYPE=Release -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja -G Ninja ..
 
 FROM build_base AS build_production
 

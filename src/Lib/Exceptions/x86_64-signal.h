@@ -129,6 +129,7 @@ struct kernel_sigaction
 #define RESTORE2(name, syscall)                 \
 asm                                             \
   (                                             \
+   ".globl __" #name "\n"                       \
    ".text\n"                                    \
    ".byte 0  # Yes, this really is necessary\n" \
    ".align 16\n"                                \
@@ -139,8 +140,7 @@ asm                                             \
 
 /* The return code for realtime-signals.  */
 RESTORE (restore_rt, __NR_rt_sigreturn)
-void restore_rt (void) asm ("__restore_rt")
-__attribute__ ((visibility ("hidden")));
+void restore_rt (void) asm ("__restore_rt");
 
 #define INIT_SEGV                                               \
 do                                                              \

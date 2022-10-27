@@ -9,6 +9,11 @@
 #include <memory_patch.h>
 
 
+// Disable all optimisations in this file. Enabling optimisations here can lead to all kinds of wild startup segfaults
+// due to our exception handling function override hacks.
+#pragma GCC optimize 0
+
+
 namespace __cxxabiv1 {
     extern "C" {
         void __cxa_throw(void *thrownException, std::type_info *type, void (*destructor)(void *));
@@ -125,3 +130,5 @@ volatile void forceExceptionStackTraceRef()
 }
 
 // NOLINTEND
+
+#pragma GCC reset_options

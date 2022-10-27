@@ -5,14 +5,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 
 # Generate maximum debug information (Dwarf version 4 for folly backtrace support)
-set(CMAKE_CXX_FLAGS_DEBUG " -g -O0 -rdynamic -gdwarf-4 -fpermissive -w -static-libstdc++ -static-libgcc ")
-set(CMAKE_C_FLAGS_DEBUG " -g -O0 -rdynamic -gdwarf-4 -fpermissive -w -static-libstdc++ -static-libgcc ")
+set(CMAKE_CXX_FLAGS_DEBUG " -O0 -fpermissive -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
+set(CMAKE_C_FLAGS_DEBUG " -O0 -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
+set(CMAKE_CXX_FLAGS_RELEASE " -O2 -fpermissive -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
+set(CMAKE_C_FLAGS_RELEASE " -O2 -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 # Suppress nested inexact package name searches
 set(FPHSA_NAME_MISMATCHED 1)
 
 # We want to control variables in the child projects from here
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+
+# Force LTO
+set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 
 # Configure extension policy
 set(CMAKE_POLICY_DEFAULT_CMP0115 OLD)
@@ -65,14 +71,22 @@ set(DOUBLE_CONVERSION_LIBRARY "double-conversion")
 
 set(FMT_ROOT ${CMAKE_SOURCE_DIR}/third_party/fmt)
 set(LIBFMT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/fmt/include)
-set(LIBFMT_LIBRARY ${CMAKE_BINARY_DIR}/third_party/fmt/libfmtd.a)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(LIBFMT_LIBRARY ${CMAKE_BINARY_DIR}/third_party/fmt/libfmtd.a)
+else()
+    set(LIBFMT_LIBRARY ${CMAKE_BINARY_DIR}/third_party/fmt/libfmt.a)
+endif(CMAKE_BUILD_TYPE STREQUAL "Debug")
 
 set(WITH_GFLAGS OFF)
 set(WITH_GTEST OFF)
 set(WITH_PKGCONFIG OFF)
 set(WITH_UNWIND OFF)
 set(Glog_ROOT ${CMAKE_SOURCE_DIR}/third_party/glog)
-set(Glog_LIBRARY ${CMAKE_BINARY_DIR}/third_party/glog/libglogd.a)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(Glog_LIBRARY ${CMAKE_BINARY_DIR}/third_party/glog/libglogd.a)
+else()
+    set(Glog_LIBRARY ${CMAKE_BINARY_DIR}/third_party/glog/libglog.a)
+endif(CMAKE_BUILD_TYPE STREQUAL "Debug")
 
 set(LIBDWARF_LIBRARIES ${CMAKE_SOURCE_DIR}/third_party/elfutils_install/lib/libdw.a)
 set(LIBDWARF_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/third_party/elfutils_install/include/)
@@ -234,16 +248,9 @@ set(
 )
 
 set_target_properties(
-        adacs_job_client
-        PROPERTIES
-        CXX_FLAGS_DEBUG " -g -O0 -rdynamic -gdwarf-4 -fpermissive -Wall -static-libstdc++ -static-libgcc "
-)
-
-set_target_properties(
         Boost_Tests_run
         PROPERTIES
         CXX_CLANG_TIDY "clang-tidy"
-        CXX_FLAGS_DEBUG " -g -O0 -rdynamic -gdwarf-4 -fpermissive -Wall -static-libstdc++ -static-libgcc "
 )
 
 target_link_libraries(adacs_job_client ${LINK_LIBRARIES})
@@ -251,7 +258,7 @@ target_link_libraries(Boost_Tests_run ${LINK_LIBRARIES} gcov)
 
 # Configure custom definitions for testing
 target_compile_definitions(Boost_Tests_run PUBLIC -DBUILD_TESTS)
-target_compile_options(Boost_Tests_run PUBLIC -fprofile-arcs -ftest-coverage -fPIC)
+target_compile_options(Boost_Tests_run PUBLIC -fprofile-arcs -ftest-coverage -fPIC -Wall)
 
 # Hacks
 set_target_properties(folly_deps PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
