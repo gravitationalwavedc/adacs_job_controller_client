@@ -9,8 +9,7 @@
 #include <thread>
 
 extern std::map<std::thread::id, std::string> threadBundleHashMap;
-std::vector<std::string> stdOutLineParts;
-std::vector<std::string> stdErrLineParts;
+std::vector<std::string> lineParts;
 
 static auto writeLog(PyObject * /*self*/, PyObject *args) -> PyObject *
 {
@@ -28,11 +27,7 @@ static auto writeLog(PyObject * /*self*/, PyObject *args) -> PyObject *
 
     // Don't write trailing newlines
     if (message != "\n") {
-        if (bStdOut) {
-            stdOutLineParts.push_back(message);
-        } else {
-            stdErrLineParts.push_back(message);
-        }
+        lineParts.push_back(message);
     } else {
 #ifdef BUILD_TESTS
         extern std::string lastBundleLoggingMessage;
@@ -40,32 +35,22 @@ static auto writeLog(PyObject * /*self*/, PyObject *args) -> PyObject *
         lastBundleLoggingbStdOut = bStdOut;
 #endif
 
+        message = "Bundle [" + bundleHash + "]: ";
+
+        for(auto& bit : lineParts) {
+            message += bit;
+        }
+
+        lineParts.clear();
+
+#ifdef BUILD_TESTS
+        lastBundleLoggingMessage = message;
+#endif
+
         if (bStdOut) {
-            message = "Bundle [" + bundleHash + "]: ";
-
-            for(auto& bit : stdOutLineParts) {
-                message += bit;
-            }
-
-            stdOutLineParts.clear();
-
             LOG(INFO) << message;
-#ifdef BUILD_TESTS
-            lastBundleLoggingMessage = message;
-#endif
         } else {
-            message = "Bundle [" + bundleHash + "]: ";
-
-            for(auto& bit : stdErrLineParts) {
-                message += bit;
-            }
-
-            stdErrLineParts.clear();
-
             LOG(ERROR) << message;
-#ifdef BUILD_TESTS
-            lastBundleLoggingMessage = message;
-#endif
         }
     }
 
