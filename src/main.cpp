@@ -47,6 +47,7 @@ auto main(int argc, char* argv[]) -> int {
 
     // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     google::InitGoogleLogging(argv[0]);
+    google::EnableLogCleaner(7);
 
     auto wsToken = std::string(argv[1]);
     // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)

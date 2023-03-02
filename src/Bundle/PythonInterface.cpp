@@ -2,11 +2,12 @@
 // Created by lewis on 9/3/22.
 //
 
-#include "PythonInterface.h"
 #include "../Lib/GeneralUtils.h"
 #include "BundleDB.h"
+#include "PythonInterface.h"
 #include "memory_patch.h"
 #include "subhook.h"
+#include "BundleLogging.h"
 #include <Python.h>
 #include <dlfcn.h>
 #include <glog/logging.h>
@@ -50,6 +51,13 @@ template<typename R, typename ... Args> auto getRetType(R(*)(Args...)) -> R;
  return func(a1, a2, a3); \
 };
 
+#define PYWRAP_5(function, t1, a1, t2, a2, t3, a3, t4, a4, t5, a5) auto function(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5) -> decltype(getRetType(&(function))) { \
+ using ReturnType = decltype(getRetType(&(function)));                       \
+ auto func = reinterpret_cast<ReturnType (*)(...)>(dlsym(PythonInterface::getPythonLibHandle(), #function));               \
+ ENSURE_DLFN(function, func) \
+ return func(a1, a2, a3, a4, a5); \
+};
+
 extern "C" {
 // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast,readability-identifier-length)
 PYWRAP_0(Py_Initialize)
@@ -84,6 +92,8 @@ PYWRAP_2(PyTuple_GetItem, PyObject*, tuple, Py_ssize_t, pos)
 PYWRAP_2(PyErr_SetString, PyObject*, error, const char*, message)
 PYWRAP_3(PyErr_NewException, const char *, name, PyObject *, base, PyObject *, dict)
 PYWRAP_3(PyModule_AddObject, PyObject *, mod, const char *, name, PyObject *, value)
+PYWRAP_5(PyRun_StringFlags, const char *, code, int, type, PyObject *, global, PyObject *, local, PyCompilerFlags *, flags);
+PYWRAP_1(PyObject_Repr, PyObject *, obj);
 
 // Exceptional functions (weird arguments or whatever)
 auto PyImport_AppendInittab(const char * name, PyObject* (*initfunc)()) -> decltype(getRetType(&PyImport_AppendInittab)) { \
@@ -141,6 +151,12 @@ void PythonInterface::initPython(const std::string& sPythonLibrary) {
 
     // Expose the _bundledb module, should be before Py_Initialize()
     if (PyImport_AppendInittab("_bundledb", PyInit_bundledb) == -1) {
+        LOG(ERROR) << "Could not extend in-built modules table";
+        abortApplication();
+    }
+
+    // Expose the _bundlelogging module, should be before Py_Initialize()
+    if (PyImport_AppendInittab("_bundlelogging", PyInit_bundlelogging) == -1) {
         LOG(ERROR) << "Could not extend in-built modules table";
         abortApplication();
     }

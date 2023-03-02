@@ -21,7 +21,8 @@ extern std::string bundleDbGetJobById;
 extern std::string bundleDbDeleteJob;
 extern std::string jobCancelCheckStatusScript;
 extern std::string jobDeleteScript;
-
+extern std::string loggingStdOutScript;
+extern std::string loggingStdErrScript;
 
 class BundleFixture {
 private:
@@ -198,6 +199,34 @@ public:
         script.replace(script.find("ddd"), 3, deleteResult);
 
         script.replace(script.find("ggg"), 3, std::to_string(schedulerId));
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeBundleLoggingStdOut(const std::string& hash, const std::string& content) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{loggingStdOutScript};
+
+        script.replace(script.find("xxx"), 3, content);
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeBundleLoggingStdErr(const std::string& hash, const std::string& content) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{loggingStdErrScript};
+
+        script.replace(script.find("xxx"), 3, content);
 
         std::ofstream ostr((path / "bundle.py").string());
         ostr << script;

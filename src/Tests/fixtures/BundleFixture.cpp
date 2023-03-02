@@ -11,6 +11,19 @@ def working_directory(details, job_data):
     return "xxx"
 )PY";
 
+std::string loggingStdOutScript = R"PY(
+def logging_test(details, job_data):
+    print(xxx)
+    return True
+)PY";
+
+std::string loggingStdErrScript = R"PY(
+def logging_test(details, job_data):
+    import sys
+    print(xxx, file=sys.stderr)
+    return True
+)PY";
+
 std::string jobSubmitScript = R"PY(
 def working_directory(details, job_data):
     return "eee"
