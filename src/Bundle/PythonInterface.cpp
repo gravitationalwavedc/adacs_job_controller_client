@@ -4,10 +4,10 @@
 
 #include "../Lib/GeneralUtils.h"
 #include "BundleDB.h"
+#include "BundleLogging.h"
 #include "PythonInterface.h"
 #include "memory_patch.h"
 #include "subhook.h"
-#include "BundleLogging.h"
 #include <Python.h>
 #include <dlfcn.h>
 #include <glog/logging.h>

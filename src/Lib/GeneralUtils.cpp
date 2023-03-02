@@ -41,7 +41,7 @@ auto getBundlePath() -> std::string {
 
 auto getExecutablePath() -> boost::filesystem::path {
     std::array<char, PATH_MAX> result = {0};
-    ssize_t count = readlink("/proc/self/exe", result.data(), PATH_MAX);
+    ssize_t const count = readlink("/proc/self/exe", result.data(), PATH_MAX);
     return boost::filesystem::path{std::string(result.data(), (count > 0) ? count : 0)}.parent_path();
 }
 
@@ -148,8 +148,8 @@ auto getOpensslCertPath() -> std::string {
     auto obuf = communication.first;
     auto ebuf = communication.second;
 
-    std::string sOut(obuf.buf.begin(), obuf.buf.end());
-    std::string sErr(ebuf.buf.begin(), ebuf.buf.end());
+    std::string const sOut(obuf.buf.begin(), obuf.buf.end());
+    std::string const sErr(ebuf.buf.begin(), ebuf.buf.end());
 
     if (proc.retcode() != 0) {
         LOG(ERROR) << "Error fetching openssl certificate directory";

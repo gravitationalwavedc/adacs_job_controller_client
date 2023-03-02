@@ -10,7 +10,7 @@
 
 std::map<std::thread::id, std::string> threadBundleHashMap;
 
-std::string stdoutRedirection = R"PY(
+const char* stdoutRedirection = R"PY(
 import io, sys
 class StdoutCatcher(io.TextIOBase):
     def write(self, msg):
@@ -55,7 +55,7 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
 
     // Set up the logging so print() works as expected
     auto *pLocal = PyDict_New();
-    PyUnicode_AsUTF8(PyObject_Repr(PyRun_String(stdoutRedirection.c_str(), Py_file_input, pGlobal, pLocal)));
+    PyUnicode_AsUTF8(PyObject_Repr(PyRun_String(stdoutRedirection, Py_file_input, pGlobal, pLocal)));
 
     // Ensure the json module is loaded in the global scope
     jsonModule = PyImport_ImportModule("json");

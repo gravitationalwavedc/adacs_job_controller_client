@@ -85,7 +85,7 @@ public:
 
         SubInterpreter()
         {
-            RestoreThreadStateScope restore;
+            RestoreThreadStateScope const restore;
             _ts = Py_NewInterpreter(); // NOLINT(cppcoreguidelines-prefer-member-initializer)
         }
 
@@ -93,7 +93,7 @@ public:
         {
             if(_ts != nullptr)
             {
-                SwapThreadStateScope sts(_ts);
+                SwapThreadStateScope const sts(_ts);
                 Py_EndInterpreter(_ts);
             }
         }
