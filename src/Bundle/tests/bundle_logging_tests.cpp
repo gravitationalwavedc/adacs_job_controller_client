@@ -8,65 +8,100 @@
 #include "../BundleManager.h"
 #include <boost/test/unit_test.hpp>
 
-struct BundleLoggingTestFixture : public BundleFixture, public JsonConfigFixture {};
+struct BundleLoggingTestFixture : public BundleFixture, public JsonConfigFixture {
+};
 
 std::string lastBundleLoggingMessage;
 bool lastBundleLoggingbStdOut;
 
 BOOST_FIXTURE_TEST_SUITE(bundle_logging_test_suite, BundleLoggingTestFixture)
-    BOOST_AUTO_TEST_CASE(test_simple_stdout) {
-        auto bundleHash = generateUUID();
 
-        auto testMessage = std::string{"'testing stdout'"};
+  BOOST_AUTO_TEST_CASE(test_simple_stdout) {
+      auto bundleHash = generateUUID();
 
-        writeBundleLoggingStdOut(bundleHash, testMessage);
+      auto testMessage = std::string{"'testing stdout'"};
 
-        auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
+      writeBundleLoggingStdOut(bundleHash, testMessage);
 
-        BOOST_CHECK_EQUAL(result, true);
-        BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash + "]: testing stdout");
-        BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, true);
-    }
+      auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
 
-    BOOST_AUTO_TEST_CASE(test_complex_stdout) {
-        auto bundleHash = generateUUID();
+      BOOST_CHECK_EQUAL(result, true);
+      BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash + "]: testing stdout");
+      BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, true);
+  }
 
-        auto testMessage = std::string{"'testing stdout', 56, {'a': 'b'}, [45, 'a', sum([5, 4])], (123, 321,), type((1,))"};
+  BOOST_AUTO_TEST_CASE(test_complex_stdout) {
+      auto bundleHash = generateUUID();
 
-        writeBundleLoggingStdOut(bundleHash, testMessage);
+      auto testMessage = std::string{
+              "'testing stdout', 56, {'a': 'b'}, [45, 'a', sum([5, 4])], (123, 321,), type((1,))"};
 
-        auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
+      writeBundleLoggingStdOut(bundleHash, testMessage);
 
-        BOOST_CHECK_EQUAL(result, true);
-        BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash + "]: testing stdout 56 {'a': 'b'} [45, 'a', 9] (123, 321) <class 'tuple'>");
-        BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, true);
-    }
+      auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
 
-    BOOST_AUTO_TEST_CASE(test_simple_stderr) {
-        auto bundleHash = generateUUID();
+      BOOST_CHECK_EQUAL(result, true);
+      BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash +
+                                                  "]: testing stdout 56 {'a': 'b'} [45, 'a', 9] (123, 321) <class 'tuple'>");
+      BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, true);
+  }
 
-        auto testMessage = std::string{"'testing stderr'"};
+  BOOST_AUTO_TEST_CASE(test_simple_stderr) {
+      auto bundleHash = generateUUID();
 
-        writeBundleLoggingStdErr(bundleHash, testMessage);
+      auto testMessage = std::string{"'testing stderr'"};
 
-        auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
+      writeBundleLoggingStdErr(bundleHash, testMessage);
 
-        BOOST_CHECK_EQUAL(result, true);
-        BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash + "]: testing stderr");
-        BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, false);
-    }
+      auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
 
-    BOOST_AUTO_TEST_CASE(test_complex_stderr) {
-        auto bundleHash = generateUUID();
+      BOOST_CHECK_EQUAL(result, true);
+      BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash + "]: testing stderr");
+      BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, false);
+  }
 
-        auto testMessage = std::string{"'testing stderr', 56, {'a': 'b'}, [45, 'a', sum([5, 4])], (123, 321,), type((1,))"};
+  BOOST_AUTO_TEST_CASE(test_complex_stderr) {
+      auto bundleHash = generateUUID();
 
-        writeBundleLoggingStdErr(bundleHash, testMessage);
+      auto testMessage = std::string{
+              "'testing stderr', 56, {'a': 'b'}, [45, 'a', sum([5, 4])], (123, 321,), type((1,))"};
 
-        auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
+      writeBundleLoggingStdErr(bundleHash, testMessage);
 
-        BOOST_CHECK_EQUAL(result, true);
-        BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash + "]: testing stderr 56 {'a': 'b'} [45, 'a', 9] (123, 321) <class 'tuple'>");
-        BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, false);
-    }
+      auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
+
+      BOOST_CHECK_EQUAL(result, true);
+      BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash +
+                                                  "]: testing stderr 56 {'a': 'b'} [45, 'a', 9] (123, 321) <class 'tuple'>");
+      BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, false);
+  }
+
+  BOOST_AUTO_TEST_CASE(test_stdout_during_load) {
+      auto bundleHash = generateUUID();
+
+      auto testMessage = std::string{"'testing stdout load'"};
+
+      writeBundleLoggingStdOut(bundleHash, testMessage);
+
+      auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
+
+      BOOST_CHECK_EQUAL(result, true);
+      BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash + "]: testing stdout load");
+      BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, true);
+  }
+
+  BOOST_AUTO_TEST_CASE(test_stderr_during_load) {
+      auto bundleHash = generateUUID();
+
+      auto testMessage = std::string{"'testing stdout load'"};
+
+      writeBundleLoggingStdErr(bundleHash, testMessage);
+
+      auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
+
+      BOOST_CHECK_EQUAL(result, true);
+      BOOST_CHECK_EQUAL(lastBundleLoggingMessage, "Bundle [" + bundleHash + "]: testing stdout load");
+      BOOST_CHECK_EQUAL(lastBundleLoggingbStdOut, false);
+  }
+
 BOOST_AUTO_TEST_SUITE_END()
