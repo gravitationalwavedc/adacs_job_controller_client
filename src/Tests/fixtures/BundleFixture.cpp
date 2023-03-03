@@ -24,6 +24,19 @@ def logging_test(details, job_data):
     return True
 )PY";
 
+std::string loggingStdOutDuringLoadScript = R"PY(
+print(xxx)
+def logging_test(details, job_data):
+    return True
+)PY";
+
+std::string loggingStdErrDuringLoadScript = R"PY(
+import sys
+print(xxx, file=sys.stderr)
+def logging_test(details, job_data):
+    return True
+)PY";
+
 std::string jobSubmitScript = R"PY(
 def working_directory(details, job_data):
     return "eee"

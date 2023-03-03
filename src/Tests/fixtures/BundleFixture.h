@@ -23,6 +23,8 @@ extern std::string jobCancelCheckStatusScript;
 extern std::string jobDeleteScript;
 extern std::string loggingStdOutScript;
 extern std::string loggingStdErrScript;
+extern std::string loggingStdOutDuringLoadScript;
+extern std::string loggingStdErrDuringLoadScript;
 
 class BundleFixture {
 private:
@@ -30,13 +32,13 @@ private:
 
 public:
     ~BundleFixture() {
-        for (const auto& dir : cleanupPaths) {
+        for (const auto &dir: cleanupPaths) {
             // Remove the directory and its contents.
             boost::filesystem::remove_all(dir);
         }
     }
 
-    void writeFileListNoJobWorkingDirectory(const std::string& hash, const std::string& returnValue) {
+    void writeFileListNoJobWorkingDirectory(const std::string &hash, const std::string &returnValue) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -49,7 +51,8 @@ public:
         ostr.close();
     }
 
-    void writeJobSubmit(const std::string& hash, const std::string& workingDirectory, const std::string& schedulerId, uint64_t jobId, const std::string& params, const std::string& cluster) {
+    void writeJobSubmit(const std::string &hash, const std::string &workingDirectory, const std::string &schedulerId,
+                        uint64_t jobId, const std::string &params, const std::string &cluster) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -66,7 +69,7 @@ public:
         ostr.close();
     }
 
-    void writeJobSubmitError(const std::string& hash, const std::string& resultLine) {
+    void writeJobSubmitError(const std::string &hash, const std::string &resultLine) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -80,7 +83,9 @@ public:
         ostr.close();
     }
 
-    void writeJobCheckStatus(const std::string& hash, const nlohmann::json& result, uint64_t jobId, uint64_t schedulerId, const std::string& cluster) {
+    void
+    writeJobCheckStatus(const std::string &hash, const nlohmann::json &result, uint64_t jobId, uint64_t schedulerId,
+                        const std::string &cluster) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -98,7 +103,9 @@ public:
         ostr.close();
     }
 
-    void writeJobSubmitCheckStatus(const std::string& hash, const std::string& workingDirectory, const std::string& schedulerId, uint64_t jobId, const std::string& params, const std::string& cluster, const nlohmann::json& statusResult) {
+    void writeJobSubmitCheckStatus(const std::string &hash, const std::string &workingDirectory,
+                                   const std::string &schedulerId, uint64_t jobId, const std::string &params,
+                                   const std::string &cluster, const nlohmann::json &statusResult) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -122,7 +129,7 @@ public:
         ostr.close();
     }
 
-    void writeBundleDbCreateOrUpdateJob(const std::string& hash, const nlohmann::json& job) {
+    void writeBundleDbCreateOrUpdateJob(const std::string &hash, const nlohmann::json &job) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -136,7 +143,7 @@ public:
         ostr.close();
     }
 
-    void writeBundleDbGetJobById(const std::string& hash, uint64_t jobId) {
+    void writeBundleDbGetJobById(const std::string &hash, uint64_t jobId) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -150,7 +157,7 @@ public:
         ostr.close();
     }
 
-    void writeBundleDbDeleteJob(const std::string& hash, const nlohmann::json& job) {
+    void writeBundleDbDeleteJob(const std::string &hash, const nlohmann::json &job) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -164,7 +171,9 @@ public:
         ostr.close();
     }
 
-    void writeJobCancelCheckStatus(const std::string& hash, uint64_t schedulerId, uint64_t jobId, const std::string& cluster, const nlohmann::json& statusResult, const std::string& cancelResult) {
+    void
+    writeJobCancelCheckStatus(const std::string &hash, uint64_t schedulerId, uint64_t jobId, const std::string &cluster,
+                              const nlohmann::json &statusResult, const std::string &cancelResult) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -187,7 +196,8 @@ public:
         ostr.close();
     }
 
-    void writeJobDelete(const std::string& hash, uint64_t schedulerId, uint64_t jobId, const std::string& cluster, const std::string& deleteResult) {
+    void writeJobDelete(const std::string &hash, uint64_t schedulerId, uint64_t jobId, const std::string &cluster,
+                        const std::string &deleteResult) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -205,7 +215,7 @@ public:
         ostr.close();
     }
 
-    void writeBundleLoggingStdOut(const std::string& hash, const std::string& content) {
+    void writeBundleLoggingStdOut(const std::string &hash, const std::string &content) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
@@ -219,12 +229,40 @@ public:
         ostr.close();
     }
 
-    void writeBundleLoggingStdErr(const std::string& hash, const std::string& content) {
+    void writeBundleLoggingStdErr(const std::string &hash, const std::string &content) {
         auto path = boost::filesystem::path(getBundlePath()) / hash;
         boost::filesystem::create_directories(path);
         cleanupPaths.push_back(path.string());
 
         auto script = std::string{loggingStdErrScript};
+
+        script.replace(script.find("xxx"), 3, content);
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeBundleLoggingStdOutDuringLoad(const std::string &hash, const std::string &content) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{loggingStdOutDuringLoadScript};
+
+        script.replace(script.find("xxx"), 3, content);
+
+        std::ofstream ostr((path / "bundle.py").string());
+        ostr << script;
+        ostr.close();
+    }
+
+    void writeBundleLoggingStdErrDuringLoad(const std::string &hash, const std::string &content) {
+        auto path = boost::filesystem::path(getBundlePath()) / hash;
+        boost::filesystem::create_directories(path);
+        cleanupPaths.push_back(path.string());
+
+        auto script = std::string{loggingStdErrDuringLoadScript};
 
         script.replace(script.find("xxx"), 3, content);
 
