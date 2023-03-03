@@ -23,7 +23,7 @@ void handleJobSubmitImpl(const std::shared_ptr<Message> &msg) {
     // The following fragment of code is a critical section, so we exclude access to any more than one thread. Without
     // this, it's possible that more than one job is entered in the database with the same job id
     {
-        std::unique_lock<std::shared_mutex> lock(mutex_);
+        std::unique_lock<std::shared_mutex> const lock(mutex_);
 
         // Check if this job has already been submitted
         job = sJob::getOrCreateByJobId(jobId);

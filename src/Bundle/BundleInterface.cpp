@@ -10,9 +10,27 @@
 
 std::map<std::thread::id, std::string> threadBundleHashMap;
 
+const char* stdoutRedirection = R"PY(
+import io, sys
+class StdoutCatcher(io.TextIOBase):
+    def write(self, msg):
+        import _bundlelogging
+        _bundlelogging.write(True, msg)
+
+
+class StderrCatcher(io.TextIOBase):
+    def write(self, msg):
+        import _bundlelogging
+        _bundlelogging.write(False, msg)
+
+
+sys.stdout = StdoutCatcher()
+sys.stderr = StderrCatcher()
+)PY";
+
 BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bundleHash) {
     static std::shared_mutex mutex_;
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> const lock(mutex_);
 
     static PyThreadState *_state = nullptr;
     if (_state != nullptr) {
@@ -27,13 +45,17 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
     }
 
     // Activate the new interpreter
-    PythonInterface::SubInterpreter::ThreadScope scope(pythonInterpreter->interp());
+    PythonInterface::SubInterpreter::ThreadScope const scope(pythonInterpreter->interp());
 
     auto bundlePath = boost::filesystem::path(getBundlePath()) / bundleHash;
 
     // Create a new globals dict and enable the python builtins
     pGlobal = PyDict_New();
     PyDict_SetItemString(pGlobal, "__builtins__", PyEval_GetBuiltins());
+
+    // Set up the logging so print() works as expected
+    auto *pLocal = PyDict_New();
+    PyUnicode_AsUTF8(PyObject_Repr(PyRun_String(stdoutRedirection, Py_file_input, pGlobal, pLocal)));
 
     // Ensure the json module is loaded in the global scope
     jsonModule = PyImport_ImportModule("json");

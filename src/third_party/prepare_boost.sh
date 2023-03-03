@@ -2,7 +2,7 @@
 
 cd boost
 
-export BOOST_VER=boost-1.80.0
+export BOOST_VER=boost-1.81.0
 git checkout --force "$BOOST_VER"
 git submodule update --init --recursive --depth=1
 git submodule foreach 'git checkout --force "$BOOST_VER" || true'

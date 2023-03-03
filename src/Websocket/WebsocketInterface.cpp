@@ -147,7 +147,7 @@ void WebsocketInterface::queueMessage(std::string source, const std::shared_ptr<
 
     // Lock the access mutex to check if the source exists in the map
     {
-        std::shared_lock<std::shared_mutex> lock(mutex_);
+        std::shared_lock<std::shared_mutex> const lock(mutex_);
 
         // Make sure that this source exists in the map
         auto sQueue = std::make_shared<folly::UMPSCQueue<sDataItem, false>>();
@@ -182,7 +182,7 @@ void WebsocketInterface::pruneSources() {
 #endif
     // Acquire the exclusive lock to prevent more data being pushed on while we are pruning
     {
-        std::unique_lock<std::shared_mutex> lock(mutex_);
+        std::unique_lock<std::shared_mutex> const lock(mutex_);
 
         // Iterate over the priorities
         for (auto &priority : queue) {
@@ -241,7 +241,7 @@ void WebsocketInterface::run() { // NOLINT(readability-function-cognitive-comple
         do {
             hadData = false;
 
-            std::shared_lock<std::shared_mutex> lock(mutex_);
+            std::shared_lock<std::shared_mutex> const lock(mutex_);
             // Iterate over the map
             for (auto iter = pMap->get()->begin(); iter != pMap->get()->end(); ++iter) {
                 // Check if the vector for this source is empty
@@ -360,7 +360,7 @@ void WebsocketInterface::handlePong() {
 void WebsocketInterface::checkPings() {
     // Check for any websocket pings that didn't pong within PING_INTERVAL_SECONDS, and terminate if so
 
-    std::chrono::time_point<std::chrono::system_clock> zeroTime = {};
+    std::chrono::time_point<std::chrono::system_clock> const zeroTime = {};
     if (pingTimestamp != zeroTime && pongTimestamp == zeroTime) {
         LOG(ERROR) << "WS: Error in connection with " << url << ". "
                   << "Error: Websocket timed out waiting for ping.";
@@ -396,7 +396,7 @@ auto WebsocketInterface::generateDbRequestId() -> uint64_t {
     auto result = dbRequestCounter++;
 
     // Create a new promise for this request id
-    std::unique_lock<std::shared_mutex> lock(requestAccessMutex);
+    std::unique_lock<std::shared_mutex> const lock(requestAccessMutex);
     dbRequestPromises.emplace(result, std::promise<std::shared_ptr<Message>>{});
 
     return result;
@@ -407,7 +407,7 @@ auto WebsocketInterface::getDbResponse(uint64_t dbRequestId) -> std::shared_ptr<
     auto result = dbRequestPromises[dbRequestId].get_future().get();
 
     // We're done with the dbRequestId now, so remove it from the promises map
-    std::unique_lock<std::shared_mutex> lock(requestAccessMutex);
+    std::unique_lock<std::shared_mutex> const lock(requestAccessMutex);
     dbRequestPromises.erase(dbRequestId);
 
     return result;
@@ -417,7 +417,7 @@ void WebsocketInterface::setDbRequestResponse(const std::shared_ptr<Message>& me
     // The first ulong is always the db request id
     auto dbRequestId = message->pop_ulong();
 
-    std::unique_lock<std::shared_mutex> lock(requestAccessMutex);
+    std::unique_lock<std::shared_mutex> const lock(requestAccessMutex);
     if (!dbRequestPromises.contains(dbRequestId)) {
         LOG(WARNING) << "Got unexpected DB Request ID response " << dbRequestId;
         return;

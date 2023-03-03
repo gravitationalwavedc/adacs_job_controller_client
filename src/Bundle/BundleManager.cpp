@@ -16,7 +16,7 @@ BundleManager::BundleManager() : pythonInterface(std::make_shared<PythonInterfac
 
 auto BundleManager::Singleton() -> std::shared_ptr<BundleManager> {
     static std::shared_mutex mutex_;
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> const lock(mutex_);
 
     if (!singleton) {
         singleton = std::make_shared<BundleManager>();
@@ -28,7 +28,7 @@ auto BundleManager::Singleton() -> std::shared_ptr<BundleManager> {
 auto BundleManager::runBundle_string(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> std::string {
     auto bundle = loadBundle(bundleHash);
 
-    PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
+    PythonInterface::SubInterpreter::ThreadScope const scope = bundle->threadScope();
 
     auto *resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->toString(resultObject);
@@ -40,7 +40,7 @@ auto BundleManager::runBundle_string(const std::string& bundleFunction, const st
 auto BundleManager::runBundle_uint64(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> uint64_t {
     auto bundle = loadBundle(bundleHash);
 
-    PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
+    PythonInterface::SubInterpreter::ThreadScope const scope = bundle->threadScope();
 
     auto *resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->toUint64(resultObject);
@@ -52,7 +52,7 @@ auto BundleManager::runBundle_uint64(const std::string& bundleFunction, const st
 auto BundleManager::runBundle_bool(const std::string& bundleFunction, const std::string& bundleHash, const nlohmann::json& details, const std::string& jobData) -> bool {
     auto bundle = loadBundle(bundleHash);
 
-    PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
+    PythonInterface::SubInterpreter::ThreadScope const scope = bundle->threadScope();
 
     auto *resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->toBool(resultObject);
@@ -65,7 +65,7 @@ auto BundleManager::runBundle_json(const std::string& bundleFunction, const std:
                                    const std::string& jobData) -> nlohmann::json {
     auto bundle = loadBundle(bundleHash);
 
-    PythonInterface::SubInterpreter::ThreadScope scope = bundle->threadScope();
+    PythonInterface::SubInterpreter::ThreadScope const scope = bundle->threadScope();
 
     auto *resultObject = bundle->run(bundleFunction, details, jobData);
     auto result = bundle->jsonDumps(resultObject);
@@ -76,7 +76,7 @@ auto BundleManager::runBundle_json(const std::string& bundleFunction, const std:
 
 auto BundleManager::loadBundle(const std::string& bundleHash) -> std::shared_ptr<BundleInterface> {
     static std::shared_mutex mutex_;
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> const lock(mutex_);
 
     if (bundles.contains(bundleHash)) {
         // Bundle is already loaded

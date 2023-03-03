@@ -112,14 +112,14 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
     // Process the file list as required
     if (isRecursive) {
         boost::filesystem::recursive_directory_iterator dirIter(dirPath);
-        boost::filesystem::recursive_directory_iterator dirIterEnd;
+        boost::filesystem::recursive_directory_iterator const dirIterEnd;
         for (; dirIter != dirIterEnd; dirIter++) {
             // Ignore if this file is a symlink
             if (boost::filesystem::is_symlink((*dirIter))) {
                 continue;
             }
 
-            bool isDir = boost::filesystem::is_directory((*dirIter));
+            bool const isDir = boost::filesystem::is_directory((*dirIter));
             fileList.push_back(
                     {
                             (*dirIter).path().string().substr(workingDirectory.length()),
@@ -130,14 +130,14 @@ void handleFileListImpl(const std::shared_ptr<Message> &msg) {
         }
     } else {
         boost::filesystem::directory_iterator dirIter(dirPath);
-        boost::filesystem::directory_iterator dirIterEnd;
+        boost::filesystem::directory_iterator const dirIterEnd;
         for (; dirIter != dirIterEnd; dirIter++) {
             // Ignore if this file is a symlink
             if (boost::filesystem::is_symlink((*dirIter))) {
                 continue;
             }
 
-            bool isDir = boost::filesystem::is_directory((*dirIter));
+            bool const isDir = boost::filesystem::is_directory((*dirIter));
             fileList.push_back(
                     {
                             (*dirIter).path().string().substr(workingDirectory.length()),

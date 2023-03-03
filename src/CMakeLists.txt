@@ -9,7 +9,10 @@ set(CMAKE_CXX_FLAGS_DEBUG " -O0 -fpermissive -static-libstdc++ -static-libgcc -w
 set(CMAKE_C_FLAGS_DEBUG " -O0 -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
 set(CMAKE_CXX_FLAGS_RELEASE " -O2 -fpermissive -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
 set(CMAKE_C_FLAGS_RELEASE " -O2 -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    message("Enabling LTO for release build")
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+ENDIF(CMAKE_BUILD_TYPE STREQUAL "Release")
 
 # Suppress nested inexact package name searches
 set(FPHSA_NAME_MISMATCHED 1)
@@ -190,6 +193,8 @@ set(
         Version.h
         Jobs/CancelJob.cpp
         Jobs/DeleteJob.cpp
+        Bundle/BundleLogging.cpp
+        Bundle/BundleLogging.h
 )
 
 # Set the main executable and source files
@@ -227,6 +232,7 @@ add_executable(
         Bundle/tests/bundle_db_tests.cpp
         Jobs/tests/test_cancel_job.cpp
         Jobs/tests/test_delete_job.cpp
+        Bundle/tests/bundle_logging_tests.cpp
 )
 
 # Set the link libraries
