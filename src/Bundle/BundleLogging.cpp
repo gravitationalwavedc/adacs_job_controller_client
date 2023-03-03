@@ -11,8 +11,7 @@
 extern std::map<std::thread::id, std::string> threadBundleHashMap;
 std::vector<std::string> lineParts;
 
-static auto writeLog(PyObject * /*self*/, PyObject *args) -> PyObject *
-{
+static auto writeLog(PyObject * /*self*/, PyObject *args) -> PyObject * {
     try {
         // Get the bundle hash
         auto bundleHash = threadBundleHashMap[std::this_thread::get_id()];
@@ -64,9 +63,10 @@ static auto writeLog(PyObject * /*self*/, PyObject *args) -> PyObject *
 }
 
 static std::array<PyMethodDef, 2> BundleLoggingMethods = {{
-        {"write",  writeLog, METH_VARARGS, "Writes the provided message to the client log file."},
-        {nullptr, nullptr, 0, nullptr}
-}};
+                                                                  {"write", writeLog, METH_VARARGS,
+                                                                   "Writes the provided message to the client log file."},
+                                                                  {nullptr, nullptr, 0, nullptr}
+                                                          }};
 
 static struct PyModuleDef bundleloggingmodule = {
         PyModuleDef_HEAD_INIT,
