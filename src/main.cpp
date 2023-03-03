@@ -3,7 +3,6 @@
 #include "Settings.h"
 #include "Websocket/WebsocketInterface.h"
 #include "Version.h"
-#include "semver.hpp"
 #include <boost/filesystem.hpp>
 #include <iostream>
 
@@ -50,7 +49,7 @@ auto main(int argc, char* argv[]) -> int {
     google::InitGoogleLogging(argv[0]);
     google::EnableLogCleaner(7);
 
-    LOG(INFO) << "ADACS Job Client version " << semver::version{VERSION};
+    LOG(INFO) << "ADACS Job Controller Client version " << VERSION;
 
     auto wsToken = std::string(argv[1]);
     // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
