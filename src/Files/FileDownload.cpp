@@ -119,6 +119,7 @@ void handleFileDownloadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(rea
     std::function<void()> closeConnection = [&]() {
         if (pConnection) {
             pConnection->send_close(1000, "Closing connection.");
+            pConnection->close();
             pConnection = nullptr;
         }
         client->stop();
