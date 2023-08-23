@@ -25,8 +25,12 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
     details["job_id"] = job.jobId;
     details["scheduler_id"] = job.schedulerId;
 
+    LOG(INFO) << "A. Status";
+
     // Get the status of the job
     auto _status = BundleManager::Singleton()->runBundle_json("status", job.bundleHash, details, "");
+
+    LOG(INFO) << "A. Status Done";
 
     // Check if the status has changed or not
     for (const auto& stat: _status["status"]) {
@@ -36,18 +40,22 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
 
         // Check for a valid status - sometimes schedulers return an empty string
         if (jsonStatus.is_null()) {
+            LOG(INFO) << "A. jsonStatus was null";
             return;
         }
 
         auto status = static_cast<uint32_t>(jsonStatus);
 
+        LOG(INFO) << "A. getJobStatusByJobIdAndWhat";
         auto vStatus = sStatus::getJobStatusByJobIdAndWhat(job.id, what);
 
+        LOG(INFO) << "A. getJobStatusByJobIdAndWhat Done";
         // Prevent duplicates
         if (vStatus.size() > 1) {
             std::vector<uint64_t> ids;
             transform(vStatus.begin(), vStatus.end(), std::back_inserter(ids), [](const sStatus &status) { return status.id; });
 
+            LOG(INFO) << "A. deleteByIdList";
             sStatus::deleteByIdList(ids);
 
             // Empty the results since they're now deleted
@@ -55,6 +63,7 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
         }
 
         if (forceNotification || vStatus.empty() || status != vStatus[0].state) {
+            LOG(INFO) << "A. Doing update";
             sStatus stateItem{
                     .jobId = job.id
             };
@@ -67,8 +76,10 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
             stateItem.what = what;
             stateItem.state = status;
 
+            LOG(INFO) << "A. Save stateItem";
             stateItem.save();
 
+            LOG(INFO) << "A. Send update message on ws";
             // Send the status to the server
             auto result = Message(UPDATE_JOB, Message::Priority::Medium, std::to_string(job.jobId));
             result.push_uint(job.jobId);
@@ -76,11 +87,14 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
             result.push_uint(status);
             result.push_string(info);
             result.send();
+            LOG(INFO) << "A. update message on ws done";
         }
     }
 
+    LOG(INFO) << "A. getJobStatusByJobId";
     auto jobError = 0U;
     auto vStatus = sStatus::getJobStatusByJobId(job.id);
+    LOG(INFO) << "A. getJobStatusByJobId Done";
     for (auto& state : vStatus) {
         // Check if any of the jobs are in error state
         if (state.state > JobStatus::RUNNING and state.state != JobStatus::COMPLETED) {
@@ -98,12 +112,15 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
 
     // Check if there was an error, or if all jobs have completed
     if (jobError != 0 or (static_cast<bool>(_status["complete"]) and jobComplete)) {
+        LOG(INFO) << "A. Job Complete save";
         job.running = false;
         job.save();
 
+        LOG(INFO) << "A. Archive Job";
         // Tar up the job
         archiveJob(job);
 
+        LOG(INFO) << "A. Send job completion message on ws";
         // Notify the server that the job has completed
         auto result = Message(UPDATE_JOB, Message::Priority::Medium, std::to_string(job.jobId));
         result.push_uint(job.jobId);
@@ -111,6 +128,7 @@ void checkJobStatusImpl(sJob job, bool forceNotification) {
         result.push_uint(jobError != 0 ? jobError : JobStatus::COMPLETED);
         result.push_string("Job has completed");
         result.send();
+        LOG(INFO) << "A. Send job completion messag on ws done";
     }
 }
 
@@ -140,10 +158,12 @@ void checkAllJobsStatus() {
         checkThreads.push_back(checkJobStatus(job, false));
     }
 
+    LOG(INFO) << "Joining...";
     // Wait for all status checks to finish
     for (auto& thread : checkThreads) {
         if (thread.joinable()) {
             thread.join();
         }
     }
+    LOG(INFO) << "Joined.";
 }

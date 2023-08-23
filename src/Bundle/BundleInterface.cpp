@@ -61,6 +61,9 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
     jsonModule = PyImport_ImportModule("json");
     PyDict_SetItemString(pGlobal, "json", jsonModule);
 
+    // Load the traceback module
+    tracebackModule = PyImport_ImportModule("traceback");
+
     // Add the bundle path to the system path and then import the bundle
     auto *pPath = PySys_GetObject("path");
     PyList_Append(pPath, PyUnicode_FromString(bundlePath.c_str()));
@@ -69,9 +72,67 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
     pBundleModule = PyImport_ImportModule("bundle");
     if (PyErr_Occurred() != nullptr) {
         LOG(ERROR) << "Error loading python bundle at path " << bundlePath;
-        PyErr_Print();
+        printLastPythonException();
         abortApplication();
     }
+}
+
+void BundleInterface::printLastPythonException() {
+    // Get the exception
+    PyObject* extype = nullptr;
+    PyObject* value = nullptr;
+    PyObject* traceback = nullptr;
+
+    PyErr_Fetch(&extype, &value, &traceback);
+    if (!extype) {
+        LOG(INFO) << "No active python exception to print";
+        return;
+    }
+
+    // Get a pointer to the format_exception function
+    auto* pFunc = PyObject_GetAttrString(tracebackModule, "format_exception");
+
+    // Build a tuple to hold the arguments
+    auto* pArgs = PyTuple_New(3);
+    PyTuple_SetItem(pArgs, 0, extype);
+    PyTuple_SetItem(pArgs, 1, value);
+    PyTuple_SetItem(pArgs, 2, traceback);
+
+    // Call the function, passing it the exception args
+    PyObject* pLines = PyObject_CallObject(pFunc, pArgs);
+    if (PyErr_Occurred() != nullptr) {
+        throw std::runtime_error("Error printing active python exception");
+    }
+
+    // Now iterate over the lines returned in the exception and print them
+    auto iter =  PyObject_GetIter(pLines);
+
+    if (iter != nullptr) {
+        auto item = PyIter_Next(iter);
+
+        while (item != nullptr) {
+            const char *unicode_item = PyUnicode_AsUTF8(item);
+            LOG(INFO) << unicode_item;
+
+            Py_DECREF(item);
+
+            item = PyIter_Next(iter);
+        }
+
+        Py_DECREF(iter);
+    }
+
+    if (extype != nullptr)
+        Py_DECREF(extype);
+
+    if (value != nullptr)
+        Py_DECREF(value);
+
+    if (traceback != nullptr)
+        Py_DECREF(traceback);
+
+    Py_DECREF(pArgs);
+    Py_XDECREF(pFunc);
 }
 
 auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
@@ -86,7 +147,7 @@ auto BundleInterface::jsonLoads(const std::string& content) -> PyObject* {
     //Call my function, passing it the number four
     pValue = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
-        PyErr_Print();
+        printLastPythonException();
         throw std::runtime_error("Error calling json.loads");
     }
 
@@ -116,7 +177,7 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
     auto *pResult = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
         LOG(ERROR) << "Error calling bundle function " << bundleFunction;
-        PyErr_Print();
+        printLastPythonException();
         throw std::runtime_error("Error calling bundle function " + bundleFunction);
     }
 
@@ -156,7 +217,7 @@ auto BundleInterface::jsonDumps(PyObject* obj) -> std::string {
     // Call json.dumps on the provided object
     auto *pValue = PyObject_CallObject(pFunc, pArgs);
     if (PyErr_Occurred() != nullptr) {
-        PyErr_Print();
+        printLastPythonException();
         throw std::runtime_error("Error calling json.dumps");
     }
 

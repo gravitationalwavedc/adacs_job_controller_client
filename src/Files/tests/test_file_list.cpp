@@ -167,21 +167,47 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
         promMessageReceived.get_future().wait();
 
+        struct sResult {
+            bool isDir;
+            int size;
+        };
+        auto items = std::map<std::string, sResult> {
+                {
+                        tempDir2.substr(tempDir.length()),
+                        {
+                                .isDir = true,
+                                .size = 0
+                        }
+                },
+                {
+                        tempFile2.substr(tempDir.length()),
+                        {
+                                .isDir = false,
+                                .size = 8
+                        }
+                },
+                {
+                        tempFile.substr(tempDir.length()),
+                        {
+                                .isDir = false,
+                                .size = 5
+                        }
+                }
+        };
+
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 3);
 
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempDir2.substr(tempDir.length()));
-        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), true);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 0);
+        for (auto idx = 0; idx < 3; idx++) {
+            auto name = receivedMessage->pop_string();
+            auto item = items[name];
 
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
-        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
+            BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), item.isDir);
+            BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), item.size);
 
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile.substr(tempDir.length()));
-        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 5);
+            items.erase(name);
+        }
     }
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_recursive_2) {
@@ -215,17 +241,40 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
         promMessageReceived.get_future().wait();
 
+        struct sResult {
+            bool isDir;
+            int size;
+        };
+        auto items = std::map<std::string, sResult> {
+                {
+                        tempDir2.substr(tempDir.length()),
+                        {
+                                .isDir = true,
+                                .size = 0
+                        }
+                },
+                {
+                        tempFile.substr(tempDir.length()),
+                        {
+                                .isDir = false,
+                                .size = 5
+                        }
+                }
+        };
+
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 2);
 
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempDir2.substr(tempDir.length()));
-        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), true);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 0);
+        for (auto idx = 0; idx < 2; idx++) {
+            auto name = receivedMessage->pop_string();
+            auto item = items[name];
 
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile.substr(tempDir.length()));
-        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 5);
+            BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), item.isDir);
+            BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), item.size);
+
+            items.erase(name);
+        }
     }
 
     BOOST_AUTO_TEST_CASE(test_get_file_list_job_success_not_recursive_2) {
@@ -319,20 +368,46 @@ BOOST_FIXTURE_TEST_SUITE(file_list_test_suite, FileListTestDataFixture)
 
         promMessageReceived.get_future().wait();
 
+        struct sResult {
+            bool isDir;
+            int size;
+        };
+        auto items = std::map<std::string, sResult> {
+                {
+                        tempDir2.substr(tempDir.length()),
+                        {
+                                .isDir = true,
+                                .size = 0
+                        }
+                },
+                {
+                        tempFile2.substr(tempDir.length()),
+                        {
+                                .isDir = false,
+                                .size = 8
+                        }
+                },
+                {
+                        tempFile.substr(tempDir.length()),
+                        {
+                                .isDir = false,
+                                .size = 5
+                        }
+                }
+        };
+
         BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_LIST);
         BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "some_uuid");
         BOOST_CHECK_EQUAL(receivedMessage->pop_uint(), 3);
 
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempDir2.substr(tempDir.length()));
-        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), true);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 0);
+        for (auto idx = 0; idx < 3; idx++) {
+            auto name = receivedMessage->pop_string();
+            auto item = items[name];
 
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile2.substr(tempDir.length()));
-        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 8);
+            BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), item.isDir);
+            BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), item.size);
 
-        BOOST_CHECK_EQUAL(receivedMessage->pop_string(), tempFile.substr(tempDir.length()));
-        BOOST_CHECK_EQUAL(receivedMessage->pop_bool(), false);
-        BOOST_CHECK_EQUAL(receivedMessage->pop_ulong(), 5);
+            items.erase(name);
+        }
     }
 BOOST_AUTO_TEST_SUITE_END()

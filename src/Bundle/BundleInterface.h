@@ -23,6 +23,7 @@ public:
     auto jsonDumps(PyObject *obj) -> std::string;
     auto jsonLoads(const std::string& content) -> PyObject *;
     static void disposeObject(PyObject* object);
+    void printLastPythonException();
 
     auto threadScope() -> PythonInterface::SubInterpreter::ThreadScope {
         return PythonInterface::SubInterpreter::ThreadScope {pythonInterpreter->interp()};
@@ -38,6 +39,7 @@ private:
     PyObject *pBundleModule;
 
     PyObject *jsonModule;
+    PyObject *tracebackModule;
 
     std::string bundleHash;
 };

@@ -65,7 +65,7 @@ PYWRAP_0(PyDict_New)
 PYWRAP_0(PyEval_GetBuiltins)
 PYWRAP_3(PyDict_SetItemString, PyObject *, dp, const char *, key, PyObject *, item)
 PYWRAP_0(PyErr_Occurred)
-PYWRAP_0(PyErr_Print)
+PYWRAP_3(PyErr_Fetch, PyObject **, extype, PyObject **, value, PyObject **, traceback)
 PYWRAP_2(PyObject_GetAttrString, PyObject *, a, const char *, b)
 PYWRAP_1(PyTuple_New, Py_ssize_t, size)
 PYWRAP_3(PyTuple_SetItem, PyObject *, a, Py_ssize_t, b, PyObject *, c)
@@ -94,6 +94,8 @@ PYWRAP_3(PyErr_NewException, const char *, name, PyObject *, base, PyObject *, d
 PYWRAP_3(PyModule_AddObject, PyObject *, mod, const char *, name, PyObject *, value)
 PYWRAP_5(PyRun_StringFlags, const char *, code, int, type, PyObject *, global, PyObject *, local, PyCompilerFlags *, flags);
 PYWRAP_1(PyObject_Repr, PyObject *, obj);
+PYWRAP_1(PyObject_GetIter, PyObject *, obj);
+PYWRAP_1(PyIter_Next, PyObject *, obj);
 
 // Exceptional functions (weird arguments or whatever)
 auto PyImport_AppendInittab(const char * name, PyObject* (*initfunc)()) -> decltype(getRetType(&PyImport_AppendInittab)) { \

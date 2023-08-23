@@ -98,7 +98,7 @@ set(LIBDWARF_FOUND TRUE)
 # Set up boost
 set(Boost_USE_STATIC_LIBS ON)
 set(Boost_USE_MULTITHREAD ON)
-find_package(Boost 1.67 REQUIRED COMPONENTS unit_test_framework filesystem)
+find_package(Boost 1.67 REQUIRED COMPONENTS unit_test_framework filesystem url)
 link_libraries(${Boost_UNIT_TEST_FRAMEWORK_LIBRARY})
 
 include_directories(
@@ -250,14 +250,15 @@ set(
         ${CMAKE_SOURCE_DIR}/third_party/elfutils_install/lib/libelf.a
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_filesystem.a
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_unit_test_framework.a
+        ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_url.a
         ${Glog_LIBRARY}
 )
 
-set_target_properties(
-        Boost_Tests_run
-        PROPERTIES
-        CXX_CLANG_TIDY "clang-tidy"
-)
+#set_target_properties(
+#        Boost_Tests_run
+#        PROPERTIES
+#        CXX_CLANG_TIDY "clang-tidy"
+#)
 
 target_link_libraries(adacs_job_client ${LINK_LIBRARIES})
 target_link_libraries(Boost_Tests_run ${LINK_LIBRARIES} gcov)

@@ -9,7 +9,7 @@
 #include "glog/logging.h"
 #include "nlohmann/json.hpp"
 #include "semver.hpp"
-#include <boost/url/src.hpp>
+#include <boost/url.hpp>
 #include <client_https.hpp>
 #include <fstream>
 
