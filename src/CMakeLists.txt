@@ -254,11 +254,11 @@ set(
         ${Glog_LIBRARY}
 )
 
-#set_target_properties(
-#        Boost_Tests_run
-#        PROPERTIES
-#        CXX_CLANG_TIDY "clang-tidy"
-#)
+set_target_properties(
+        Boost_Tests_run
+        PROPERTIES
+        CXX_CLANG_TIDY "clang-tidy"
+)
 
 target_link_libraries(adacs_job_client ${LINK_LIBRARIES})
 target_link_libraries(Boost_Tests_run ${LINK_LIBRARIES} gcov)
