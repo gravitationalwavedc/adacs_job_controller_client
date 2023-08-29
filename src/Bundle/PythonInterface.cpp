@@ -139,12 +139,12 @@ void PythonInterface::initPython(const std::string& sPythonLibrary) {
     auto *pPyGILState_Ensure = dlsym(PythonInterface::getPythonLibHandle(), "PyGILState_Ensure");
     auto *pPyGILState_Release = dlsym(PythonInterface::getPythonLibHandle(), "PyGILState_Release");
     // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
-    auto *hook = subhook_new(pPyGILState_Ensure, reinterpret_cast<void*>(&myPyGILState_Ensure), SUBHOOK_OPTION_64BIT_OFFSET);
+    auto *hook = subhook_new(pPyGILState_Ensure, reinterpret_cast<void*>(&myPyGILState_Ensure), SUBHOOK_64BIT_OFFSET);
     if (subhook_install(hook) < 0) {
         throw std::runtime_error("PyGILState_Ensure redirection failed to install");
     }
 
-    hook = subhook_new(pPyGILState_Release, reinterpret_cast<void*>(&myPyGILState_Release), SUBHOOK_OPTION_64BIT_OFFSET);
+    hook = subhook_new(pPyGILState_Release, reinterpret_cast<void*>(&myPyGILState_Release), SUBHOOK_64BIT_OFFSET);
     if (subhook_install(hook) < 0) {
         throw std::runtime_error("myPyGILState_Release redirection failed to install");
     }

@@ -103,7 +103,6 @@ link_libraries(${Boost_UNIT_TEST_FRAMEWORK_LIBRARY})
 
 include_directories(
         third_party/boost_install/include
-        third_party/url/include
         third_party/json/include
         third_party/date/include
         third_party/sqlpp11/include
