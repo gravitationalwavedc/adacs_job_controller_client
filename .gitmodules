@@ -40,9 +40,6 @@
 [submodule "src/third_party/libdwarf-code"]
 	path = src/third_party/libdwarf-code
 	url = https://github.com/davea42/libdwarf-code.git
-[submodule "src/third_party/mempatch"]
-	path = src/third_party/mempatch
-	url = https://github.com/niv/mempatch.git
 [submodule "src/third_party/elfutils"]
 	path = src/third_party/elfutils
 	url = git://sourceware.org/git/elfutils.git
@@ -55,9 +52,6 @@
 [submodule "src/third_party/semver"]
 	path = src/third_party/semver
 	url = https://github.com/Neargye/semver.git
-[submodule "src/url"]
-	path = src/url
-	url = https://github.com/boostorg/url.git
-[submodule "src/third_party/url"]
-	path = src/third_party/url
-	url = https://github.com/boostorg/url.git
+[submodule "src/third_party/mempatch"]
+	path = src/third_party/mempatch
+	url = https://github.com/gravitationalwavedc/mempatch.git
