@@ -1,8 +1,14 @@
 #!/bin/bash
 
 rm -Rf elfutils_install
+rm -Rf elfutils
 
-cd elfutils
+cd ../..
+
+# Needs to run from top level project directory for old git
+git submodule update --init --recursive
+
+cd src/third_party/elfutils
 
 autoreconf -fiv
 
