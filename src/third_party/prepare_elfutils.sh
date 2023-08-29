@@ -1,5 +1,7 @@
 #!/bin/bash
 
+rm -Rf elfutils_install
+
 cd elfutils
 
 autoreconf -fiv
