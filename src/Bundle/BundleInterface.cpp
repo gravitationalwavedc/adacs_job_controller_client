@@ -32,6 +32,9 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
     static std::shared_mutex mutex_;
     std::unique_lock<std::shared_mutex> const lock(mutex_);
 
+    // Set up the thread bundle hash map
+    threadBundleHashMap.emplace(std::this_thread::get_id(), bundleHash);
+
     static PyThreadState *_state = nullptr;
     if (_state != nullptr) {
         PyEval_RestoreThread(_state);
@@ -75,6 +78,9 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
         printLastPythonException();
         abortApplication();
     }
+
+    // Clear the thread from the thread bundle hash map
+    threadBundleHashMap.erase(std::this_thread::get_id());
 }
 
 void BundleInterface::printLastPythonException() {
@@ -84,7 +90,7 @@ void BundleInterface::printLastPythonException() {
     PyObject* traceback = nullptr;
 
     PyErr_Fetch(&extype, &value, &traceback);
-    if (!extype) {
+    if (extype == nullptr) {
         LOG(INFO) << "No active python exception to print";
         return;
     }
@@ -105,10 +111,10 @@ void BundleInterface::printLastPythonException() {
     }
 
     // Now iterate over the lines returned in the exception and print them
-    auto iter =  PyObject_GetIter(pLines);
+    auto* iter =  PyObject_GetIter(pLines);
 
     if (iter != nullptr) {
-        auto item = PyIter_Next(iter);
+        auto* item = PyIter_Next(iter);
 
         while (item != nullptr) {
             const char *unicode_item = PyUnicode_AsUTF8(item);
@@ -122,14 +128,17 @@ void BundleInterface::printLastPythonException() {
         Py_DECREF(iter);
     }
 
-    if (extype != nullptr)
+    if (extype != nullptr) {
         Py_DECREF(extype);
+    }
 
-    if (value != nullptr)
+    if (value != nullptr) {
         Py_DECREF(value);
+    }
 
-    if (traceback != nullptr)
+    if (traceback != nullptr) {
         Py_DECREF(traceback);
+    }
 
     Py_DECREF(pArgs);
     Py_XDECREF(pFunc);

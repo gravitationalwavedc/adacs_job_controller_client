@@ -40,6 +40,8 @@ static auto create_or_update_job(PyObject * /*self*/, PyObject *args) -> PyObjec
     msg.push_ulong(jobId);
     msg.push_string(jobData.dump());
 
+    LOG(INFO) << "DB: create_or_update_job req - req id: " << dbRequestId << ", bundle hash: " << bundleHash << ", jobId: " << jobId << ", jobData: " << jobData.dump();
+
     msg.send();
 
     // Wait for the response
@@ -61,6 +63,9 @@ static auto create_or_update_job(PyObject * /*self*/, PyObject *args) -> PyObjec
 
     auto *result = PythonInterface::My_Py_NoneStruct();
     Py_INCREF(result);
+
+    LOG(INFO) << "DB: create_or_update_job res - req id: " << dbRequestId << ", jobId: " << jobId;
+
     return result;
 }
 
@@ -80,6 +85,8 @@ static auto get_job_by_id(PyObject * /*self*/, PyObject *args) -> PyObject *
     msg.push_string(bundleHash);
     msg.push_ulong(jobId);
 
+    LOG(INFO) << "DB: get_job_by_id req - req id: " << dbRequestId << ", bundle hash: " << bundleHash << ", jobId: " << jobId;
+
     msg.send();
 
     // Wait for the response
@@ -94,8 +101,11 @@ static auto get_job_by_id(PyObject * /*self*/, PyObject *args) -> PyObject *
     // We can ignore the jobId
     response->pop_ulong();
 
+    auto jobData = response->pop_string();
+    LOG(INFO) << "DB: get_job_by_id res - req id: " << dbRequestId << ", bundle hash: " << bundleHash << ", data: " << jobData;
+
     // Create a new dict from the result data
-    auto *dict = bundleInterface->jsonLoads(response->pop_string());
+    auto *dict = bundleInterface->jsonLoads(jobData);
 
     // Set the job id in the dict
     auto *value = PyLong_FromUnsignedLongLong(jobId);
@@ -137,6 +147,8 @@ static auto delete_job(PyObject * /*self*/, PyObject *args) -> PyObject *
 
     msg.push_ulong(jobId);
 
+    LOG(INFO) << "DB: delete_job req - req id: " << dbRequestId << ", bundle hash: " << bundleHash << ", jobId: " << jobId;
+
     msg.send();
 
     // Wait for the response
@@ -147,6 +159,8 @@ static auto delete_job(PyObject * /*self*/, PyObject *args) -> PyObject *
         PyErr_SetString(bundleDbError, ("Job with ID " + std::to_string(jobId) + " does not exist.").c_str());
         return nullptr;
     }
+
+    LOG(INFO) << "DB: delete_job res - req id: " << dbRequestId << ", bundle hash: " << bundleHash << ", success";
 
     auto *result = PythonInterface::My_Py_NoneStruct();
     Py_INCREF(result);

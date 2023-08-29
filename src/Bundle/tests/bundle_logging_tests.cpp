@@ -81,7 +81,7 @@ BOOST_FIXTURE_TEST_SUITE(bundle_logging_test_suite, BundleLoggingTestFixture)
 
         auto testMessage = std::string{"'testing stdout load'"};
 
-        writeBundleLoggingStdOut(bundleHash, testMessage);
+        writeBundleLoggingStdOutDuringLoad(bundleHash, testMessage);
 
         auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
 
@@ -95,7 +95,7 @@ BOOST_FIXTURE_TEST_SUITE(bundle_logging_test_suite, BundleLoggingTestFixture)
 
         auto testMessage = std::string{"'testing stdout load'"};
 
-        writeBundleLoggingStdErr(bundleHash, testMessage);
+        writeBundleLoggingStdErrDuringLoad(bundleHash, testMessage);
 
         auto result = BundleManager::Singleton()->runBundle_bool("logging_test", bundleHash, {}, "");
 
