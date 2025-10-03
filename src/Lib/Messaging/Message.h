@@ -105,6 +105,7 @@ public:
 #endif
 
     [[nodiscard]] auto getId() const -> uint32_t { return id; }
+    [[nodiscard]] auto getSource() const -> std::string { return source; }
     auto getData() {
         return data;
     }

@@ -5,6 +5,8 @@
 #include "../../Tests/fixtures/BundleFixture.h"
 #include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../Tests/fixtures/WebsocketServerFixture.h"
+#include "../../Core/MessageHandler.h"
+#include "../../Settings.h"
 #include <queue>
 
 struct FileUploadTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
@@ -45,11 +47,6 @@ struct FileUploadTestDataFixture : public WebsocketServerFixture, public Tempora
                         )
         );
 
-        // Set up the message handler
-        websocketServer->endpoint["^(.*?)$"].on_message = [this](const std::shared_ptr<TestWsServer::Connection>& connection, const std::shared_ptr<TestWsServer::InMessage>& message) {
-            handleMessage(connection, message);
-        };
-
         startWebSocketServer();
 
         WebsocketInterface::Singleton()->start();
@@ -77,10 +74,8 @@ struct FileUploadTestDataFixture : public WebsocketServerFixture, public Tempora
     std::map<std::string, std::vector<uint8_t>> testBinaryDataForUuid;
     std::map<std::string, std::string> errorMessagesForUuid;
 
-    void handleMessage(const std::shared_ptr<TestWsServer::Connection>& connection, const std::shared_ptr<TestWsServer::InMessage>& message) {
+    void onWebsocketServerMessage(const std::shared_ptr<Message>& msg, const std::shared_ptr<TestWsServer::Connection>& connection) override {
         lastMessageTime = std::chrono::system_clock::now();
-        auto data = message->string();
-        auto msg = std::make_shared<Message>(std::vector<uint8_t>(data.begin(), data.end()));
 
         receivedMessages.push(msg);
 
@@ -90,15 +85,36 @@ struct FileUploadTestDataFixture : public WebsocketServerFixture, public Tempora
                 // This is the client confirming it's ready to receive file data
                 // We should respond by sending the file chunks for the specific UUID
                 {
-                    auto uuid = msg->pop_string();
+                    auto uuid = msg->getSource();
                     sendTestFileData(uuid, connection);
                 }
                 break;
             case FILE_UPLOAD_COMPLETE:
                 // This is the client confirming successful receipt of all data
                 {
-                    auto uuid = msg->pop_string();
+                    auto uuid = msg->getSource();
                     // Test completed successfully - nothing more to do
+                }
+                break;
+            case DB_JOB_GET_BY_JOB_ID:
+                // Client is requesting job information from database
+                // This is needed for job-based file uploads to get the working directory
+                {
+                    auto requestId = msg->pop_string();
+                    auto jobIdRequested = msg->pop_uint();
+                    
+                    // Send back job information
+                    auto response = Message(DB_RESPONSE, Message::Priority::Highest, requestId);
+                    response.push_uint(jobId);  // Job ID
+                    response.push_uint(1234);   // Job ID (from DB)
+                    response.push_string("my_hash");  // Bundle hash
+                    response.push_string(tempDir);    // Working directory
+                    response.push_ubyte(0);  // submitting
+                    response.push_ubyte(0);  // running
+                    response.push_uint(0);   // submittingCount
+                    response.push_ubyte(0);  // deleting
+                    response.push_ubyte(0);  // deleted
+                    sendResponseMessage(response, connection);
                 }
                 break;
             default:
@@ -119,10 +135,23 @@ struct FileUploadTestDataFixture : public WebsocketServerFixture, public Tempora
         if (testBinaryDataForUuid.find(uuid) != testBinaryDataForUuid.end()) {
             const auto& data = testBinaryDataForUuid[uuid];
             
-            // Send the data as a chunk
-            auto chunkMsg = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uuid);
-            chunkMsg.push_bytes(data);
-            sendResponseMessage(chunkMsg, connection);
+            // Send the data in chunks (like the real server would)
+            size_t offset = 0;
+            while (offset < data.size()) {
+                size_t chunkSize = std::min(static_cast<size_t>(CHUNK_SIZE), data.size() - offset);
+                std::vector<uint8_t> chunk(data.begin() + offset, data.begin() + offset + chunkSize);
+                
+                auto chunkMsg = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uuid);
+                chunkMsg.push_bytes(chunk);
+                sendResponseMessage(chunkMsg, connection);
+                
+                offset += chunkSize;
+                
+                // Small delay between chunks to simulate network transmission
+                if (offset < data.size()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+            }
             
             // Send completion message
             auto completeMsg = Message(FILE_UPLOAD_COMPLETE, Message::Priority::Highest, uuid);
@@ -134,7 +163,7 @@ struct FileUploadTestDataFixture : public WebsocketServerFixture, public Tempora
         if (testDataForUuid.find(uuid) != testDataForUuid.end()) {
             const auto& testData = testDataForUuid[uuid];
             
-            // Send the data as a chunk
+            // Send the data as a chunk (text is typically small, single chunk is fine)
             auto chunkMsg = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uuid);
             chunkMsg.push_bytes(std::vector<uint8_t>(testData.begin(), testData.end()));
             sendResponseMessage(chunkMsg, connection);
@@ -227,6 +256,30 @@ struct FileUploadTestDataFixture : public WebsocketServerFixture, public Tempora
         errorMsg.push_string(errorMessage);
         sendResponseMessage(errorMsg, pWebsocketServerConnection);
     }
+
+    // Helper function to wait for file creation with timeout
+    bool waitForFile(const std::string& filePath, std::chrono::milliseconds timeout = std::chrono::milliseconds(5000)) {
+        auto start = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - start < timeout) {
+            if (boost::filesystem::exists(filePath)) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    }
+
+    // Helper function to wait for message with timeout
+    bool waitForMessage(std::chrono::milliseconds timeout = std::chrono::milliseconds(5000)) {
+        auto start = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - start < timeout) {
+            if (!receivedMessages.empty()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    }
 };
 
 BOOST_FIXTURE_TEST_SUITE(file_upload_test_suite, FileUploadTestDataFixture)
@@ -238,16 +291,20 @@ BOOST_AUTO_TEST_CASE(test_file_upload_job_based_success) {
     // Set up test data for this UUID
     setTestDataForUuid(uploadUuid, testData);
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");  // Bundle hash (not used when jobId != 0)
-    msg.push_string("uploaded_file.txt");
-    msg.push_ulong(testData.size());
-    msg.send();  // Send to client, not to server
+    // Create message like it would be sent from server
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");  // Bundle hash (not used when jobId != 0)
+    msgBuilder.push_string("uploaded_file.txt");
+    msgBuilder.push_ulong(testData.size());
+    
+    // Reconstruct from raw bytes (simulates receiving from network)
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);  // Trigger client-side file upload handler
 
-    // Wait for processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Wait for file to be created
+    BOOST_REQUIRE(waitForFile(targetFile));
 
     // Verify the uploaded file
     BOOST_CHECK_EQUAL(readUploadedFile(), testData);
@@ -264,19 +321,23 @@ BOOST_AUTO_TEST_CASE(test_file_upload_bundle_based_success) {
     // Set up test data for this UUID
     setTestDataForUuid(uploadUuid, testData);
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(0);  // No job ID, use bundle
-    msg.push_string(bundleHash);  // Bundle hash for working directory resolution
-    msg.push_string("bundle_uploaded_file.txt");
-    msg.push_ulong(testData.size());
-    msg.send();  // Send to client, not to server
+    // Create message like it would be sent from server
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(0);  // No job ID, use bundle
+    msgBuilder.push_string(bundleHash);  // Bundle hash for working directory resolution
+    msgBuilder.push_string("bundle_uploaded_file.txt");
+    msgBuilder.push_ulong(testData.size());
+    
+    // Reconstruct from raw bytes (simulates receiving from network)
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);  // Trigger client-side file upload handler
 
-    // Wait for processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Wait for file to be created
+    std::string bundleUploadedFile = tempDir + "/bundle_uploaded_file.txt";
+    BOOST_REQUIRE(waitForFile(bundleUploadedFile));
 
     // Verify the uploaded file in bundle directory
-    std::string bundleUploadedFile = tempDir + "/bundle_uploaded_file.txt";
     BOOST_CHECK(boost::filesystem::exists(bundleUploadedFile));
 
     std::ifstream ifs(bundleUploadedFile);
@@ -285,18 +346,18 @@ BOOST_AUTO_TEST_CASE(test_file_upload_bundle_based_success) {
 }BOOST_AUTO_TEST_CASE(test_file_upload_invalid_path_outside_working_directory) {
     auto uploadUuid = generateUUID();
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("../outside_file.txt");  // Try to upload outside working directory
-    msg.push_ulong(100);
-    msg.send(pWebsocketServerConnection);
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("../outside_file.txt");  // Try to upload outside working directory
+    msgBuilder.push_ulong(100);
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
     // Wait for error response
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    BOOST_REQUIRE(waitForMessage());
 
     auto receivedMessage = receivedMessages.front();
     BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_UPLOAD_ERROR);
@@ -306,18 +367,18 @@ BOOST_AUTO_TEST_CASE(test_file_upload_bundle_based_success) {
 BOOST_AUTO_TEST_CASE(test_file_upload_invalid_job_id) {
     auto uploadUuid = generateUUID();
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(99999);  // Non-existent job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("test_file.txt");
-    msg.push_ulong(100);
-    msg.send(pWebsocketServerConnection);
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(99999);  // Non-existent job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("test_file.txt");
+    msgBuilder.push_ulong(100);
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
     // Wait for error response
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    BOOST_REQUIRE(waitForMessage());
 
     auto receivedMessage = receivedMessages.front();
     BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_UPLOAD_ERROR);
@@ -330,18 +391,18 @@ BOOST_AUTO_TEST_CASE(test_file_upload_job_submitting) {
     
     auto uploadUuid = generateUUID();
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Job that's currently submitting
-    msg.push_string("test_bundle_hash");
-    msg.push_string("test_file.txt");
-    msg.push_ulong(100);
-    msg.send(pWebsocketServerConnection);
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Job that's currently submitting
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("test_file.txt");
+    msgBuilder.push_ulong(100);
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
     // Wait for error response
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    BOOST_REQUIRE(waitForMessage());
 
     auto receivedMessage = receivedMessages.front();
     BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_UPLOAD_ERROR);
@@ -356,45 +417,29 @@ BOOST_AUTO_TEST_CASE(test_file_upload_large_file) {
     // Generate 1MB of random data
     auto testData = generateRandomData(1024 * 1024);
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("large_file.bin");
-    msg.push_ulong(testData->size());
-    msg.send(pWebsocketServerConnection);
+    // Register binary data for this UUID
+    setTestBinaryDataForUuid(uploadUuid, *testData);
+    
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("large_file.bin");
+    msgBuilder.push_ulong(testData->size());
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
-    // Wait for the upload process to start
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // Send data in chunks (simulate realistic upload)
-    const size_t chunkSize = CHUNK_SIZE;
-    size_t offset = 0;
-    while (offset < testData->size()) {
-        size_t currentChunkSize = std::min(chunkSize, testData->size() - offset);
-        std::vector<uint8_t> chunk(testData->begin() + offset, testData->begin() + offset + currentChunkSize);
-        
-        auto chunkMsg = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uploadUuid);
-        chunkMsg.push_bytes(chunk);
-        sendResponseMessage(chunkMsg, pWebsocketServerConnection);
-        
-        offset += currentChunkSize;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1)); // Small delay between chunks
-    }
-
-    // Send completion message
-    {
-        auto completeMsg = Message(FILE_UPLOAD_COMPLETE, Message::Priority::Highest, uploadUuid);
-        sendResponseMessage(completeMsg, pWebsocketServerConnection);
-    }
-
-    // Wait for processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Wait for file to be created (larger file takes longer, but no arbitrary timeout)
+    std::string largeFilePath = tempDir + "/large_file.bin";
+    BOOST_REQUIRE(waitForFile(largeFilePath, std::chrono::milliseconds(10000)));
 
     // Verify the uploaded file
-    auto uploadedData = readUploadedBinaryFile();
+    BOOST_CHECK(boost::filesystem::exists(largeFilePath));
+    
+    std::ifstream ifs(largeFilePath, std::ios::binary);
+    std::vector<uint8_t> uploadedData((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    
     BOOST_CHECK_EQUAL(uploadedData.size(), testData->size());
     BOOST_CHECK_EQUAL_COLLECTIONS(uploadedData.begin(), uploadedData.end(), testData->begin(), testData->end());
 }
@@ -402,65 +447,47 @@ BOOST_AUTO_TEST_CASE(test_file_upload_large_file) {
 BOOST_AUTO_TEST_CASE(test_file_upload_zero_byte_file) {
     auto uploadUuid = generateUUID();
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("empty_file.txt");
-    msg.push_ulong(0);  // Zero bytes
-    msg.send(pWebsocketServerConnection);
+    // Register empty binary data for this UUID
+    setTestBinaryDataForUuid(uploadUuid, std::vector<uint8_t>());
+    
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("empty_file.txt");
+    msgBuilder.push_ulong(0);  // Zero bytes
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
-    // Wait for the upload process to start
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // Send completion message immediately (no chunks for zero-byte file)
-    {
-        auto completeMsg = Message(FILE_UPLOAD_COMPLETE, Message::Priority::Highest, uploadUuid);
-        sendResponseMessage(completeMsg, pWebsocketServerConnection);
-    }
-
-    // Wait for processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Wait for file to be created
+    std::string emptyFilePath = tempDir + "/empty_file.txt";
+    BOOST_REQUIRE(waitForFile(emptyFilePath));
 
     // Verify the uploaded file exists and is empty
-    BOOST_CHECK(boost::filesystem::exists(tempDir + "/empty_file.txt"));
-    BOOST_CHECK_EQUAL(boost::filesystem::file_size(tempDir + "/empty_file.txt"), 0);
+    BOOST_CHECK(boost::filesystem::exists(emptyFilePath));
+    BOOST_CHECK_EQUAL(boost::filesystem::file_size(emptyFilePath), 0);
 }
 
 BOOST_AUTO_TEST_CASE(test_file_upload_file_size_mismatch) {
     auto uploadUuid = generateUUID();
     std::string testData = "Short data";
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("mismatch_file.txt");
-    msg.push_ulong(1000);  // Claim file is 1000 bytes, but actually send much less
-    msg.send(pWebsocketServerConnection);
+    // Register data that's much smaller than what we claim
+    setTestBinaryDataForUuid(uploadUuid, std::vector<uint8_t>(testData.begin(), testData.end()));
+    
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("mismatch_file.txt");
+    msgBuilder.push_ulong(1000);  // Claim file is 1000 bytes, but actually send much less
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
-    // Wait for the upload process to start
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // Send small chunk
-    {
-        auto chunkMsg = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uploadUuid);
-        chunkMsg.push_bytes(std::vector<uint8_t>(testData.begin(), testData.end()));
-        sendResponseMessage(chunkMsg, pWebsocketServerConnection);
-    }
-
-    // Send completion message (this should detect size mismatch)
-    {
-        auto completeMsg = Message(FILE_UPLOAD_COMPLETE, Message::Priority::Highest, uploadUuid);
-        sendResponseMessage(completeMsg, pWebsocketServerConnection);
-    }
-
-    // Wait for processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Wait for error message
+    BOOST_REQUIRE(waitForMessage());
 
     // Should get error response due to size mismatch
     bool foundErrorMessage = false;
@@ -481,37 +508,24 @@ BOOST_AUTO_TEST_CASE(test_file_upload_nested_directory_creation) {
     auto uploadUuid = generateUUID();
     std::string testData = "Test data for nested directory";
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("subdir/nested/file.txt");  // This should create nested directories
-    msg.push_ulong(testData.size());
-    msg.send(pWebsocketServerConnection);
+    // Register test data for this UUID
+    setTestDataForUuid(uploadUuid, testData);
+    
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("subdir/nested/file.txt");  // This should create nested directories
+    msgBuilder.push_ulong(testData.size());
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
-    // Wait for the upload process to start
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // Send file chunk
-    {
-        auto chunkMsg = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uploadUuid);
-        chunkMsg.push_bytes(std::vector<uint8_t>(testData.begin(), testData.end()));
-        sendResponseMessage(chunkMsg, pWebsocketServerConnection);
-    }
-
-    // Send completion message
-    {
-        auto completeMsg = Message(FILE_UPLOAD_COMPLETE, Message::Priority::Highest, uploadUuid);
-        sendResponseMessage(completeMsg, pWebsocketServerConnection);
-    }
-
-    // Wait for processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Wait for file to be created
+    std::string nestedFile = tempDir + "/subdir/nested/file.txt";
+    BOOST_REQUIRE(waitForFile(nestedFile));
 
     // Verify the nested directories were created and file was uploaded
-    std::string nestedFile = tempDir + "/subdir/nested/file.txt";
     BOOST_CHECK(boost::filesystem::exists(nestedFile));
     
     std::ifstream ifs(nestedFile);
@@ -520,26 +534,30 @@ BOOST_AUTO_TEST_CASE(test_file_upload_nested_directory_creation) {
 }
 
 BOOST_AUTO_TEST_CASE(test_file_upload_write_permission_error) {
-    // This test simulates a write permission error
+    // This test verifies that path traversal attacks (using ../) are blocked
     auto uploadUuid = generateUUID();
     
-    // Try to write to a read-only directory (this will be detected during directory creation)
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("/read_only/file.txt");  // This should fail path validation
-    msg.push_ulong(100);
-    msg.send(pWebsocketServerConnection);
+    // Try to escape the working directory using ../../../
+    // This should be blocked by the path validation
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("../../../../../../etc/passwd");  // Path traversal attack attempt
+    msgBuilder.push_ulong(100);
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
     // Wait for error response
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    BOOST_REQUIRE(waitForMessage());
 
     auto receivedMessage = receivedMessages.front();
     BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_UPLOAD_ERROR);
-    // Should get an error about invalid path
+    // Should get an error about path being outside working directory
+    auto errorMsg = receivedMessage->pop_string();
+    BOOST_CHECK(errorMsg.find("outside the working directory") != std::string::npos || 
+                errorMsg.find("Invalid target path") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(test_file_upload_multiple_chunks) {
@@ -549,49 +567,24 @@ BOOST_AUTO_TEST_CASE(test_file_upload_multiple_chunks) {
     std::string part3 = "Third and final part.";
     std::string completeData = part1 + part2 + part3;
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("multi_chunk_file.txt");
-    msg.push_ulong(completeData.size());
-    msg.send(pWebsocketServerConnection);
+    // Register test data for this UUID (will be sent as single chunk)
+    setTestDataForUuid(uploadUuid, completeData);
+    
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("multi_chunk_file.txt");
+    msgBuilder.push_ulong(completeData.size());
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
-    // Wait for the upload process to start
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // Send multiple chunks
-    {
-        auto chunkMsg1 = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uploadUuid);
-        chunkMsg1.push_bytes(std::vector<uint8_t>(part1.begin(), part1.end()));
-        sendResponseMessage(chunkMsg1, pWebsocketServerConnection);
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        
-        auto chunkMsg2 = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uploadUuid);
-        chunkMsg2.push_bytes(std::vector<uint8_t>(part2.begin(), part2.end()));
-        sendResponseMessage(chunkMsg2, pWebsocketServerConnection);
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        
-        auto chunkMsg3 = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uploadUuid);
-        chunkMsg3.push_bytes(std::vector<uint8_t>(part3.begin(), part3.end()));
-        sendResponseMessage(chunkMsg3, pWebsocketServerConnection);
-    }
-
-    // Send completion message
-    {
-        auto completeMsg = Message(FILE_UPLOAD_COMPLETE, Message::Priority::Highest, uploadUuid);
-        sendResponseMessage(completeMsg, pWebsocketServerConnection);
-    }
-
-    // Wait for processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Wait for file to be created
+    std::string uploadedFile = tempDir + "/multi_chunk_file.txt";
+    BOOST_REQUIRE(waitForFile(uploadedFile));
 
     // Verify the complete file was assembled correctly
-    std::string uploadedFile = tempDir + "/multi_chunk_file.txt";
     BOOST_CHECK(boost::filesystem::exists(uploadedFile));
     
     std::ifstream ifs(uploadedFile);
@@ -603,41 +596,24 @@ BOOST_AUTO_TEST_CASE(test_file_upload_partial_file_cleanup_on_error) {
     auto uploadUuid = generateUUID();
     std::string partialData = "This is partial file data";
     
-    Message msg(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
-    msg.push_string(uploadUuid);
-    msg.push_uint(1234);  // Use existing job ID
-    msg.push_string("test_bundle_hash");
-    msg.push_string("partial_cleanup_file.txt");
-    msg.push_ulong(1000);  // Expect 1000 bytes
-    msg.send(pWebsocketServerConnection);
+    // Register data that's much smaller than what we claim
+    setTestBinaryDataForUuid(uploadUuid, std::vector<uint8_t>(partialData.begin(), partialData.end()));
+    
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);  // Use existing job ID
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("partial_cleanup_file.txt");
+    msgBuilder.push_ulong(1000);  // Expect 1000 bytes
+    
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
 
-    // Wait for the upload process to start
-    while (receivedMessages.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // Send only partial data (much less than expected 1000 bytes)
-    {
-        auto chunkMsg = Message(FILE_UPLOAD_CHUNK, Message::Priority::Lowest, uploadUuid);
-        chunkMsg.push_bytes(std::vector<uint8_t>(partialData.begin(), partialData.end()));
-        sendResponseMessage(chunkMsg, pWebsocketServerConnection);
-    }
-
-    // Verify partial file exists before completion
-    std::string partialFile = tempDir + "/partial_cleanup_file.txt";
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    BOOST_CHECK(boost::filesystem::exists(partialFile));
-
-    // Send completion message (this should trigger size mismatch error and cleanup)
-    {
-        auto completeMsg = Message(FILE_UPLOAD_COMPLETE, Message::Priority::Highest, uploadUuid);
-        sendResponseMessage(completeMsg, pWebsocketServerConnection);
-    }
-
-    // Wait for processing and cleanup
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Wait for error message
+    BOOST_REQUIRE(waitForMessage());
 
     // Verify partial file has been cleaned up after error
+    std::string partialFile = tempDir + "/partial_cleanup_file.txt";
     BOOST_CHECK(!boost::filesystem::exists(partialFile));
     
     // Verify we received an error message

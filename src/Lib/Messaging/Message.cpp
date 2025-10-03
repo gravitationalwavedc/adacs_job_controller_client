@@ -17,7 +17,7 @@ Message::Message(uint32_t msgId) : index(0), id(msgId) {
 #endif
 
 Message::Message(uint32_t msgId, Message::Priority priority, const std::string& source, std::function<void()>  callback)
-: priority(priority), index(0), source(source), callback(std::move(callback)) {
+: priority(priority), index(0), source(source), id(msgId), callback(std::move(callback)) {
     data = std::make_shared<std::vector<uint8_t>>();
     data->reserve(MESSAGE_INITIAL_VECTOR_SIZE);
 

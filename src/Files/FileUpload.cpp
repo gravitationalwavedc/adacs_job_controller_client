@@ -369,6 +369,21 @@ void handleFileUploadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(reada
                 // COMPLETION: Server has sent all data, validate and confirm receipt
                 // This is the critical validation step that ensures data integrity
                 {
+                    // For zero-byte files, we may not have opened the file yet (no chunks sent)
+                    // Create an empty file in this case
+                    if (!outputFile && fileSize == 0) {
+                        outputFile = std::make_shared<std::ofstream>(targetPath, std::ios::binary | std::ios::trunc);
+                        if (!outputFile->is_open()) {
+                            LOG(ERROR) << "Failed to create zero-byte file: " << targetPath;
+                            auto errorMsg = Message(FILE_UPLOAD_ERROR, Message::Priority::Highest, uuid);
+                            errorMsg.push_string("Failed to create zero-byte file");
+                            sendUploadMessage(errorMsg, connection);
+                            closeConnectionWithCleanup();
+                            return;
+                        }
+                        LOG(INFO) << "Created zero-byte file: " << targetPath;
+                    }
+                    
                     // Close the output file to ensure all data is flushed
                     try {
                         if (outputFile && outputFile->is_open()) {
