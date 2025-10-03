@@ -5,7 +5,7 @@
 1. Clone the repository `git clone https://gitlab.com/CAS-eResearch/GWDC/code/adacs_job_controller_client.git`
 2. Init all submodules `git submodule update --init --recursive`
 3. Initialise the boost installation `cd src/third_party && bash prepare_boost.sh`
-4. Initialise the elfutils installation `cd src/third_party && bash prepare_elfutils.h`
+4. Initialise the elfutils installation `cd src/third_party && bash prepare_elfutils.sh`
 
 
 
@@ -16,8 +16,15 @@
 The project can now be built. There are two primary targets: `Boost_Tests_run`, and `adacs_job_client`. You'll likely only want to bother building `Boost_Tests_run` and using this to test the functionality of the job client.
 
 1. Make a build directory `cd src && mkdir build`
-2. Change in to the build directory and run the cmake configure `cd build && cmake -DCMAKE_BUILD_TYPE=Debug ..`
-3. Build the target `cmake --build . --target Boost_Tests_run`
+2. Change in to the build directory and run the cmake configure:
+   - **Basic build**: `cd build && cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ..`
+   - **With clang-tidy**: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DENABLE_CLANG_TIDY=ON ..`
+3. Build the target `ninja Boost_Tests_run`
+
+**Optional cmake flags:**
+- `-DENABLE_CLANG_TIDY=ON`: Enable clang-tidy static analysis during build
+- `-DCMAKE_BUILD_TYPE=Debug`: Build in debug mode (default)
+- `-DCMAKE_BUILD_TYPE=Release`: Build in release mode with optimizations
 
 
 

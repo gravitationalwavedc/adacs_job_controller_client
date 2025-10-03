@@ -9,6 +9,7 @@
 #include "../../Tests/fixtures/BundleFixture.h"
 #include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../Tests/fixtures/WebsocketServerFixture.h"
+#include <queue>
 
 struct JobSubmitTestDataFixture : public WebsocketServerFixture, public BundleFixture, public AbortHelperFixture, public TemporaryDirectoryFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)

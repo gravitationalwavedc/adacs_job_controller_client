@@ -91,6 +91,7 @@ auto beforeMain() -> bool {
     // Set up the crash handler
     segvcatch::init_segv(&handleSegv);
     segvcatch::init_fpe(&handleFpe);
+    return true;
 }
 
 // Enforce the early segv handler

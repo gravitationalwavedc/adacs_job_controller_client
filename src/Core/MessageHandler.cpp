@@ -38,6 +38,10 @@ void handleMessage(const std::shared_ptr<Message>& message) {
             // Download a file
             handleFileDownload(message);
             break;
+        case UPLOAD_FILE:
+            // Upload a file
+            handleFileUpload(message);
+            break;
         default:
             LOG(WARNING) << "Message Handler: Got unknown message ID from the server " << message->getId();
     }
