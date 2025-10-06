@@ -3,7 +3,7 @@ version: '3.4'
 services:
   web:
     build:
-      dockerfile: adacs_job_client.Dockerfile
+      dockerfile: docker/adacs_job_client.Dockerfile
       context: ..
       target: test
     image: gwcloud_job_server_valgrind 

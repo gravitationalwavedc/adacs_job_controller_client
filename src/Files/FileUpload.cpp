@@ -221,14 +221,21 @@ void handleFileUploadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(reada
     try {
         // Construct the full path to the target file
         auto fullTargetPath = boost::filesystem::path(workingDirectory) / targetPath;
-        
+
         // Create parent directories if they don't exist
         // This allows uploading files to nested directory structures
         boost::filesystem::create_directories(fullTargetPath.parent_path());
-        
-        // Canonicalize the path to resolve any . or .. components
-        // This is critical for preventing directory traversal attacks
-        targetPath = boost::filesystem::canonical(fullTargetPath.parent_path()).string() + "/" + fullTargetPath.filename().string();
+
+        // Canonicalize the working directory and the target parent path to resolve
+        // symlinks and any . or .. components. This prevents directory traversal
+        // attacks, including cases where a symlink inside the working directory
+        // points outside but happens to share a string prefix with the working dir.
+        auto canonicalWorking = boost::filesystem::canonical(boost::filesystem::path(workingDirectory));
+        auto canonicalTargetParent = boost::filesystem::canonical(fullTargetPath.parent_path());
+
+        // Reconstruct full canonical target path
+        auto canonicalTargetPath = canonicalTargetParent / fullTargetPath.filename();
+        targetPath = canonicalTargetPath.string();
     } catch (boost::filesystem::filesystem_error &error) {
         LOG(WARNING) << "Invalid target path for file upload " << targetPath << ": " << error.what();
         // Send error response and abort upload
@@ -238,9 +245,26 @@ void handleFileUploadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(reada
         return;
     }
 
-    // SECURITY CHECK: Ensure target path is within working directory
-    // This prevents malicious servers from writing files outside the sandbox
-    if (!targetPath.starts_with(workingDirectory)) {
+    // SECURITY CHECK: Ensure canonical target path is within the canonical working directory
+    // Walk up from the canonical target path and ensure we eventually reach the canonical working dir
+    bool isWithin = false;
+    try {
+        auto canonicalWorking = boost::filesystem::canonical(boost::filesystem::path(workingDirectory));
+        auto canonicalTarget = boost::filesystem::path(targetPath);
+        auto current = canonicalTarget;
+        while (true) {
+            if (current == canonicalWorking) {
+                isWithin = true;
+                break;
+            }
+            if (current == current.root_path()) break;
+            current = current.parent_path();
+        }
+    } catch (boost::filesystem::filesystem_error &error) {
+        LOG(WARNING) << "Failed during containment check for path " << targetPath << ": " << error.what();
+    }
+
+    if (!isWithin) {
         LOG(WARNING) << "Target path for file upload is outside the working directory " << targetPath << " (working dir: " << workingDirectory << ")";
         auto result = Message(FILE_UPLOAD_ERROR, Message::Priority::Highest, uuid);
         result.push_string("Target path for file upload is outside the working directory");
@@ -343,8 +367,8 @@ void handleFileUploadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(reada
                             LOG(ERROR) << "Failed to open target file for writing: " << targetPath;
                             auto errorMsg = Message(FILE_UPLOAD_ERROR, Message::Priority::Highest, uuid);
                             errorMsg.push_string("Failed to open target file for writing");
-                            sendUploadMessage(errorMsg, connection);
-                            closeConnectionWithCleanup();
+                            // Wait for the message to be sent before closing/cleaning up the connection
+                            sendUploadMessage(errorMsg, connection, [closeConnectionWithCleanup]() { closeConnectionWithCleanup(); });
                             return;
                         }
                         LOG(INFO) << "Opened target file for writing: " << targetPath;
@@ -354,13 +378,12 @@ void handleFileUploadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(reada
                     try {
                         outputFile->write(reinterpret_cast<const char*>(chunkData.data()), static_cast<std::streamsize>(chunkData.size()));
                         outputFile->flush();  // Ensure data is written to disk immediately for safety
-                        LOG(INFO) << "Wrote " << chunkData.size() << " bytes to " << targetPath;
                     } catch (std::exception& e) {
                         LOG(ERROR) << "Failed to write chunk to file: " << e.what();
                         auto errorMsg = Message(FILE_UPLOAD_ERROR, Message::Priority::Highest, uuid);
                         errorMsg.push_string("Failed to write chunk to file");
-                        sendUploadMessage(errorMsg, connection);
-                        closeConnectionWithCleanup();
+                        // Ensure the error message is delivered before cleanup
+                        sendUploadMessage(errorMsg, connection, [closeConnectionWithCleanup]() { closeConnectionWithCleanup(); });
                         return;
                     }
                 }
@@ -404,8 +427,8 @@ void handleFileUploadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(reada
                                       << " bytes, got " << actualSize << " bytes";
                             auto errorMsg = Message(FILE_UPLOAD_ERROR, Message::Priority::Highest, uuid);
                             errorMsg.push_string("File size mismatch: expected " + std::to_string(fileSize) + ", got " + std::to_string(actualSize));
-                            sendUploadMessage(errorMsg, connection);
-                            closeConnectionWithCleanup();  // Clean up the incorrectly sized file
+                            // Send error and clean up only after the message has been sent
+                            sendUploadMessage(errorMsg, connection, [closeConnectionWithCleanup]() { closeConnectionWithCleanup(); });
                             return;
                         }
                         LOG(INFO) << "File upload completed successfully: " << targetPath 
@@ -415,15 +438,13 @@ void handleFileUploadImpl(const std::shared_ptr<Message> &msg) { // NOLINT(reada
                         LOG(ERROR) << "Uploaded file does not exist: " << targetPath;
                         auto errorMsg = Message(FILE_UPLOAD_ERROR, Message::Priority::Highest, uuid);
                         errorMsg.push_string("Uploaded file does not exist after completion");
-                        sendUploadMessage(errorMsg, connection);
-                        closeConnectionWithCleanup();  // Attempt cleanup even though file doesn't exist
+                        sendUploadMessage(errorMsg, connection, [closeConnectionWithCleanup]() { closeConnectionWithCleanup(); });
                         return;
                     }
                     
-                    // Send completion confirmation back to server
+                    // Send completion confirmation back to server and close when delivered
                     auto response = Message(FILE_UPLOAD_COMPLETE, Message::Priority::Highest, uuid);
-                    sendUploadMessage(response, connection);
-                    closeConnection();
+                    sendUploadMessage(response, connection, [closeConnection]() { closeConnection(); });
                 }
                 break;
             default:

@@ -4,8 +4,14 @@ project(adacs_job_client)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 
-# Option to enable clang-tidy
+# Option to enable/disable clang-tidy
 option(ENABLE_CLANG_TIDY "Enable clang-tidy static analysis" ON)
+
+if(ENABLE_CLANG_TIDY)
+    message(STATUS "clang-tidy static analysis: ENABLED")
+else()
+    message(STATUS "clang-tidy static analysis: DISABLED")
+endif()
 
 # Generate maximum debug information (Dwarf version 4 for folly backtrace support)
 # Use linker flags to prefer Folly's exception handling symbols over static libstdc++
@@ -279,21 +285,16 @@ set(
         ${LIBFMT_LIBRARY}
 )
 
-set_target_properties(
-        Boost_Tests_run
-        PROPERTIES
-        CXX_CLANG_TIDY "$<$<BOOL:${ENABLE_CLANG_TIDY}>:clang-tidy>"
-)
+if(ENABLE_CLANG_TIDY)
+    # Enable clang-tidy for Boost_Tests_run
+    set_target_properties(
+            Boost_Tests_run 
+            PROPERTIES
+            CXX_CLANG_TIDY "clang-tidy"
+    )
+endif()
 
 target_link_libraries(adacs_job_client ${LINK_LIBRARIES})
-
-# Set clang-tidy for main executable if enabled
-set_target_properties(
-        adacs_job_client
-        PROPERTIES
-        CXX_CLANG_TIDY "$<$<BOOL:${ENABLE_CLANG_TIDY}>:clang-tidy>"
-)
-
 target_link_libraries(Boost_Tests_run ${LINK_LIBRARIES} gcov)
 
 # Configure custom definitions for testing

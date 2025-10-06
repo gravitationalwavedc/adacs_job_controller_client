@@ -101,7 +101,8 @@ struct FileUploadTestDataFixture : public WebsocketServerFixture, public Tempora
                 // This is needed for job-based file uploads to get the working directory
                 {
                     auto requestId = msg->pop_string();
-                    auto jobIdRequested = msg->pop_uint();
+                    // Consume the requested job id from the message; value isn't needed here
+                    msg->pop_uint();
                     
                     // Send back job information
                     auto response = Message(DB_RESPONSE, Message::Priority::Highest, requestId);
@@ -629,6 +630,152 @@ BOOST_AUTO_TEST_CASE(test_file_upload_partial_file_cleanup_on_error) {
         }
     }
     BOOST_CHECK(foundErrorMessage);
+}
+
+
+BOOST_AUTO_TEST_CASE(test_file_upload_protocol_messages_sent_by_client) {
+    // Verify client responds to SERVER_READY and sends FILE_UPLOAD_COMPLETE on success
+    auto uploadUuid = generateUUID();
+    std::string testData = "Protocol message test data";
+
+    setTestDataForUuid(uploadUuid, testData);
+
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("protocol_file.txt");
+    msgBuilder.push_ulong(testData.size());
+
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
+
+    // Wait for file creation to ensure upload finished
+    BOOST_REQUIRE(waitForFile(tempDir + "/protocol_file.txt"));
+
+    // Check that the server received both SERVER_READY and FILE_UPLOAD_COMPLETE from client
+    bool sawServerReady = false;
+    bool sawFileComplete = false;
+    while (!receivedMessages.empty()) {
+        auto m = receivedMessages.front();
+        receivedMessages.pop();
+        if (m->getId() == SERVER_READY) sawServerReady = true;
+        if (m->getId() == FILE_UPLOAD_COMPLETE) sawFileComplete = true;
+    }
+
+    BOOST_CHECK(sawServerReady);
+    BOOST_CHECK(sawFileComplete);
+}
+
+
+BOOST_AUTO_TEST_CASE(test_file_upload_open_write_error) {
+    // Create a subdirectory with no write permission so opening the file will fail
+    auto uploadUuid = generateUUID();
+    std::string testData = "Data that won't be written";
+    std::string protectedDir = tempDir + "/no_write";
+
+    // Create directory and remove write permission
+    boost::filesystem::create_directory(protectedDir);
+    // Make directory read & execute only (no write)
+    chmod(protectedDir.c_str(), 0555);
+
+    setTestDataForUuid(uploadUuid, testData);
+
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("no_write/forbidden.txt");
+    msgBuilder.push_ulong(testData.size());
+
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
+
+    // Wait for an error message from server side
+    BOOST_REQUIRE(waitForMessage());
+
+    auto receivedMessage = receivedMessages.back();
+    BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_UPLOAD_ERROR);
+    BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Failed to open target file for writing");
+
+    // Restore permissions so test teardown can remove the directory
+    chmod(protectedDir.c_str(), 0755);
+}
+
+
+BOOST_AUTO_TEST_CASE(test_file_upload_actual_bigger_than_declared) {
+    // Server sends more data than declared in fileSize
+    auto uploadUuid = generateUUID();
+    auto testData = generateRandomData(256); // actual 256 bytes
+
+    // Register binary data larger than declared
+    setTestBinaryDataForUuid(uploadUuid, *testData);
+
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("too_big_file.bin");
+    msgBuilder.push_ulong(128); // claim only 128 bytes
+
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
+
+    // Wait for error message
+    BOOST_REQUIRE(waitForMessage());
+
+    bool foundErrorMessage = false;
+    while (!receivedMessages.empty()) {
+        auto message = receivedMessages.front();
+        receivedMessages.pop();
+        if (message->getId() == FILE_UPLOAD_ERROR) {
+            auto errorMsg = message->pop_string();
+            BOOST_CHECK(errorMsg.find("File size mismatch") != std::string::npos);
+            foundErrorMessage = true;
+            break;
+        }
+    }
+    BOOST_CHECK(foundErrorMessage);
+}
+
+
+BOOST_AUTO_TEST_CASE(test_file_upload_symlink_outside_working_directory) {
+    // Create a symlink inside working directory that points outside, then attempt upload
+    auto uploadUuid = generateUUID();
+    std::string testData = "Symlink attack test";
+
+    // Create an outside directory (sibling of tempDir)
+    std::string outsideDir = tempDir + "_outside";
+    boost::filesystem::remove_all(outsideDir);
+    boost::filesystem::create_directory(outsideDir);
+
+    // Create symlink inside tempDir pointing to outsideDir
+    std::string symlinkPath = tempDir + "/evil_link";
+    boost::filesystem::remove(symlinkPath);
+    boost::filesystem::create_directory_symlink(outsideDir, symlinkPath);
+
+    setTestDataForUuid(uploadUuid, testData);
+
+    Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+    msgBuilder.push_string(uploadUuid);
+    msgBuilder.push_uint(1234);
+    msgBuilder.push_string("test_bundle_hash");
+    msgBuilder.push_string("evil_link/attack.txt");
+    msgBuilder.push_ulong(testData.size());
+
+    auto msg = std::make_shared<Message>(*msgBuilder.getData());
+    ::handleMessage(msg);
+
+    // Wait for error response
+    BOOST_REQUIRE(waitForMessage());
+
+    auto receivedMessage = receivedMessages.front();
+    BOOST_CHECK_EQUAL(receivedMessage->getId(), FILE_UPLOAD_ERROR);
+    BOOST_CHECK_EQUAL(receivedMessage->pop_string(), "Target path for file upload is outside the working directory");
+
+    // Cleanup
+    boost::filesystem::remove(symlinkPath);
+    boost::filesystem::remove_all(outsideDir);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
