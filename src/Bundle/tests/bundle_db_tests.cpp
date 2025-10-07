@@ -8,6 +8,7 @@
 #include "../../Tests/fixtures/WebsocketServerFixture.h"
 #include "../BundleManager.h"
 #include <boost/test/unit_test.hpp>
+#include <queue>
 
 struct BundleDbTestFixture : public BundleFixture, public WebsocketServerFixture {
     std::string token;

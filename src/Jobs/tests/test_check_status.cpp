@@ -9,6 +9,7 @@
 #include "../../Tests/fixtures/BundleFixture.h"
 #include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../Tests/fixtures/WebsocketServerFixture.h"
+#include <queue>
 
 void checkJobStatusImpl(sJob job, bool forceNotification);
 

@@ -5,6 +5,7 @@
 #include "../../Tests/fixtures/BundleFixture.h"
 #include "../../Tests/fixtures/TemporaryDirectoryFixture.h"
 #include "../../Tests/fixtures/WebsocketServerFixture.h"
+#include <queue>
 
 extern std::map<std::string, std::promise<void>> pausedFileTransfers;
 

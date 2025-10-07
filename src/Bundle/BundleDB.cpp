@@ -5,10 +5,9 @@
 #include "../Websocket/WebsocketInterface.h"
 #include "BundleDB.h"
 #include "BundleManager.h"
+#include "ThreadBundleMap.h"
 #include <iostream>
 #include <thread>
-
-extern std::map<std::thread::id, std::string> threadBundleHashMap;
 static PyObject *bundleDbError;
 
 static auto create_or_update_job(PyObject * /*self*/, PyObject *args) -> PyObject *
@@ -16,7 +15,11 @@ static auto create_or_update_job(PyObject * /*self*/, PyObject *args) -> PyObjec
     auto *dict = PyTuple_GetItem(args, 0);
 
     // Get the bundle hash
-    auto bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    std::string bundleHash;
+    {
+        std::shared_lock<std::shared_mutex> const lock(threadBundleHashMapMutex);
+        bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    }
     auto bundleInterface = BundleManager::Singleton()->loadBundle(bundleHash);
 
     // Convert first argument to a json object
@@ -75,7 +78,11 @@ static auto get_job_by_id(PyObject * /*self*/, PyObject *args) -> PyObject *
     auto jobId = PyLong_AsUnsignedLongLong(jobIdObj);
 
     // Get the bundle hash
-    auto bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    std::string bundleHash;
+    {
+        std::shared_lock<std::shared_mutex> const lock(threadBundleHashMapMutex);
+        bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    }
     auto bundleInterface = BundleManager::Singleton()->loadBundle(bundleHash);
 
     // Request the server save the record
@@ -122,7 +129,11 @@ static auto delete_job(PyObject * /*self*/, PyObject *args) -> PyObject *
     auto *dict = PyTuple_GetItem(args, 0);
 
     // Get the bundle hash
-    auto bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    std::string bundleHash;
+    {
+        std::shared_lock<std::shared_mutex> const lock(threadBundleHashMapMutex);
+        bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    }
     auto bundleInterface = BundleManager::Singleton()->loadBundle(bundleHash);
 
     // Convert first argument to a json object

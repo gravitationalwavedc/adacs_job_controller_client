@@ -33,6 +33,10 @@ constexpr uint32_t PAUSE_FILE_CHUNK_STREAM = 4004;
 constexpr uint32_t RESUME_FILE_CHUNK_STREAM = 4005;
 constexpr uint32_t FILE_LIST = 4006;
 constexpr uint32_t FILE_LIST_ERROR = 4007;
+constexpr uint32_t UPLOAD_FILE = 4500;
+constexpr uint32_t FILE_UPLOAD_CHUNK = 4501;
+constexpr uint32_t FILE_UPLOAD_ERROR = 4502;
+constexpr uint32_t FILE_UPLOAD_COMPLETE = 4503;
 
 constexpr uint32_t DB_JOB_GET_BY_JOB_ID = 5000;
 constexpr uint32_t DB_JOB_GET_BY_ID = 5001;
@@ -101,6 +105,7 @@ public:
 #endif
 
     [[nodiscard]] auto getId() const -> uint32_t { return id; }
+    [[nodiscard]] auto getSource() const -> std::string { return source; }
     auto getData() {
         return data;
     }

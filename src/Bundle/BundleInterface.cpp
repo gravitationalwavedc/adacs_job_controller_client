@@ -4,11 +4,13 @@
 
 #include "../Lib/GeneralUtils.h"
 #include "BundleInterface.h"
+#include "ThreadBundleMap.h"
 #include <glog/logging.h>
 #include <iostream>
 #include <thread>
 
 std::map<std::thread::id, std::string> threadBundleHashMap;
+std::shared_mutex threadBundleHashMapMutex;
 
 const char* stdoutRedirection = R"PY(
 import io, sys
@@ -33,7 +35,10 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
     std::unique_lock<std::shared_mutex> const lock(mutex_);
 
     // Set up the thread bundle hash map
-    threadBundleHashMap.emplace(std::this_thread::get_id(), bundleHash);
+    {
+        std::unique_lock<std::shared_mutex> const mapLock(threadBundleHashMapMutex);
+        threadBundleHashMap.emplace(std::this_thread::get_id(), bundleHash);
+    }
 
     static PyThreadState *_state = nullptr;
     if (_state != nullptr) {
@@ -80,7 +85,10 @@ BundleInterface::BundleInterface(const std::string& bundleHash) : bundleHash(bun
     }
 
     // Clear the thread from the thread bundle hash map
-    threadBundleHashMap.erase(std::this_thread::get_id());
+    {
+        std::unique_lock<std::shared_mutex> const mapLock(threadBundleHashMapMutex);
+        threadBundleHashMap.erase(std::this_thread::get_id());
+    }
 }
 
 void BundleInterface::printLastPythonException() {
@@ -180,7 +188,10 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
     PyTuple_SetItem(pArgs, 1, pValue);
 
     // Set up the thread bundle hash map
-    threadBundleHashMap.emplace(std::this_thread::get_id(), bundleHash);
+    {
+        std::unique_lock<std::shared_mutex> const mapLock(threadBundleHashMapMutex);
+        threadBundleHashMap.emplace(std::this_thread::get_id(), bundleHash);
+    }
 
     // Call the bundle function
     auto *pResult = PyObject_CallObject(pFunc, pArgs);
@@ -191,7 +202,10 @@ auto BundleInterface::run(const std::string& bundleFunction, const nlohmann::jso
     }
 
     // Clear the thread from the thread bundle hash map
-    threadBundleHashMap.erase(std::this_thread::get_id());
+    {
+        std::unique_lock<std::shared_mutex> const mapLock(threadBundleHashMapMutex);
+        threadBundleHashMap.erase(std::this_thread::get_id());
+    }
 
     Py_DECREF(pArgs);
     Py_XDECREF(pFunc);

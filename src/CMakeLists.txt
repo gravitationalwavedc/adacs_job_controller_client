@@ -4,11 +4,24 @@ project(adacs_job_client)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 
+# Option to enable/disable clang-tidy
+option(ENABLE_CLANG_TIDY "Enable clang-tidy static analysis" ON)
+
+if(ENABLE_CLANG_TIDY)
+    message(STATUS "clang-tidy static analysis: ENABLED")
+else()
+    message(STATUS "clang-tidy static analysis: DISABLED")
+endif()
+
 # Generate maximum debug information (Dwarf version 4 for folly backtrace support)
+# Use linker flags to prefer Folly's exception handling symbols over static libstdc++
 set(CMAKE_CXX_FLAGS_DEBUG " -O0 -fpermissive -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
 set(CMAKE_C_FLAGS_DEBUG " -O0 -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
 set(CMAKE_CXX_FLAGS_RELEASE " -O2 -fpermissive -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
 set(CMAKE_C_FLAGS_RELEASE " -O2 -static-libstdc++ -static-libgcc -w -g -rdynamic -gdwarf-4  ")
+
+# Linker flags to allow multiple definitions and prefer first occurrence (Folly's symbols)
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-multiple-definition")
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     message("Enabling LTO for release build")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
@@ -74,6 +87,7 @@ set(DOUBLE_CONVERSION_LIBRARY "double-conversion")
 
 set(FMT_ROOT ${CMAKE_SOURCE_DIR}/third_party/fmt)
 set(LIBFMT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/fmt/include)
+# Use the actual library file path based on build type
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(LIBFMT_LIBRARY ${CMAKE_BINARY_DIR}/third_party/fmt/libfmtd.a)
 else()
@@ -85,6 +99,7 @@ set(WITH_GTEST OFF)
 set(WITH_PKGCONFIG OFF)
 set(WITH_UNWIND OFF)
 set(Glog_ROOT ${CMAKE_SOURCE_DIR}/third_party/glog)
+# Use the actual glog library path instead of target name
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(Glog_LIBRARY ${CMAKE_BINARY_DIR}/third_party/glog/libglogd.a)
 else()
@@ -128,6 +143,8 @@ add_subdirectory(third_party/double-conversion)
 
 set(EVENT__DISABLE_BENCHMARK TRUE)
 set(EVENT__DISABLE_TESTS TRUE)
+set(EVENT__DISABLE_REGRESS TRUE)
+set(EVENT__DISABLE_SAMPLES TRUE)
 add_subdirectory(third_party/libevent)
 
 add_subdirectory(third_party/glog)
@@ -135,10 +152,22 @@ add_subdirectory(third_party/glog)
 file(REMOVE third_party/folly/build/fbcode_builder/CMake/FindGlog.cmake)
 file(REMOVE third_party/folly/build/fbcode_builder/CMake/FindGflags.cmake)
 file(WRITE third_party/folly/folly/experimental/exception_tracer/ExceptionTracerLib.cpp "")
+# Disable Folly's logging example by replacing its CMakeLists.txt with an empty file
+file(WRITE third_party/folly/folly/logging/example/CMakeLists.txt "# Logging example disabled to avoid glog linking issues\n")
 set(LIBGFLAGS_FOUND FALSE)
+
+# Configure Folly options to avoid building examples and tests
+set(BUILD_TESTS OFF)
+set(BUILD_BENCHMARKS OFF)
+set(BUILD_BROKEN_TESTS OFF)
+set(BUILD_HANGING_TESTS OFF)
+set(BUILD_SLOW_TESTS OFF)
 
 add_subdirectory(third_party/folly)
 add_subdirectory(third_party/fmt)
+
+# Configure OpenSSL to not build applications/binaries
+set(WITH_APPS OFF)
 add_subdirectory(third_party/openssl-cmake)
 add_subdirectory(third_party/Simple-WebSocket-Server)
 add_subdirectory(third_party/Simple-Web-Server)
@@ -167,6 +196,7 @@ set(
         Core/MessageHandler.h
         Files/FileList.cpp
         Files/FileDownload.cpp
+        Files/FileUpload.cpp
         Files/FileHandling.h
         Lib/jobclient_schema.h
         Lib/Exceptions/my_eh_throw.cpp
@@ -219,6 +249,7 @@ add_executable(
         Tests/fixtures/TemporaryDirectoryFixture.h
         Tests/fixtures/BundleFixture.h
         Files/tests/test_file_download.cpp
+        Files/tests/test_file_upload.cpp
         Tests/fixtures/BundleFixture.cpp
         Jobs/tests/test_job_submit.cpp
         Tests/fixtures/DatabaseFixture.h
@@ -251,13 +282,17 @@ set(
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_unit_test_framework.a
         ${CMAKE_SOURCE_DIR}/third_party/boost_install/lib/libboost_url.a
         ${Glog_LIBRARY}
+        ${LIBFMT_LIBRARY}
 )
 
-set_target_properties(
-        Boost_Tests_run
-        PROPERTIES
-        CXX_CLANG_TIDY "clang-tidy"
-)
+if(ENABLE_CLANG_TIDY)
+    # Enable clang-tidy for Boost_Tests_run
+    set_target_properties(
+            Boost_Tests_run 
+            PROPERTIES
+            CXX_CLANG_TIDY "clang-tidy"
+    )
+endif()
 
 target_link_libraries(adacs_job_client ${LINK_LIBRARIES})
 target_link_libraries(Boost_Tests_run ${LINK_LIBRARIES} gcov)

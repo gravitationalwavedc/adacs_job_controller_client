@@ -9,5 +9,6 @@
 
 void handleFileList(const std::shared_ptr<Message>& msg);
 void handleFileDownload(const std::shared_ptr<Message>& msg);
+void handleFileUpload(const std::shared_ptr<Message>& msg);
 
 #endif //ADACS_JOB_CLIENT_FILEHANDLING_H
