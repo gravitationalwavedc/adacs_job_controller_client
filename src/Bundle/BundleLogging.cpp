@@ -5,15 +5,18 @@
 #include "../Websocket/WebsocketInterface.h"
 #include "BundleLogging.h"
 #include "BundleManager.h"
+#include "ThreadBundleMap.h"
 #include <iostream>
 #include <thread>
-
-extern std::map<std::thread::id, std::string> threadBundleHashMap;
 std::vector<std::string> lineParts;
 
 static auto writeLog(PyObject * /*self*/, PyObject *args) -> PyObject * {
     // Get the bundle hash
-    auto bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    std::string bundleHash;
+    {
+        std::shared_lock<std::shared_mutex> const lock(threadBundleHashMapMutex);
+        bundleHash = threadBundleHashMap[std::this_thread::get_id()];
+    }
 
     // Convert first argument to a bool
     auto *arg = PyTuple_GetItem(args, 0);

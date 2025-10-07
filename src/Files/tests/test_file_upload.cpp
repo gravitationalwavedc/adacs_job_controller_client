@@ -8,6 +8,7 @@
 #include "../../Core/MessageHandler.h"
 #include "../../Settings.h"
 #include <queue>
+#include <set>
 
 struct FileUploadTestDataFixture : public WebsocketServerFixture, public TemporaryDirectoryFixture, public BundleFixture {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
@@ -344,7 +345,9 @@ BOOST_AUTO_TEST_CASE(test_file_upload_bundle_based_success) {
     std::ifstream ifs(bundleUploadedFile);
     std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
     BOOST_CHECK_EQUAL(content, testData);
-}BOOST_AUTO_TEST_CASE(test_file_upload_invalid_path_outside_working_directory) {
+}
+
+BOOST_AUTO_TEST_CASE(test_file_upload_invalid_path_outside_working_directory) {
     auto uploadUuid = generateUUID();
     
     Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
@@ -632,7 +635,6 @@ BOOST_AUTO_TEST_CASE(test_file_upload_partial_file_cleanup_on_error) {
     BOOST_CHECK(foundErrorMessage);
 }
 
-
 BOOST_AUTO_TEST_CASE(test_file_upload_protocol_messages_sent_by_client) {
     // Verify client responds to SERVER_READY and sends FILE_UPLOAD_COMPLETE on success
     auto uploadUuid = generateUUID();
@@ -666,7 +668,6 @@ BOOST_AUTO_TEST_CASE(test_file_upload_protocol_messages_sent_by_client) {
     BOOST_CHECK(sawServerReady);
     BOOST_CHECK(sawFileComplete);
 }
-
 
 BOOST_AUTO_TEST_CASE(test_file_upload_open_write_error) {
     // Create a subdirectory with no write permission so opening the file will fail
@@ -702,7 +703,6 @@ BOOST_AUTO_TEST_CASE(test_file_upload_open_write_error) {
     chmod(protectedDir.c_str(), 0755);
 }
 
-
 BOOST_AUTO_TEST_CASE(test_file_upload_actual_bigger_than_declared) {
     // Server sends more data than declared in fileSize
     auto uploadUuid = generateUUID();
@@ -737,7 +737,6 @@ BOOST_AUTO_TEST_CASE(test_file_upload_actual_bigger_than_declared) {
     }
     BOOST_CHECK(foundErrorMessage);
 }
-
 
 BOOST_AUTO_TEST_CASE(test_file_upload_symlink_outside_working_directory) {
     // Create a symlink inside working directory that points outside, then attempt upload
@@ -776,6 +775,86 @@ BOOST_AUTO_TEST_CASE(test_file_upload_symlink_outside_working_directory) {
     // Cleanup
     boost::filesystem::remove(symlinkPath);
     boost::filesystem::remove_all(outsideDir);
+}
+
+BOOST_AUTO_TEST_CASE(test_multiple_concurrent_file_uploads) {
+    // Test that multiple file uploads can occur concurrently without interference
+    // This establishes a baseline for future tests involving failure scenarios
+    
+    constexpr size_t NUM_UPLOADS = 5;
+    std::vector<std::string> uploadUuids;
+    std::vector<std::string> testDataVec;
+    std::vector<std::string> targetFiles;
+    std::set<std::string> completedUuids;
+    
+    // Prepare multiple uploads with unique data and target files
+    for (size_t i = 0; i < NUM_UPLOADS; i++) {
+        auto uuid = generateUUID();
+        uploadUuids.push_back(uuid);
+        
+        std::string testData = "Test data for concurrent upload #" + std::to_string(i) + 
+                              " with unique content to verify correct data.";
+        testDataVec.push_back(testData);
+        
+        std::string targetFile = tempDir + "/concurrent_upload_" + std::to_string(i) + ".txt";
+        targetFiles.push_back(targetFile);
+        
+        // Register test data for this UUID
+        setTestDataForUuid(uuid, testData);
+    }
+    
+    // Clear any existing messages
+    while (!receivedMessages.empty()) {
+        receivedMessages.pop();
+    }
+    
+    // Trigger all uploads in rapid succession (simulating concurrent requests)
+    for (size_t i = 0; i < NUM_UPLOADS; i++) {
+        Message msgBuilder(UPLOAD_FILE, Message::Priority::Highest, SYSTEM_SOURCE);
+        msgBuilder.push_string(uploadUuids[i]);
+        msgBuilder.push_uint(1234);  // Use existing job ID
+        msgBuilder.push_string("test_bundle_hash");
+        msgBuilder.push_string("concurrent_upload_" + std::to_string(i) + ".txt");
+        msgBuilder.push_ulong(testDataVec[i].size());
+        
+        auto msg = std::make_shared<Message>(*msgBuilder.getData());
+        ::handleMessage(msg);  // Trigger upload (spawns detached thread)
+    }
+    
+    // Wait for all uploads to complete by collecting FILE_UPLOAD_COMPLETE messages
+    auto startTime = std::chrono::steady_clock::now();
+    auto timeout = std::chrono::milliseconds(10000);
+    
+    while (completedUuids.size() < NUM_UPLOADS) {
+        if (std::chrono::steady_clock::now() - startTime > timeout) {
+            BOOST_FAIL("Timeout waiting for all uploads to complete. Completed: " + 
+                      std::to_string(completedUuids.size()) + "/" + std::to_string(NUM_UPLOADS));
+        }
+        
+        if (!receivedMessages.empty()) {
+            auto msg = receivedMessages.front();
+            receivedMessages.pop();
+            
+            if (msg->getId() == FILE_UPLOAD_COMPLETE) {
+                auto uuid = msg->getSource();
+                completedUuids.insert(uuid);
+            }
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    
+    // All uploads are complete, now verify all uploaded files have correct content
+    for (size_t i = 0; i < NUM_UPLOADS; i++) {
+        BOOST_CHECK(boost::filesystem::exists(targetFiles[i]));
+        
+        std::ifstream ifs(targetFiles[i]);
+        std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+        BOOST_CHECK_EQUAL(content, testDataVec[i]);
+        
+        // Verify no files were corrupted or mixed up between threads
+        BOOST_CHECK_EQUAL(boost::filesystem::file_size(targetFiles[i]), testDataVec[i].size());
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
