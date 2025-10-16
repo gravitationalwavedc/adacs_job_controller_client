@@ -5,8 +5,7 @@ RUN sed -ri 's|^mirrorlist=|#mirrorlist=|g; s|^#?baseurl=http://mirror.centos.or
  && yum -y upgrade
 
 # Install SCL and EPEL, then repoint the newly-created SCLo repos to vault too
-RUN ulimit -n 1024000 \
- && yum -y install centos-release-scl epel-release 
+RUN yum -y install centos-release-scl epel-release 
 
 # Replace SCLo repos with vault, and use the **SCLo SIG** GPG key
 RUN rm -f /etc/yum.repos.d/CentOS-SCLo-*.repo && cat >/etc/yum.repos.d/CentOS-SCLo-vault.repo <<'EOF'
@@ -30,8 +29,7 @@ EOF
 RUN sed -ri 's|^metalink=|#metalink=|g; s|^mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/epel*.repo \
  && sed -ri 's|^#?baseurl=.*epel/.*$|baseurl=https://archives.fedoraproject.org/pub/archive/epel/7/$basearch/|g' /etc/yum.repos.d/epel*.repo
 
-RUN ulimit -n 1024000 \
- && yum -y install devtoolset-11 \
+RUN yum -y install devtoolset-11 \
  && yum -y install python3-devel cmake3 git ninja-build autoconf gettext-devel automake flex bison \
  && yum clean all && rm -rf /var/cache/yum
 
