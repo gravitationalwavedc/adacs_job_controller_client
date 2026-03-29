@@ -242,6 +242,8 @@ pub async fn handle_file_download(mut msg: Message) {
             if let Err(_) = ws_sender.send(WsMessage::Binary(chunk_msg.get_data().clone().into())).await {
                 break;
             }
+            // Yield to allow pause/resume messages to be processed
+            tokio::task::yield_now().await;
         }
     });
 }

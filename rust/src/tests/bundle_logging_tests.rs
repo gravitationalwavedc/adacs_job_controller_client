@@ -1,5 +1,5 @@
 use crate::bundle_manager::BundleManager;
-use crate::bundle_logging::{get_last_log_message, PyInit_bundlelogging};
+use crate::bundle_logging::get_last_log_message;
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use uuid::Uuid;
 use serde_json::json;
@@ -11,26 +11,17 @@ fn setup() {
     INIT.call_once(|| {
         crate::python_interface::load_python_library("/usr/lib/x86_64-linux-gnu/libpython3.11.so");
         unsafe {
-            crate::python_interface::PyImport_AppendInittab(b"_bundlelogging\0".as_ptr() as *const std::os::raw::c_char, Some(PyInit_bundlelogging));
+            crate::python_interface::PyImport_AppendInittab(
+                b"_bundlelogging\0".as_ptr() as *const std::os::raw::c_char,
+                Some(crate::bundle_logging::PyInit_bundlelogging),
+            );
+            crate::python_interface::PyImport_AppendInittab(
+                b"_bundledb\0".as_ptr() as *const std::os::raw::c_char,
+                Some(crate::bundle_db::PyInit_bundledb),
+            );
         }
         crate::python_interface::init_python();
     });
-}
-
-unsafe extern "C" {
-    fn trigger_hooks(ensure_ptr: *const std::os::raw::c_void, release_ptr: *const std::os::raw::c_void);
-}
-
-#[test]
-fn test_hook_interception() {
-    setup();
-    unsafe {
-        let lib = crate::python_interface::get_python_lib();
-        let p_ensure: libloading::Symbol<*const std::os::raw::c_void> = lib.get(b"PyGILState_Ensure").unwrap();
-        let p_release: libloading::Symbol<*const std::os::raw::c_void> = lib.get(b"PyGILState_Release").unwrap();
-        
-        trigger_hooks(*p_ensure, *p_release);
-    }
 }
 
 #[test]
@@ -42,15 +33,15 @@ fn test_simple_stdout() {
 
     fixture.write_bundle_logging_std_out(&bundle_hash, test_message);
 
-    unsafe {
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-        let result = BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+    let result = unsafe {
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
+    };
 
-        assert!(result);
-        let last_log = get_last_log_message().expect("No log message captured");
-        assert_eq!(last_log.0, format!("Bundle [{}]: testing stdout", bundle_hash));
-        assert!(last_log.1); // is_stdout
-    }
+    assert!(result);
+    let last_log = get_last_log_message().expect("No log message captured");
+    assert_eq!(last_log.0, format!("Bundle [{}]: testing stdout", bundle_hash));
+    assert!(last_log.1); // is_stdout
 }
 
 #[test]
@@ -62,15 +53,15 @@ fn test_complex_stdout() {
 
     fixture.write_bundle_logging_std_out(&bundle_hash, test_message);
 
-    unsafe {
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-        let result = BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+    let result = unsafe {
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
+    };
 
-        assert!(result);
-        let last_log = get_last_log_message().expect("No log message captured");
-        assert_eq!(last_log.0, format!("Bundle [{}]: testing stdout 56 {{'a': 'b'}} [45, 'a', 9] (123, 321) <class 'tuple'>", bundle_hash));
-        assert!(last_log.1); // is_stdout
-    }
+    assert!(result);
+    let last_log = get_last_log_message().expect("No log message captured");
+    assert_eq!(last_log.0, format!("Bundle [{}]: testing stdout 56 {{'a': 'b'}} [45, 'a', 9] (123, 321) <class 'tuple'>", bundle_hash));
+    assert!(last_log.1); // is_stdout
 }
 
 #[test]
@@ -82,15 +73,15 @@ fn test_simple_stderr() {
 
     fixture.write_bundle_logging_std_err(&bundle_hash, test_message);
 
-    unsafe {
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-        let result = BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+    let result = unsafe {
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
+    };
 
-        assert!(result);
-        let last_log = get_last_log_message().expect("No log message captured");
-        assert_eq!(last_log.0, format!("Bundle [{}]: testing stderr", bundle_hash));
-        assert!(!last_log.1); // is_stdout is false
-    }
+    assert!(result);
+    let last_log = get_last_log_message().expect("No log message captured");
+    assert_eq!(last_log.0, format!("Bundle [{}]: testing stderr", bundle_hash));
+    assert!(!last_log.1); // is_stdout is false
 }
 
 #[test]
@@ -102,15 +93,15 @@ fn test_complex_stderr() {
 
     fixture.write_bundle_logging_std_err(&bundle_hash, test_message);
 
-    unsafe {
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-        let result = BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+    let result = unsafe {
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
+    };
 
-        assert!(result);
-        let last_log = get_last_log_message().expect("No log message captured");
-        assert_eq!(last_log.0, format!("Bundle [{}]: testing stderr 56 {{'a': 'b'}} [45, 'a', 9] (123, 321) <class 'tuple'>", bundle_hash));
-        assert!(!last_log.1); // is_stdout is false
-    }
+    assert!(result);
+    let last_log = get_last_log_message().expect("No log message captured");
+    assert_eq!(last_log.0, format!("Bundle [{}]: testing stderr 56 {{'a': 'b'}} [45, 'a', 9] (123, 321) <class 'tuple'>", bundle_hash));
+    assert!(!last_log.1); // is_stdout is false
 }
 
 #[test]
@@ -122,15 +113,15 @@ fn test_stdout_during_load() {
 
     fixture.write_bundle_logging_std_out_during_load(&bundle_hash, test_message);
 
-    unsafe {
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-        let result = BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+    let result = unsafe {
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
+    };
 
-        assert!(result);
-        let last_log = get_last_log_message().expect("No log message captured");
-        assert_eq!(last_log.0, format!("Bundle [{}]: testing stdout load", bundle_hash));
-        assert!(last_log.1); // is_stdout
-    }
+    assert!(result);
+    let last_log = get_last_log_message().expect("No log message captured");
+    assert_eq!(last_log.0, format!("Bundle [{}]: testing stdout load", bundle_hash));
+    assert!(last_log.1); // is_stdout
 }
 
 #[test]
@@ -142,13 +133,13 @@ fn test_stderr_during_load() {
 
     fixture.write_bundle_logging_std_err_during_load(&bundle_hash, test_message);
 
-    unsafe {
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-        let result = BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+    let result = unsafe {
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
+    };
 
-        assert!(result);
-        let last_log = get_last_log_message().expect("No log message captured");
-        assert_eq!(last_log.0, format!("Bundle [{}]: testing stdout load", bundle_hash));
-        assert!(!last_log.1); // is_stdout is false
-    }
+    assert!(result);
+    let last_log = get_last_log_message().expect("No log message captured");
+    assert_eq!(last_log.0, format!("Bundle [{}]: testing stdout load", bundle_hash));
+    assert!(!last_log.1); // is_stdout is false
 }

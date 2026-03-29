@@ -1,10 +1,22 @@
+//! Port of C++ BundleLogging.
+//!
+//! Provides the `_bundlelogging` Python module with a single `write` method.
+//! When Python code calls `print()`, the stdout/stderr catchers (installed by
+//! the BundleInterface constructor) call `_bundlelogging.write(is_stdout, msg)`.
+//!
+//! The C++ version uses a global `std::vector<std::string> lineParts`.
+//! We use thread-local storage for safety.
+
 use std::ffi::{c_char, CStr};
 use crate::python_interface::*;
 use crate::thread_bundle_map::get_current_thread_bundle;
 
 thread_local! {
     static LINE_PARTS: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
-    #[cfg(test)]
+}
+
+#[cfg(test)]
+thread_local! {
     static LAST_MESSAGE: std::cell::RefCell<Option<(String, bool)>> = std::cell::RefCell::new(None);
 }
 
@@ -13,29 +25,39 @@ pub fn get_last_log_message() -> Option<(String, bool)> {
     LAST_MESSAGE.with(|last| last.borrow().clone())
 }
 
+/// The Python-callable `write(is_stdout, message)` function.
+/// Mirrors C++ `writeLog` exactly.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
+    // Get the bundle hash for this thread
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
 
-    let (_arg0, is_stdout, _arg1, c_msg) = unsafe {
-        let arg0 = PyTuple_GetItem(args, 0);
-        let is_stdout = crate::python_interface::PyObject_IsTrue(arg0) == 1;
-        let arg1 = PyTuple_GetItem(args, 1);
-        let c_msg = PyUnicode_AsUTF8(arg1);
-        (arg0, is_stdout, arg1, c_msg)
-    };
+    // Convert first argument to a bool (is_stdout)
+    let arg0 = PyTuple_GetItem(args, 0);
+    let is_stdout = arg0 == my_py_true_struct();
+
+    // Convert the second argument to a string
+    let arg1 = PyTuple_GetItem(args, 1);
+    let c_msg = PyUnicode_AsUTF8(arg1);
 
     if c_msg.is_null() {
-        return unsafe { crate::python_interface::PyLong_FromUnsignedLongLong(0) };
+        // Return Py_None with INCREF like C++
+        let result = my_py_none_struct();
+        Py_IncRef(result);
+        return result;
     }
-    let msg = unsafe { CStr::from_ptr(c_msg).to_string_lossy() };
-    let msg_len = msg.len() as u64;
 
+    let msg = CStr::from_ptr(c_msg).to_string_lossy();
+
+    // Don't write trailing newlines – accumulate line parts
     if msg != "\n" {
         LINE_PARTS.with(|parts| {
             parts.borrow_mut().push(msg.to_string());
         });
     } else {
+        #[cfg(test)]
+        let _ = is_stdout; // suppress unused warning in cfg block below
+
         let mut full_message = format!("Bundle [{}]: ", bundle_hash);
         LINE_PARTS.with(|parts| {
             let mut parts = parts.borrow_mut();
@@ -57,9 +79,10 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
         }
     }
 
-    unsafe {
-        crate::python_interface::PyLong_FromUnsignedLongLong(msg_len)
-    }
+    // Return Py_None with INCREF (matches C++ exactly)
+    let result = my_py_none_struct();
+    Py_IncRef(result);
+    result
 }
 
 static mut BUNDLE_LOGGING_METHODS: [PyMethodDef; 2] = [

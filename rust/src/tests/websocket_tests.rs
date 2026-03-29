@@ -33,7 +33,8 @@ async fn test_websocket_priority_scheduling() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_websocket_ping_pong() {
     let server = crate::tests::fixtures::websocket_server_fixture::WebsocketServerFixture::new().await;
-    let client = crate::websocket::get_websocket_client();
+    // start() internally uses get_tungstenite_client(), so we must check is_server_ready on the same instance
+    let client = crate::websocket::get_tungstenite_client();
     
     client.start(server.get_url()).await.expect("Failed to connect");
     

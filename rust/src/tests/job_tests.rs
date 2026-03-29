@@ -326,8 +326,8 @@ async fn test_check_status_job_running_new_status() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let working_dir = temp_dir.path().to_str().unwrap().to_string();
     
-    // Status check returns a new status
-    fixture.write_job_submit_check_status(&bundle_hash, &working_dir, "123", r#"{"complete": false, "status": [{"what": "stage1", "state": 1}]}"#);
+    // Status check returns a new status (key is "status" matching C++ CheckStatus.cpp)
+    fixture.write_job_submit_check_status(&bundle_hash, &working_dir, "123", r#"{"complete": false, "status": [{"what": "stage1", "status": 50}]}"#);
     
     let job_id = 111i64;
     let db = get_db();
@@ -346,14 +346,15 @@ async fn test_check_status_job_running_new_status() {
     set_websocket_client(Arc::new(mock_ws));
     
     let job_model = db::get_job_by_job_id(db, job_id).await.unwrap().unwrap();
-    crate::jobs::check_job_status(job_model, false).await;
+    crate::jobs::check_job_status(job_model.clone(), false).await;
     
     tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.expect("Timeout waiting for status update");
     
-    let status_after = db::get_job_status_by_job_id(db, job_id).await.unwrap();
+    // Query by internal PK (job_model.id), not external job_id - status FK references job.id
+    let status_after = db::get_job_status_by_job_id(db, job_model.id).await.unwrap();
     assert_eq!(status_after.len(), 1);
     assert_eq!(status_after[0].what, "stage1");
-    assert_eq!(status_after[0].state, 1);
+    assert_eq!(status_after[0].state, 50); // RUNNING = 50
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

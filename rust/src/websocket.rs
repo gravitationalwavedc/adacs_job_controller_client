@@ -265,7 +265,7 @@ lazy_static::lazy_static! {
     static ref TUNGSTENITE_CLIENT: RwLock<Option<Arc<TungsteniteWebsocketClient>>> = RwLock::new(None);
 }
 
-fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
+pub(crate) fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
     let mut client = TUNGSTENITE_CLIENT.write();
     if let Some(ref c) = *client {
         return c.clone();

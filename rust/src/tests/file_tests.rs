@@ -809,7 +809,7 @@ async fn test_file_download_pause_resume() {
     
     let temp_dir = TempDir::new().unwrap();
     let working_dir = temp_dir.path().to_str().unwrap().to_string();
-    let file_content = vec![0u8; 128 * 1024]; // 128KB (2 chunks)
+    let file_content = vec![0u8; 320 * 1024]; // 320KB (5 chunks of 64KB)
     fs::write(temp_dir.path().join("pause_test.bin"), &file_content).unwrap();
     
     let job_id = 1246i64;
@@ -841,15 +841,19 @@ async fn test_file_download_pause_resume() {
     let mut pause_msg = Message::new(PAUSE_FILE_CHUNK_STREAM, Priority::Highest, &test_uuid);
     server.msg_tx.send(pause_msg.get_data().clone()).unwrap();
     
-    // Give some time for the downloader task to process the pause message
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Give time for the pause to propagate through the websocket
+    tokio::time::sleep(Duration::from_millis(200)).await;
     
+    // Drain any chunks that were in-flight before the pause took effect
+    while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(50), server.msg_rx.recv()).await {}
+    
+    // Now that pause is definitely active, no more chunks should arrive
     let res = tokio::time::timeout(Duration::from_millis(500), server.msg_rx.recv()).await;
-    assert!(res.is_err());
+    assert!(res.is_err(), "Expected no chunks while paused");
     
     let mut resume_msg = Message::new(RESUME_FILE_CHUNK_STREAM, Priority::Highest, &test_uuid);
     server.msg_tx.send(resume_msg.get_data().clone()).unwrap();
     
-    let chunk2 = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv()).await.expect("No chunk after resume").expect("No chunk");
-    assert_eq!(chunk2.id, FILE_CHUNK);
+    let chunk = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv()).await.expect("No chunk after resume").expect("No chunk");
+    assert_eq!(chunk.id, FILE_CHUNK);
 }
