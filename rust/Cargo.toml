@@ -1,0 +1,33 @@
+[package]
+name = "rust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+byteorder = "1.5.0"
+env_logger = "0.11.10"
+futures = "0.3.32"
+futures-util = "0.3.32"
+lazy_static = "1.5.0"
+libc = "0.2.183"
+libloading = "0.9.0"
+log = "0.4.29"
+parking_lot = "0.12.5"
+region = "3.0.2"
+rustls-native-certs = "0.8.3"
+sea-orm = { version = "1.1.19", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-query = "0.32.7"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.50.0", features = ["full"] }
+tokio-rustls = "0.26.4"
+tokio-tungstenite = "0.29.0"
+uuid = { version = "1.23.0", features = ["v4"] }
+mockall = "0.14.0"
+
+[dev-dependencies]
+tempfile = "3.10.0"
+
+[build-dependencies]
+bindgen = "0.72.1"
+cc = "1.2.58"
