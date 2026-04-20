@@ -2,15 +2,20 @@ use crate::messaging::{Message, Priority, SERVER_READY, DB_RESPONSE};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicI64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Notify};
+use tokio::sync::{mpsc, oneshot, Notify, Mutex as TokioMutex};
 use tokio::time::{interval, Duration};
 use futures_util::{StreamExt, SinkExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
+use bytes::Bytes;
 use log::{info, error, warn};
 use std::pin::Pin;
 use std::future::Future;
+
+// C++ constants
+const PING_INTERVAL_SECONDS: u64 = 30;
+const QUEUE_SOURCE_PRUNE_SECONDS: u64 = 60;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -22,9 +27,16 @@ pub trait WebsocketClient: Send + Sync {
     fn queue_message(&self, source: String, data: Vec<u8>, priority: Priority, callback: MessageCallback);
     fn send_db_request(&self, message: Message) -> BoxFuture<'static, Result<Message, Box<dyn Error + Send + Sync>>>;
     fn is_server_ready(&self) -> bool;
+    fn get_ping_timestamp(&self) -> i64;
+    fn get_pong_timestamp(&self) -> i64;
+    fn check_pings(&self) -> Result<(), String>;
+    fn call_check_pings(&self);
+    fn set_pong_timestamp(&self, ts: i64);
+    fn set_ping_timestamp(&self, ts: i64);
+    fn prune_sources(&self);
 }
 
-struct SDataItem {
+pub(crate) struct SDataItem {
     data: Vec<u8>,
     callback: MessageCallback,
 }
@@ -35,8 +47,11 @@ pub struct TungsteniteWebsocketClient {
     server_ready: AtomicBool,
     db_request_counter: AtomicU64,
     db_request_promises: RwLock<HashMap<u64, oneshot::Sender<Message>>>,
-    queue: PriorityQueue,
+    pub(crate) queue: PriorityQueue,
     data_ready: Arc<Notify>,
+    ping_timestamp: AtomicI64,
+    pong_timestamp: AtomicI64,
+    connection_closed: AtomicBool,
 }
 
 impl TungsteniteWebsocketClient {
@@ -52,7 +67,42 @@ impl TungsteniteWebsocketClient {
             db_request_promises: RwLock::new(HashMap::new()),
             queue,
             data_ready: Arc::new(Notify::new()),
+            ping_timestamp: AtomicI64::new(0),
+            pong_timestamp: AtomicI64::new(0),
+            connection_closed: AtomicBool::new(false),
         })
+    }
+
+    fn get_epoch_millis() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    }
+
+    fn handle_pong(&self) {
+        let now = Self::get_epoch_millis();
+        self.pong_timestamp.store(now, Ordering::SeqCst);
+        info!("WS: Received pong at {}", now);
+    }
+
+    fn handle_ping(&self) {
+        // When we receive a ping from the server, we should respond with a pong
+        // tungstenite handles this automatically, but we track it
+        info!("WS: Received ping from server");
+    }
+
+    async fn send_ping(&self, ws_sender: &mut futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, WsMessage>) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Reset pong timestamp to zero before sending (matches C++ checkPings)
+        self.pong_timestamp.store(0, Ordering::SeqCst);
+
+        let now = Self::get_epoch_millis();
+        self.ping_timestamp.store(now, Ordering::SeqCst);
+        info!("WS: Sending ping at {}", now);
+
+        // Send a WebSocket ping frame (opcode 137 per RFC 6455)
+        ws_sender.send(WsMessage::Ping(Bytes::new())).await?;
+        Ok(())
     }
 
     fn does_higher_priority_data_exist(&self, max_priority: usize) -> bool {
@@ -65,6 +115,30 @@ impl TungsteniteWebsocketClient {
             }
         }
         false
+    }
+
+    /// Prune empty queue sources (matches C++ pruneSources)
+    /// Runs every QUEUE_SOURCE_PRUNE_SECONDS (60s)
+    fn prune_sources(&self) {
+        for priority in &self.queue {
+            let mut map = priority.lock();
+            map.retain(|_, q| !q.is_empty());
+        }
+        info!("WS: Pruned empty queue sources");
+    }
+
+    /// Check ping/pong health (matches C++ checkPings)
+    /// Returns error if connection appears dead (pong not received)
+    fn check_pings_internal(&self) -> Result<(), String> {
+        let ping_ts = self.ping_timestamp.load(Ordering::SeqCst);
+        let pong_ts = self.pong_timestamp.load(Ordering::SeqCst);
+
+        // C++ logic: if ping was sent (non-zero) but pong not received (zero), connection is dead
+        if ping_ts != 0 && pong_ts == 0 {
+            return Err("Websocket timed out waiting for pong".to_string());
+        }
+
+        Ok(())
     }
 
     async fn handle_message(self: &Arc<Self>, mut message: Message) {
@@ -118,14 +192,17 @@ impl WebsocketClient for TungsteniteWebsocketClient {
             let (ws_stream, _) = connect_async(&url).await?;
             info!("WS: Client connected to {}", url);
 
-            let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-            
+            let (ws_sender, mut ws_receiver) = ws_stream.split();
+            let ws_sender = Arc::new(TokioMutex::new(ws_sender));
+
             let data_ready = client.data_ready.clone();
             let (tx_out, mut rx_out) = mpsc::unbounded_channel::<Vec<u8>>();
 
-            // Task for reading from WS
+            // Task for reading from WS - handles incoming messages including pong
             let client_for_read = client.clone();
+            let ws_sender_for_read = ws_sender.clone();
             tokio::spawn(async move {
+                let mut ws_receiver = ws_receiver;
                 while let Some(msg) = ws_receiver.next().await {
                     match msg {
                         Ok(WsMessage::Binary(data)) => {
@@ -136,36 +213,50 @@ impl WebsocketClient for TungsteniteWebsocketClient {
                             let message = Message::from_data(text.as_bytes().to_vec());
                             client_for_read.handle_message(message).await;
                         }
+                        Ok(WsMessage::Ping(_)) => {
+                            // Server sent us a ping - tungstenite auto-responds with pong
+                            client_for_read.handle_ping();
+                        }
+                        Ok(WsMessage::Pong(_)) => {
+                            // Server responded to our ping
+                            client_for_read.handle_pong();
+                        }
                         Ok(WsMessage::Close(_)) => {
                             info!("WS: Connection closed");
+                            client_for_read.connection_closed.store(true, Ordering::SeqCst);
                             break;
                         }
                         Err(e) => {
                             error!("WS: Error receiving: {}", e);
+                            client_for_read.connection_closed.store(true, Ordering::SeqCst);
                             break;
                         }
                         _ => {}
                     }
                 }
+                // Drop sender to signal closure
+                drop(ws_sender_for_read);
             });
 
-            // Task for sending to WS
+            // Task for sending queued data to WS
+            let ws_sender_for_data = ws_sender.clone();
             tokio::spawn(async move {
                 while let Some(data) = rx_out.recv().await {
-                    if let Err(e) = ws_sender.send(WsMessage::Binary(data.into())).await {
+                    let mut sender = ws_sender_for_data.lock().await;
+                    if let Err(e) = sender.send(WsMessage::Binary(data.into())).await {
                         error!("WS: Error sending: {}", e);
                         break;
                     }
                 }
             });
 
-            // Background scheduler task
+            // Background scheduler task - sends queued messages by priority
             let client_for_scheduler = client.clone();
             let tx_out_for_scheduler = tx_out.clone();
             tokio::spawn(async move {
                 loop {
                     data_ready.notified().await;
-                    
+
                     if !client_for_scheduler.is_server_ready() {
                         continue;
                     }
@@ -208,11 +299,44 @@ impl WebsocketClient for TungsteniteWebsocketClient {
                 }
             });
 
-            // Ping task
+            // Ping/pong health monitoring task - runs every PING_INTERVAL_SECONDS (30s)
+            let client_for_ping = client.clone();
+            let ws_sender_for_ping = ws_sender.clone();
             tokio::spawn(async move {
-                let mut _interval = interval(Duration::from_secs(30));
+                let mut ping_interval = interval(Duration::from_secs(PING_INTERVAL_SECONDS));
                 loop {
-                    _interval.tick().await;
+                    ping_interval.tick().await;
+
+                    // Check if previous pong was received
+                    match client_for_ping.check_pings_internal() {
+                        Err(e) => {
+                            error!("WS: {}", e);
+                            error!("WS: Connection health check failed - aborting");
+                            // In production, this would call abortApplication()
+                            // For now, we just mark the connection as closed
+                            client_for_ping.connection_closed.store(true, Ordering::SeqCst);
+                            return;
+                        }
+                        Ok(_) => {
+                            // Send a new ping
+                            let mut sender = ws_sender_for_ping.lock().await;
+                            if let Err(e) = client_for_ping.send_ping(&mut sender).await {
+                                error!("WS: Failed to send ping: {}", e);
+                                client_for_ping.connection_closed.store(true, Ordering::SeqCst);
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Queue pruning task - runs every QUEUE_SOURCE_PRUNE_SECONDS (60s)
+            let client_for_prune = client.clone();
+            tokio::spawn(async move {
+                let mut prune_interval = interval(Duration::from_secs(QUEUE_SOURCE_PRUNE_SECONDS));
+                loop {
+                    prune_interval.tick().await;
+                    client_for_prune.prune_sources();
                 }
             });
 
@@ -238,7 +362,7 @@ impl WebsocketClient for TungsteniteWebsocketClient {
 
     fn send_db_request(&self, mut message: Message) -> BoxFuture<'static, Result<Message, Box<dyn Error + Send + Sync>>> {
         let request_id = self.db_request_counter.fetch_add(1, Ordering::SeqCst);
-        
+
         let (tx, rx) = oneshot::channel();
         {
             let mut promises = self.db_request_promises.write();
@@ -258,6 +382,37 @@ impl WebsocketClient for TungsteniteWebsocketClient {
     fn is_server_ready(&self) -> bool {
         self.server_ready.load(Ordering::SeqCst)
     }
+
+    fn get_ping_timestamp(&self) -> i64 {
+        self.ping_timestamp.load(Ordering::SeqCst)
+    }
+
+    fn get_pong_timestamp(&self) -> i64 {
+        self.pong_timestamp.load(Ordering::SeqCst)
+    }
+
+    fn check_pings(&self) -> Result<(), String> {
+        self.check_pings_internal()
+    }
+
+    fn call_check_pings(&self) {
+        // Test entry point - simulates ping/pong cycle
+        let now = Self::get_epoch_millis();
+        self.ping_timestamp.store(now, Ordering::SeqCst);
+        self.pong_timestamp.store(now, Ordering::SeqCst);
+    }
+
+    fn set_pong_timestamp(&self, ts: i64) {
+        self.pong_timestamp.store(ts, Ordering::SeqCst);
+    }
+
+    fn set_ping_timestamp(&self, ts: i64) {
+        self.ping_timestamp.store(ts, Ordering::SeqCst);
+    }
+
+    fn prune_sources(&self) {
+        self.prune_sources()
+    }
 }
 
 lazy_static::lazy_static! {
@@ -270,7 +425,7 @@ pub(crate) fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
     if let Some(ref c) = *client {
         return c.clone();
     }
-    
+
     let c = TungsteniteWebsocketClient::new();
     *client = Some(c.clone());
     c
@@ -282,12 +437,12 @@ pub fn get_websocket_client() -> Arc<dyn WebsocketClient> {
         return c.clone();
     }
     drop(client);
-    
+
     let mut client = GLOBAL_CLIENT.write();
     if let Some(ref c) = *client {
         return c.clone();
     }
-    
+
     let arc_c: Arc<dyn WebsocketClient> = get_tungstenite_client();
     *client = Some(arc_c.clone());
     arc_c
@@ -296,4 +451,32 @@ pub fn get_websocket_client() -> Arc<dyn WebsocketClient> {
 pub fn set_websocket_client(client: Arc<dyn WebsocketClient>) {
     let mut c = GLOBAL_CLIENT.write();
     *c = Some(client);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prune_sources() {
+        let client = TungsteniteWebsocketClient::new();
+
+        // Add some data to queue
+        client.queue_message("source1".to_string(), vec![1, 2, 3], Priority::Lowest, Arc::new(|| {}));
+        client.queue_message("source2".to_string(), vec![4, 5, 6], Priority::Lowest, Arc::new(|| {}));
+
+        // Verify data exists
+        {
+            let map = client.queue[19].lock();
+            assert_eq!(map.len(), 2);
+        }
+
+        // Prune (should not remove non-empty queues)
+        client.prune_sources();
+
+        {
+            let map = client.queue[19].lock();
+            assert_eq!(map.len(), 2);
+        }
+    }
 }
