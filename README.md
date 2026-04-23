@@ -1,44 +1,152 @@
-# ADACS Job Controller Client
+# ADACS Job Controller Client (Rust)
 
-## Project setup
+Rust port of the ADACS Job Controller Client. The original C++ implementation is in `legacy/`.
 
-1. Clone the repository `git clone https://gitlab.com/CAS-eResearch/GWDC/code/adacs_job_controller_client.git`
-2. Init all submodules `git submodule update --init --recursive`
-3. Initialise the boost installation `cd src/third_party && bash prepare_boost.sh`
-4. Initialise the elfutils installation `cd src/third_party && bash prepare_elfutils.sh`
+## First-Time Setup
 
+1. **Install Rust**:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
 
+2. **Install Zig** (required for release builds):
+   ```bash
+   curl -sSf https://webinstall.dev/zig | bash
+   source ~/.config/envman/PATH.env
+   ```
 
-## Building
+3. **Install cargo-zigbuild**:
+   ```bash
+   cargo install cargo-zigbuild
+   ```
 
-#### For Development
+4. **Clone and initialize submodules**:
+   ```bash
+   git clone https://gitlab.com/CAS-eResearch/GWDC/adacs_job_controller_client.git
+   cd adacs_job_controller_client
+   git submodule update --init --recursive
+   ```
 
-The project can now be built. There are two primary targets: `Boost_Tests_run`, and `adacs_job_client`. You'll likely only want to bother building `Boost_Tests_run` and using this to test the functionality of the job client.
+## Project Structure
 
-1. Make a build directory `cd src && mkdir build`
-2. Change in to the build directory and run the cmake configure:
-   - **Basic build**: `cd build && cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ..`
-   - **With clang-tidy**: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DENABLE_CLANG_TIDY=ON ..`
-3. Build the target `ninja Boost_Tests_run`
+All Rust code is in the `src/` directory. All commands below should be run from `src/`:
 
-**Optional cmake flags:**
-- `-DENABLE_CLANG_TIDY=ON`: Enable clang-tidy static analysis during build
-- `-DCMAKE_BUILD_TYPE=Debug`: Build in debug mode (default)
-- `-DCMAKE_BUILD_TYPE=Release`: Build in release mode with optimizations
+```bash
+cd src
+```
 
+## Development
 
+### Running Tests
 
-NB. To run the full test suite, it may be possible that a db.sqlite3 database is required with prepopulated tables. To do this, `cd src/Lib/schema && . venv/bin/activate && python manage.py migrate` then copy the db.sqlite3 database to wherever the `Boost_Tests_run` binary is.
+The test suite (127 tests) uses in-memory SQLite and must run sequentially to avoid race conditions with shared global state.
 
+```bash
+# Run all tests
+./run_tests.sh
 
+# Run specific test module
+./run_tests.sh job_tests
+./run_tests.sh file_tests
+./run_tests.sh bundle_db_tests
 
-#### For Deployment
+# Run with verbose output
+./run_tests.sh --verbose
 
-Since a primary objective of this project is to statically link a binary that doesn't rely on any system libraries (Except core libc/libdl etc) and that can run on ancient glibc versions, we use a docker build using centos 7 to build the production binary. There is a convenience script for this.
+# Run specific test function
+./run_tests.sh test_check_status_job_running -- --nocapture
 
-`bash scripts/build.sh`
+# Pass any arguments to cargo test
+./run_tests.sh -- --test-threads=1 --nocapture
+```
 
-This will generate a directory `out` which contains the executable `adacs_job_client` which can be shipped and deployed.
+### Coverage
 
+```bash
+# Generate HTML coverage report
+./run_tests.sh --coverage
 
+# Generate and open in browser
+./run_tests.sh --coverage --open
+```
 
+Report location: `target/llvm-cov/html/index.html`
+
+### Debug Build
+
+```bash
+cargo build
+```
+
+Output: `target/debug/adacs_job_client`
+
+### Run the Binary
+
+```bash
+cargo run
+```
+
+## Release Build (glibc 2.17 / RHEL 7 Compatible)
+
+Builds a binary compatible with RHEL 7 / CentOS 7 and newer. Only depends on core glibc libraries:
+- `libc.so.6` - C library
+- `libm.so.6` - Math library
+- `libpthread.so.0` - POSIX threads
+- `libdl.so.2` - Dynamic linking
+
+No external dependencies (OpenSSL, libcurl, etc.) are dynamically linked.
+
+```bash
+./build_release.sh
+```
+
+Output: `target/x86_64-unknown-linux-gnu/release/adacs_job_client`
+
+### Manual build:
+```bash
+cargo zigbuild --target x86_64-unknown-linux-gnu.2.17 --release
+```
+
+### Verify the binary:
+```bash
+# Check dependencies (should only show libc, libm, libpthread, libdl)
+ldd target/x86_64-unknown-linux-gnu/release/adacs_job_client
+
+# Check glibc version requirement (should be 2.17)
+objdump -T target/x86_64-unknown-linux-gnu/release/adacs_job_client | grep GLIBC_ | cut -d@ -f2 | sed 's/.*GLIBC_\([0-9.]*\).*/\1/' | sort -V | tail -1
+```
+
+## Troubleshooting
+
+### Zig not found
+```bash
+source ~/.config/envman/PATH.env
+# Or reinstall: curl -sSf https://webinstall.dev/zig | bash
+```
+
+### cargo-zigbuild not found
+```bash
+cargo install cargo-zigbuild
+```
+
+### Submodule errors
+```bash
+git submodule update --init --recursive
+```
+
+### Build fails with missing headers
+Ensure submodules are initialized, especially `mempatch/subhook`:
+```bash
+git submodule update --init --recursive
+```
+
+### Clean build
+```bash
+cargo clean
+cargo build
+```
+
+## Requirements
+
+- **Build**: Rust stable, Zig 0.13+
+- **Runtime**: glibc 2.17+ (RHEL 7 / CentOS 7 or newer)
