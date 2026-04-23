@@ -1,0 +1,133 @@
+stages:
+  - lint
+  - test
+  - release
+
+variables:
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  ZIG_VERSION: "0.16.0"
+  GIT_SUBMODULE_STRATEGY: recursive
+
+# Cache Rust dependencies
+.cache-rust: &cache-rust
+  cache:
+    key: "$CI_COMMIT_REF_SLUG-cargo"
+    paths:
+      - .cargo/
+      - src/target/
+      - src/Cargo.lock
+
+# Install Rust via rustup (respects rust-toolchain.toml)
+.install-rust: &install-rust
+  before_script:
+    - |
+      if ! command -v rustc &> /dev/null; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source "$HOME/.cargo/env"
+      fi
+    - rustup component add rustfmt || true
+    - rustup component add clippy || true
+
+# Install Zig from bundled tarball
+.install-zig: &install-zig
+  before_script:
+    - |
+      tar -xf $CI_PROJECT_DIR/ci/zig-linux-x86_64-${ZIG_VERSION}.tar.xz -C $CI_PROJECT_DIR
+      export PATH="$CI_PROJECT_DIR/zig-x86_64-linux-${ZIG_VERSION}:$PATH"
+
+# Install cargo-zigbuild
+.install-cargo-zigbuild: &install-cargo-zigbuild
+  before_script:
+    - *install-rust
+    - *install-zig
+    - |
+      if ! command -v cargo-zigbuild &> /dev/null; then
+        cargo install cargo-zigbuild
+      fi
+
+rustfmt:
+  stage: lint
+  image: rust:latest
+  <<: *cache-rust
+  before_script:
+    - rustup component add rustfmt
+  script:
+    - cd src
+    - rustfmt --edition 2021 --check src/*.rs src/**/*.rs
+
+clippy:
+  stage: lint
+  image: rust:latest
+  <<: *cache-rust
+  before_script:
+    - apt-get update && apt-get install -y libclang-dev
+    - rustup component add clippy
+  script:
+    - cd src
+    - cargo clippy --all-targets -- -D warnings
+
+test-and-coverage:
+  stage: test
+  image: rust:latest
+  <<: *cache-rust
+  before_script:
+    # Run as non-root user so file permission tests work correctly
+    # Install system dependencies as root first
+    - apt-get update && apt-get install -y libclang-dev libpython3-dev python3 libpython3.13 curl jq
+    # Find the actual Python library path (handles different naming conventions)
+    - echo "PYTHON_LIB_PATH=$(find /usr/lib -name "libpython3.13.so*" -type f | head -1)" > /tmp/python_lib_path.env
+    - cat /tmp/python_lib_path.env
+    # Create non-root user
+    - useradd -m ciuser || true
+    # Set up ownership for ciuser
+    - chown -R ciuser:ciuser "$CI_PROJECT_DIR"
+  script:
+    # Load Python library path and install Rust as ciuser
+    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
+    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && rustup component add llvm-tools"
+    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && cd $CI_PROJECT_DIR/src && cargo install cargo-llvm-cov"
+    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && cd $CI_PROJECT_DIR/src && cargo llvm-cov --cobertura --output-path cobertura.xml -- --test-threads=1"
+    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && cd $CI_PROJECT_DIR/src && cargo llvm-cov --json --output-path coverage.json -- --test-threads=1"
+    - cp src/coverage.json /tmp/coverage.json
+    - |
+      echo "=== Coverage Report ==="
+      LINE_COV=$(jq -r '.data[].totals.lines.percent' /tmp/coverage.json)
+      echo "TOTAL ${LINE_COV}% covered"
+  coverage: '/TOTAL\s+(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: src/cobertura.xml
+    paths:
+      - src/cobertura.xml
+      - src/coverage.json
+    expire_in: 30 days
+
+release:
+  stage: release
+  image: debian:bookworm
+  <<: *cache-rust
+  needs:
+    - test-and-coverage
+  before_script:
+    - apt-get update && apt-get install -y curl build-essential pkg-config libclang-dev
+    - |
+      if ! command -v rustc &> /dev/null; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      fi
+    - source "$CARGO_HOME/env"
+    - |
+      tar -xf $CI_PROJECT_DIR/ci/zig-linux-x86_64-${ZIG_VERSION}.tar.xz -C $CI_PROJECT_DIR
+      export PATH="$CI_PROJECT_DIR/zig-x86_64-linux-${ZIG_VERSION}:$PATH"
+    - |
+      if ! command -v cargo-zigbuild &> /dev/null; then
+        cargo install cargo-zigbuild
+      fi
+  script:
+    - cd src
+    - ./build_release.sh
+    - echo "=== Verifying binary ==="
+    - ldd target/x86_64-unknown-linux-gnu/release/adacs_job_client
+    - echo "=== glibc version check ==="
+    - objdump -T target/x86_64-unknown-linux-gnu/release/adacs_job_client | grep GLIBC_ | cut -d@ -f2 | sed 's/.*GLIBC_\([0-9.]*\).*/\1/' | sort -V | tail -1

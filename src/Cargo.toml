@@ -1,0 +1,62 @@
+[package]
+name = "adacs_job_client"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95.0"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "allow"
+# Allow naming conventions for generated code (bindgen, Python FFI)
+non_upper_case_globals = "allow"
+non_camel_case_types = "allow"
+# Allow unused items that are used via FFI or dynamically
+dead_code = "allow"
+
+[lints.clippy]
+# Allow naming conventions for generated code (bindgen, Python FFI)
+non_upper_case_globals = "allow"
+non_camel_case_types = "allow"
+# Allow manual C string literals for compatibility with older Rust versions
+manual_c_str_literals = "allow"
+# Allow assertions on constants (used for validation)
+assertions_on_constants = "allow"
+
+[dependencies]
+byteorder = "1.5.0"
+bytes = "1.5.0"
+chrono = "0.4.42"
+futures = "0.3.32"
+futures-util = "0.3.32"
+lazy_static = "1.5.0"
+libc = "0.2.183"
+libloading = "0.9.0"
+parking_lot = "0.12.5"
+region = "3.0.2"
+sea-orm = { version = "1.1.19", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-query = "0.32.7"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.50.0", features = ["full"] }
+tokio-rustls = "0.26.4"
+tokio-tungstenite = "0.29.0"
+tracing = "0.1.41"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+ureq = { version = "2.12.1", features = ["json", "tls"] }
+uuid = { version = "1.23.0", features = ["v4"] }
+mockall = "0.14.0"
+
+[dev-dependencies]
+tempfile = "3.10.0"
+rand = "0.8.5"
+
+[build-dependencies]
+bindgen = "0.72.1"
+cc = "1.2.58"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"
