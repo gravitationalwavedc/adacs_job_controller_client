@@ -1,15 +1,19 @@
-//! Port of C++ BundleLogging.
+//! Port of C++ `BundleLogging`.
 //!
 //! Provides the `_bundlelogging` Python module with a single `write` method.
 //! When Python code calls `print()`, the stdout/stderr catchers (installed by
-//! the BundleInterface constructor) call `_bundlelogging.write(is_stdout, msg)`.
+//! the `BundleInterface` constructor) call `_bundlelogging.write(is_stdout, msg)`.
 //!
 //! The C++ version uses a global `std::vector<std::string> lineParts`.
 //! We use thread-local storage for safety.
 
-use crate::python_interface::*;
+use crate::python_interface::{
+    my_py_none_struct, my_py_true_struct, PyMethodDef, PyModuleDef, PyModuleDef_Base,
+    PyModule_Create2, PyObject, PyObject_Head, PyTuple_GetItem, PyUnicode_AsUTF8, Py_IncRef,
+    METH_VARARGS, PYTHON_API_VERSION,
+};
 use crate::thread_bundle_map::get_current_thread_bundle;
-use std::ffi::{c_char, CStr};
+use std::ffi::CStr;
 
 thread_local! {
     static LINE_PARTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -33,12 +37,12 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
 
     // Convert first argument to a bool (is_stdout)
-    let arg0 = PyTuple_GetItem(args, 0);
-    let is_stdout = arg0 == my_py_true_struct();
+    let arg_is_stdout_obj = PyTuple_GetItem(args, 0);
+    let is_stdout = arg_is_stdout_obj == my_py_true_struct();
 
     // Convert the second argument to a string
-    let arg1 = PyTuple_GetItem(args, 1);
-    let c_msg = PyUnicode_AsUTF8(arg1);
+    let arg_msg = PyTuple_GetItem(args, 1);
+    let c_msg = PyUnicode_AsUTF8(arg_msg);
 
     if c_msg.is_null() {
         // Return Py_None with INCREF like C++
@@ -50,15 +54,11 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
     let msg = CStr::from_ptr(c_msg).to_string_lossy();
 
     // Don't write trailing newlines – accumulate line parts
-    if msg != "\n" {
-        LINE_PARTS.with(|parts| {
-            parts.borrow_mut().push(msg.to_string());
-        });
-    } else {
+    if msg == "\n" {
         #[cfg(test)]
         let _ = is_stdout; // suppress unused warning in cfg block below
 
-        let mut full_message = format!("Bundle [{}]: ", bundle_hash);
+        let mut full_message = format!("Bundle [{bundle_hash}]: ");
         LINE_PARTS.with(|parts| {
             let mut parts = parts.borrow_mut();
             for part in parts.iter() {
@@ -77,6 +77,10 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
         } else {
             tracing::error!("{}", full_message);
         }
+    } else {
+        LINE_PARTS.with(|parts| {
+            parts.borrow_mut().push(msg.to_string());
+        });
     }
 
     // Return Py_None with INCREF (matches C++ exactly)
@@ -87,10 +91,10 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
 
 static mut BUNDLE_LOGGING_METHODS: [PyMethodDef; 2] = [
     PyMethodDef {
-        ml_name: b"write\0".as_ptr() as *const c_char,
+        ml_name: c"write".as_ptr(),
         ml_meth: Some(write_log),
         ml_flags: METH_VARARGS,
-        ml_doc: b"Writes the provided message to the client log file.\0".as_ptr() as *const c_char,
+        ml_doc: c"Writes the provided message to the client log file.".as_ptr(),
     },
     PyMethodDef {
         ml_name: std::ptr::null(),
@@ -110,7 +114,7 @@ static mut BUNDLE_LOGGING_MODULE: PyModuleDef = PyModuleDef {
         m_index: 0,
         m_copy: std::ptr::null_mut(),
     },
-    m_name: b"_bundlelogging\0".as_ptr() as *const c_char,
+    m_name: c"_bundlelogging".as_ptr(),
     m_doc: std::ptr::null(),
     m_size: -1,
     m_methods: std::ptr::null_mut(),
@@ -123,7 +127,7 @@ static mut BUNDLE_LOGGING_MODULE: PyModuleDef = PyModuleDef {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInit_bundlelogging() -> *mut PyObject {
     unsafe {
-        BUNDLE_LOGGING_MODULE.m_methods = (&raw mut BUNDLE_LOGGING_METHODS) as *mut PyMethodDef;
+        BUNDLE_LOGGING_MODULE.m_methods = (&raw mut BUNDLE_LOGGING_METHODS).cast::<PyMethodDef>();
         PyModule_Create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION)
     }
 }

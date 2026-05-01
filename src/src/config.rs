@@ -2,11 +2,12 @@ use crate::bundle_manager::get_executable_path;
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::BufReader;
+#[cfg(test)]
+use std::sync::LazyLock;
 
 #[cfg(test)]
-lazy_static::lazy_static! {
-    pub static ref TEST_CONFIG: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
-}
+pub static TEST_CONFIG: LazyLock<std::sync::Mutex<Option<Value>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
 
 pub fn read_client_config() -> Value {
     #[cfg(test)]
@@ -16,7 +17,9 @@ pub fn read_client_config() -> Value {
         }
     }
 
-    let config_path = get_executable_path().join("config.json");
+    let mut config_path = get_executable_path();
+    config_path.pop(); // Remove binary name
+    config_path.push("config.json");
     if let Ok(file) = File::open(config_path) {
         let reader = BufReader::new(file);
         serde_json::from_reader(reader).unwrap_or(json!({}))
@@ -26,6 +29,7 @@ pub fn read_client_config() -> Value {
 }
 
 /// Get the Python library path from config or environment variable
+#[cfg(test)]
 pub fn get_python_library_path() -> String {
     // First check environment variable (highest priority)
     if let Ok(path) = std::env::var("PYTHON_LIB_PATH") {

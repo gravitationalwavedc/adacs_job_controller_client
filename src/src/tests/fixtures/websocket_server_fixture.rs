@@ -2,7 +2,10 @@ use crate::messaging::{Message, Priority, SERVER_READY, SYSTEM_SOURCE};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio_tungstenite::{accept_async, tungstenite::protocol::Message as WsMessage};
+use tokio_tungstenite::{
+    accept_async,
+    tungstenite::{self, protocol::Message as WsMessage},
+};
 
 pub struct WebsocketServerFixture {
     pub port: u16,
@@ -42,7 +45,16 @@ impl WebsocketServerFixture {
                 tokio::select! {
                     res = async {
                         while let Some(msg) = ws_receiver.next().await {
-                            let msg = msg.expect("WS error");
+                            let msg = match msg {
+                                Ok(msg) => msg,
+                                Err(
+                                    tungstenite::Error::ConnectionClosed
+                                    | tungstenite::Error::Protocol(
+                                        tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
+                                    ),
+                                ) => break,
+                                Err(e) => panic!("WS error: {e}"),
+                            };
                             if msg.is_binary() {
                                 let m = Message::from_data(msg.into_data().to_vec());
                                 msg_tx_to_test.send(m).unwrap();

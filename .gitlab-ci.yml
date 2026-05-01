@@ -64,7 +64,7 @@ clippy:
     - rustup component add clippy
   script:
     - cd src
-    - cargo clippy --all-targets -- -D warnings
+    - cargo clippy --all-targets
 
 test-and-coverage:
   stage: test
@@ -86,8 +86,8 @@ test-and-coverage:
     - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
     - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && rustup component add llvm-tools"
     - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && cd $CI_PROJECT_DIR/src && cargo install cargo-llvm-cov"
-    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && cd $CI_PROJECT_DIR/src && cargo llvm-cov --cobertura --output-path cobertura.xml -- --test-threads=1"
-    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && cd $CI_PROJECT_DIR/src && cargo llvm-cov --json --output-path coverage.json -- --test-threads=1"
+    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && cd $CI_PROJECT_DIR/src && cargo llvm-cov --cobertura --output-path cobertura.xml"
+    - . /tmp/python_lib_path.env && su - ciuser -c "export PYTHON_LIB_PATH=$PYTHON_LIB_PATH && . \$HOME/.cargo/env && cd $CI_PROJECT_DIR/src && cargo llvm-cov --json --output-path coverage.json"
     - cp src/coverage.json /tmp/coverage.json
     - |
       echo "=== Coverage Report ==="

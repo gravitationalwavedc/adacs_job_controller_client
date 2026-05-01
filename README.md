@@ -39,7 +39,7 @@ cd src
 
 ### Running Tests
 
-The test suite (127 tests) uses in-memory SQLite and must run sequentially to avoid race conditions with shared global state.
+The test suite (127 tests) uses in-memory SQLite and runs in parallel by default. Tests are isolated via the BundleManager singleton (OnceLock) and atomic database pointer, ensuring thread safety.
 
 ```bash
 # Run all tests

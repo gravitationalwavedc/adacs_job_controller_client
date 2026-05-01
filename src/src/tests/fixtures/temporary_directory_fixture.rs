@@ -1,7 +1,7 @@
 //! Temporary directory fixture with symlink support.
 //!
 //! Creates temporary directories with test files and symlinks
-//! for testing file operations. Matches C++ TemporaryDirectoryFixture.
+//! for testing file operations. Matches C++ `TemporaryDirectoryFixture`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
