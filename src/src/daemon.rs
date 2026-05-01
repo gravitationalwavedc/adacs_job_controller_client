@@ -2,7 +2,7 @@
 //!
 //! Mirrors the C++ daemonization pattern from main.cpp EXACTLY:
 //! 1. First fork and exit parent
-//! 2. Create new session with setsid()
+//! 2. Create new session with `setsid()`
 //! 3. Change working directory to root
 //! 4. Reset umask
 //! 5. Second fork to prevent acquiring controlling terminal
@@ -11,7 +11,7 @@
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, IntoRawFd};
 use std::process;
 use tracing::{error, info};
 
@@ -44,7 +44,7 @@ pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
     // Decouple from parent environment
     // Change working directory to root to avoid keeping any directory mounted
     unsafe {
-        libc::chdir("/".as_ptr() as *const libc::c_char);
+        libc::chdir(c"/".as_ptr());
     }
 
     // Create a new session and become the session leader
@@ -79,14 +79,28 @@ pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
 
     // Redirect standard file descriptors (matches C++ main.cpp lines 112-120)
     // This ensures the daemon doesn't hold open any file descriptors from the parent
+    // Open /dev/null using safe Rust, then dup2 to stdio slots.
+    // into_raw_fd() transfers ownership so we manually close below,
+    // avoiding a double-close if the fd happened to land on 0/1/2.
+    let fd_in = std::fs::File::open("/dev/null")
+        .map_err(|e| format!("open /dev/null: {e}"))?
+        .into_raw_fd();
+    let fd_out = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/null")
+        .map_err(|e| format!("open /dev/null: {e}"))?
+        .into_raw_fd();
     unsafe {
-        let s_in = libc::open(std::ptr::null(), libc::O_RDONLY);
-        let s_out = libc::open(std::ptr::null(), libc::O_APPEND | libc::O_WRONLY);
-        let s_err = libc::open(std::ptr::null(), libc::O_APPEND | libc::O_WRONLY);
-
-        libc::dup2(s_in, libc::STDIN_FILENO);
-        libc::dup2(s_out, libc::STDOUT_FILENO);
-        libc::dup2(s_err, libc::STDERR_FILENO);
+        libc::dup2(fd_in, libc::STDIN_FILENO);
+        libc::dup2(fd_out, libc::STDOUT_FILENO);
+        libc::dup2(fd_out, libc::STDERR_FILENO);
+        // Close the /dev/null source fds unless dup2 already mapped them onto stdio.
+        if fd_in > 2 {
+            libc::close(fd_in);
+        }
+        if fd_out > 2 {
+            libc::close(fd_out);
+        }
     }
 
     // Flush stdout and stderr before redirection (matches C++)
@@ -133,7 +147,7 @@ pub fn daemonize_with_log_redirect(
 
     // Decouple from parent environment
     unsafe {
-        libc::chdir("/".as_ptr() as *const libc::c_char);
+        libc::chdir(c"/".as_ptr());
     }
 
     unsafe {
@@ -165,14 +179,28 @@ pub fn daemonize_with_log_redirect(
     // We are now the daemon process
 
     // Redirect standard file descriptors (matches C++ main.cpp lines 112-120)
+    // Open /dev/null using safe Rust, then dup2 to stdio slots.
+    // into_raw_fd() transfers ownership so we manually close below,
+    // avoiding a double-close if the fd happened to land on 0/1/2.
+    let fd_in = std::fs::File::open("/dev/null")
+        .map_err(|e| format!("open /dev/null: {e}"))?
+        .into_raw_fd();
+    let fd_out = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/null")
+        .map_err(|e| format!("open /dev/null: {e}"))?
+        .into_raw_fd();
     unsafe {
-        let s_in = libc::open(std::ptr::null(), libc::O_RDONLY);
-        let s_out = libc::open(std::ptr::null(), libc::O_APPEND | libc::O_WRONLY);
-        let s_err = libc::open(std::ptr::null(), libc::O_APPEND | libc::O_WRONLY);
-
-        libc::dup2(s_in, libc::STDIN_FILENO);
-        libc::dup2(s_out, libc::STDOUT_FILENO);
-        libc::dup2(s_err, libc::STDERR_FILENO);
+        libc::dup2(fd_in, libc::STDIN_FILENO);
+        libc::dup2(fd_out, libc::STDOUT_FILENO);
+        libc::dup2(fd_out, libc::STDERR_FILENO);
+        // Close the /dev/null source fds unless dup2 already mapped them onto stdio.
+        if fd_in > 2 {
+            libc::close(fd_in);
+        }
+        if fd_out > 2 {
+            libc::close(fd_out);
+        }
     }
 
     // Flush stdout and stderr before redirection
@@ -184,19 +212,19 @@ pub fn daemonize_with_log_redirect(
     let stderr_path = log_dir.join("stderr.log");
 
     // Open log files in append mode
-    let _stdout_file = OpenOptions::new()
+    let stdout_file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&stdout_path)?;
 
-    let _stderr_file = OpenOptions::new()
+    let stderr_file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&stderr_path)?;
 
     // Get raw file descriptors
-    let stdout_fd = _stdout_file.as_raw_fd();
-    let stderr_fd = _stderr_file.as_raw_fd();
+    let stdout_fd = stdout_file.as_raw_fd();
+    let stderr_fd = stderr_file.as_raw_fd();
 
     // Duplicate file descriptors to stdout/stderr
     unsafe {
@@ -204,7 +232,7 @@ pub fn daemonize_with_log_redirect(
         libc::dup2(stderr_fd, libc::STDERR_FILENO);
     }
 
-    // Log files will be closed when _stdout_file and _stderr_file go out of scope
+    // Log files will be closed when stdout_file and stderr_file go out of scope
     // but the duplicated file descriptors will remain open
 
     info!(

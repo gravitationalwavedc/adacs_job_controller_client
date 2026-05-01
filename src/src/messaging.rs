@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::Cursor;
 
@@ -106,7 +108,7 @@ impl Message {
     }
 
     pub fn push_bool(&mut self, value: bool) {
-        self.push_ubyte(if value { 1 } else { 0 });
+        self.push_ubyte(u8::from(value));
     }
 
     pub fn pop_bool(&mut self) -> bool {
@@ -356,7 +358,7 @@ mod tests {
         msg.push_uint(0);
         msg.push_uint(255);
         msg.push_uint(65535);
-        msg.push_uint(4294967295);
+        msg.push_uint(4_294_967_295);
 
         let data = msg.get_data().clone();
         let mut read_msg = Message::from_data(data);
@@ -364,24 +366,24 @@ mod tests {
         assert_eq!(read_msg.pop_uint(), 0);
         assert_eq!(read_msg.pop_uint(), 255);
         assert_eq!(read_msg.pop_uint(), 65535);
-        assert_eq!(read_msg.pop_uint(), 4294967295);
+        assert_eq!(read_msg.pop_uint(), 4_294_967_295);
     }
 
     #[test]
     fn test_primitive_int() {
         let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_int(-2147483648);
+        msg.push_int(-2_147_483_648);
         msg.push_int(-1);
         msg.push_int(0);
-        msg.push_int(2147483647);
+        msg.push_int(2_147_483_647);
 
         let data = msg.get_data().clone();
         let mut read_msg = Message::from_data(data);
 
-        assert_eq!(read_msg.pop_int(), -2147483648);
+        assert_eq!(read_msg.pop_int(), -2_147_483_648);
         assert_eq!(read_msg.pop_int(), -1);
         assert_eq!(read_msg.pop_int(), 0);
-        assert_eq!(read_msg.pop_int(), 2147483647);
+        assert_eq!(read_msg.pop_int(), 2_147_483_647);
     }
 
     #[test]
@@ -409,8 +411,8 @@ mod tests {
         let mut msg = Message::new(1, Priority::Highest, "test");
 
         let d1: f64 = 0.1;
-        let d2: f64 = 0.1234567812345678;
-        let d3: f64 = -0.1234567812345678;
+        let d2: f64 = 0.123_456_781_234_567_8;
+        let d3: f64 = -0.123_456_781_234_567_8;
 
         msg.push_double(d1);
         msg.push_double(d2);
@@ -464,15 +466,15 @@ mod tests {
         let mut msg = Message::new(1, Priority::Highest, "test");
 
         msg.push_ulong(0x1);
-        msg.push_ulong(0x1234567812345678);
-        msg.push_ulong(0xffff123412345678);
+        msg.push_ulong(0x1234_5678_1234_5678);
+        msg.push_ulong(0xffff_1234_1234_5678);
 
         let data = msg.get_data().clone();
         let mut read_msg = Message::from_data(data);
 
         assert_eq!(read_msg.pop_ulong(), 0x1);
-        assert_eq!(read_msg.pop_ulong(), 0x1234567812345678);
-        assert_eq!(read_msg.pop_ulong(), 0xffff123412345678);
+        assert_eq!(read_msg.pop_ulong(), 0x1234_5678_1234_5678);
+        assert_eq!(read_msg.pop_ulong(), 0xffff_1234_1234_5678);
     }
 
     #[test]
@@ -480,15 +482,15 @@ mod tests {
         let mut msg = Message::new(1, Priority::Highest, "test");
 
         msg.push_long(0x1);
-        msg.push_long(-0x1234567812345678);
-        msg.push_long(0x1234567812345678);
+        msg.push_long(-0x1234_5678_1234_5678);
+        msg.push_long(0x1234_5678_1234_5678);
 
         let data = msg.get_data().clone();
         let mut read_msg = Message::from_data(data);
 
         assert_eq!(read_msg.pop_long(), 0x1);
-        assert_eq!(read_msg.pop_long(), -0x1234567812345678);
-        assert_eq!(read_msg.pop_long(), 0x1234567812345678);
+        assert_eq!(read_msg.pop_long(), -0x1234_5678_1234_5678);
+        assert_eq!(read_msg.pop_long(), 0x1234_5678_1234_5678);
     }
 
     #[test]

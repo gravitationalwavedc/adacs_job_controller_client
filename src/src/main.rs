@@ -32,8 +32,7 @@ fn get_executable_path() -> PathBuf {
     std::env::current_exe()
         .unwrap_or_else(|_| PathBuf::from("./adacs_job_client"))
         .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
+        .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf)
 }
 
 #[tokio::main]
@@ -94,18 +93,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     python_interface::load_python_library(libpython_path);
     unsafe {
         python_interface::PyImport_AppendInittab(
-            b"_bundledb\0".as_ptr() as *const std::os::raw::c_char,
+            c"_bundledb".as_ptr(),
             Some(bundle_db::PyInit_bundledb),
         );
         python_interface::PyImport_AppendInittab(
-            b"_bundlelogging\0".as_ptr() as *const std::os::raw::c_char,
+            c"_bundlelogging".as_ptr(),
             Some(bundle_logging::PyInit_bundlelogging),
         );
     }
     python_interface::init_python();
-
-    // Initialize Database
-    db::initialize("sqlite:db.sqlite3?mode=rwc").await?;
 
     // Initialize BundleManager
     let bundle_path = crate::bundle_manager::get_default_bundle_path();
@@ -119,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_url = if ws_endpoint.ends_with('/') {
         ws_endpoint.to_string()
     } else {
-        format!("{}/", ws_endpoint)
+        format!("{ws_endpoint}/")
     };
 
     info!("Connecting to WebSocket endpoint: {}", ws_url);
@@ -138,6 +134,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Run loop - check jobs every 60 seconds (matching C++ JOB_CHECK_SECONDS)
     loop {
         jobs::check_all_jobs_status().await;
-        sleep(Duration::from_secs(60)).await;
+        sleep(Duration::from_mins(1)).await;
     }
 }

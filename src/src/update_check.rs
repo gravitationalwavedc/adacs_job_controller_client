@@ -30,38 +30,37 @@ fn parse_semver(version: &str) -> Result<(u64, u64, u64), String> {
     let parts: Vec<&str> = version.split('.').collect();
 
     if parts.len() < 3 {
-        return Err(format!("Invalid semver format: {}", version));
+        return Err(format!("Invalid semver format: {version}"));
     }
 
     let major = parts[0]
         .parse::<u64>()
-        .map_err(|e| format!("Invalid major version: {}", e))?;
+        .map_err(|e| format!("Invalid major version: {e}"))?;
     let minor = parts[1]
         .parse::<u64>()
-        .map_err(|e| format!("Invalid minor version: {}", e))?;
+        .map_err(|e| format!("Invalid minor version: {e}"))?;
     let patch = parts[2]
         .parse::<u64>()
-        .map_err(|e| format!("Invalid patch version: {}", e))?;
+        .map_err(|e| format!("Invalid patch version: {e}"))?;
 
     Ok((major, minor, patch))
 }
 
 /// Compare two semver strings. Returns true if latest > current
 fn is_update_available(current: &str, latest: &str) -> bool {
-    match (parse_semver(current), parse_semver(latest)) {
-        (Ok((cur_major, cur_minor, cur_patch)), Ok((lat_major, lat_minor, lat_patch))) => {
-            if lat_major != cur_major {
-                return lat_major > cur_major;
-            }
-            if lat_minor != cur_minor {
-                return lat_minor > cur_minor;
-            }
-            lat_patch > cur_patch
+    if let (Ok((cur_major, cur_minor, cur_patch)), Ok((lat_major, lat_minor, lat_patch))) =
+        (parse_semver(current), parse_semver(latest))
+    {
+        if lat_major != cur_major {
+            return lat_major > cur_major;
         }
-        _ => {
-            warn!("Failed to parse semver, assuming no update available");
-            false
+        if lat_minor != cur_minor {
+            return lat_minor > cur_minor;
         }
+        lat_patch > cur_patch
+    } else {
+        warn!("Failed to parse semver, assuming no update available");
+        false
     }
 }
 
@@ -74,7 +73,7 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
     let response = ureq::AgentBuilder::new()
         .user_agent("ADACS-Job-Controller-Client-Update-Check")
         .build()
-        .get(&format!("https://{}{}", GITHUB_ENDPOINT, GITHUB_LATEST_URL))
+        .get(&format!("https://{GITHUB_ENDPOINT}{GITHUB_LATEST_URL}"))
         .call();
 
     match response {
@@ -138,7 +137,7 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         }
         Err(e) => {
             error!("Unable to download updated binary: {}", e);
-            Err(format!("Download failed: {}", e).into())
+            Err(format!("Download failed: {e}").into())
         }
     }
 }

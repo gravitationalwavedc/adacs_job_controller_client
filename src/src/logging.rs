@@ -5,9 +5,9 @@
 //! - Size-based rotation (configurable max size)
 //! - Automatic cleanup of old log files (keeps last 7 days by default)
 //! - JSON formatting for structured logging
-//! - Environment variable filtering (RUST_LOG)
+//! - Environment variable filtering (`RUST_LOG`)
 //!
-//! This replaces the custom rotating_log implementation with the
+//! This replaces the custom `rotating_log` implementation with the
 //! industry-standard tracing-appender crate.
 
 use std::path::Path;
@@ -18,7 +18,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 ///
 /// # Arguments
 /// * `log_dir` - Directory where log files will be stored
-/// * `log_prefix` - Prefix for log filenames (e.g., "adacs_job_client")
+/// * `log_prefix` - Prefix for log filenames (e.g., "`adacs_job_client`")
 /// * `max_log_files` - Number of log files to retain (default: 7)
 ///
 /// # Panics
@@ -82,7 +82,7 @@ pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize) {
 /// Initialize logging with default settings.
 ///
 /// Uses the log directory relative to the executable path,
-/// prefix "adacs_job_client", and retains 7 days of logs.
+/// prefix "`adacs_job_client`", and retains 7 days of logs.
 pub fn init_default_logging(executable_path: &Path) {
     let log_dir = executable_path.join("logs");
     init_logging(&log_dir, "adacs_job_client", 7);
@@ -92,41 +92,53 @@ pub fn init_default_logging(executable_path: &Path) {
 mod tests {
     use super::*;
 
-    use std::sync::Once;
+    use std::{fs, thread, time::Duration};
     use tempfile::TempDir;
+    use test_fork::test;
 
-    static INIT: Once = Once::new();
-
-    fn init_logging_once() {
-        INIT.call_once(|| {
-            let temp_dir = TempDir::new().unwrap();
-            let log_dir = temp_dir.path().join("test_logs");
-            init_logging(&log_dir, "test", 3);
-        });
+    fn read_log_files(log_dir: &Path) -> Vec<String> {
+        fs::read_dir(log_dir)
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect()
     }
 
     #[test]
     fn test_init_logging_creates_directory() {
-        // Just verify the function doesn't panic when called multiple times
-        init_logging_once();
-        assert!(true);
+        let temp_dir = TempDir::new().unwrap();
+        let log_dir = temp_dir.path().join("test_logs");
+
+        assert!(!log_dir.exists());
+        init_logging(&log_dir, "test", 3);
+
+        assert!(log_dir.is_dir());
     }
 
     #[test]
     fn test_init_logging_writes_to_file() {
-        init_logging_once();
+        let temp_dir = TempDir::new().unwrap();
+        let log_dir = temp_dir.path().join("test_logs");
 
-        // Write a test log message
+        init_logging(&log_dir, "test", 3);
+
         tracing::info!("Test log message");
+        thread::sleep(Duration::from_millis(50));
 
-        // Just verify we can write without panicking
-        assert!(true);
+        let log_contents = read_log_files(&log_dir).join("\n");
+        assert!(log_contents.contains("Test log message"));
     }
 
     #[test]
     fn test_init_default_logging() {
-        // Just verify the function doesn't panic when called
-        init_logging_once();
-        assert!(true);
+        let temp_dir = TempDir::new().unwrap();
+        let executable_path = temp_dir.path().join("bin");
+        let log_dir = executable_path.join("logs");
+
+        fs::create_dir_all(&executable_path).unwrap();
+        init_default_logging(&executable_path);
+        thread::sleep(Duration::from_millis(50));
+
+        assert!(log_dir.is_dir());
+        assert!(!read_log_files(&log_dir).is_empty());
     }
 }
