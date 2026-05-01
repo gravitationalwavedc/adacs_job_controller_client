@@ -23,6 +23,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub type MessageCallback = Arc<dyn Fn() + Send + Sync + 'static>;
 
 #[mockall::automock]
+#[allow(dead_code)]
 pub trait WebsocketClient: Send + Sync {
     fn start(&self, url: String) -> BoxFuture<'static, Result<(), Box<dyn Error + Send + Sync>>>;
     fn start_with_token(
@@ -112,8 +113,7 @@ impl TungsteniteWebsocketClient {
     fn get_epoch_millis() -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0)
+            .map_or(0, |d| d.as_millis() as i64)
     }
 
     fn handle_pong(&self) {
@@ -122,7 +122,7 @@ impl TungsteniteWebsocketClient {
         info!("WS: Received pong at {}", now);
     }
 
-    fn handle_ping(&self) {
+    fn handle_ping() {
         // When we receive a ping from the server, we should respond with a pong
         // tungstenite handles this automatically, but we track it
         info!("WS: Received ping from server");
@@ -162,7 +162,7 @@ impl TungsteniteWebsocketClient {
     }
 
     /// Prune empty queue sources (matches C++ pruneSources)
-    /// Runs every QUEUE_SOURCE_PRUNE_SECONDS (60s)
+    /// Runs every `QUEUE_SOURCE_PRUNE_SECONDS` (60s)
     fn prune_sources(&self) {
         for priority in &self.queue {
             let mut map = priority.lock();
@@ -174,11 +174,11 @@ impl TungsteniteWebsocketClient {
     /// Check ping/pong health (matches C++ checkPings)
     /// Returns error if connection appears dead (pong not received)
     fn check_pings_internal(&self) -> Result<(), String> {
-        let ping_ts = self.ping_timestamp.load(Ordering::SeqCst);
-        let pong_ts = self.pong_timestamp.load(Ordering::SeqCst);
+        let ping_sent_at = self.ping_timestamp.load(Ordering::SeqCst);
+        let pong_received_at = self.pong_timestamp.load(Ordering::SeqCst);
 
         // C++ logic: if ping was sent (non-zero) but pong not received (zero), connection is dead
-        if ping_ts != 0 && pong_ts == 0 {
+        if ping_sent_at != 0 && pong_received_at == 0 {
             return Err("Websocket timed out waiting for pong".to_string());
         }
 
@@ -213,20 +213,19 @@ impl TungsteniteWebsocketClient {
                 }
             }
             SUBMIT_JOB => {
-                crate::jobs::handle_job_submit(message).await;
+                crate::jobs::handle_job_submit(message);
             }
             CANCEL_JOB => {
-                let handle = crate::jobs::handle_job_cancel(message).await;
-                let _ = handle.await;
+                crate::jobs::handle_job_cancel(message);
             }
             DELETE_JOB => {
-                crate::jobs::handle_job_delete(message).await;
+                crate::jobs::handle_job_delete(message);
             }
             FILE_DOWNLOAD => {
-                crate::files::handle_file_download(message).await;
+                crate::files::handle_file_download(message);
             }
             UPLOAD_FILE => {
-                crate::files::handle_file_upload(message).await;
+                crate::files::handle_file_upload(message);
             }
             FILE_LIST => {
                 crate::files::handle_file_list(message).await;
@@ -265,7 +264,7 @@ impl WebsocketClient for TungsteniteWebsocketClient {
             // Set Authorization Bearer header with provided token
             request.headers_mut().insert(
                 "Authorization",
-                format!("Bearer {}", token)
+                format!("Bearer {token}")
                     .parse()
                     .map_err(|_| "Invalid token")?,
             );
@@ -296,7 +295,7 @@ impl WebsocketClient for TungsteniteWebsocketClient {
                         }
                         Ok(WsMessage::Ping(_)) => {
                             // Server sent us a ping - tungstenite auto-responds with pong
-                            client_for_read.handle_ping();
+                            TungsteniteWebsocketClient::handle_ping();
                         }
                         Ok(WsMessage::Pong(_)) => {
                             // Server responded to our ping
@@ -393,28 +392,24 @@ impl WebsocketClient for TungsteniteWebsocketClient {
                     ping_interval.tick().await;
 
                     // Check if previous pong was received
-                    match client_for_ping.check_pings_internal() {
-                        Err(e) => {
-                            error!("WS: {}", e);
-                            error!("WS: Connection health check failed - aborting");
-                            // In production, this would call abortApplication()
-                            // For now, we just mark the connection as closed
-                            client_for_ping
-                                .connection_closed
-                                .store(true, Ordering::SeqCst);
-                            return;
-                        }
-                        Ok(_) => {
-                            // Send a new ping
-                            let mut sender = ws_sender_for_ping.lock().await;
-                            if let Err(e) = client_for_ping.send_ping(&mut sender).await {
-                                error!("WS: Failed to send ping: {}", e);
-                                client_for_ping
-                                    .connection_closed
-                                    .store(true, Ordering::SeqCst);
-                                return;
-                            }
-                        }
+                    if let Err(e) = client_for_ping.check_pings_internal() {
+                        error!("WS: {}", e);
+                        error!("WS: Connection health check failed - aborting");
+                        // In production, this would call abortApplication()
+                        // For now, we just mark the connection as closed
+                        client_for_ping
+                            .connection_closed
+                            .store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    // Send a new ping
+                    let mut sender = ws_sender_for_ping.lock().await;
+                    if let Err(e) = client_for_ping.send_ping(&mut sender).await {
+                        error!("WS: Failed to send ping: {}", e);
+                        client_for_ping
+                            .connection_closed
+                            .store(true, Ordering::SeqCst);
+                        return;
                     }
                 }
             });
@@ -516,14 +511,14 @@ impl WebsocketClient for TungsteniteWebsocketClient {
     }
 
     fn prune_sources(&self) {
-        self.prune_sources()
+        self.prune_sources();
     }
 }
 
-lazy_static::lazy_static! {
-    static ref GLOBAL_CLIENT: RwLock<Option<Arc<dyn WebsocketClient>>> = RwLock::new(None);
-    static ref TUNGSTENITE_CLIENT: RwLock<Option<Arc<TungsteniteWebsocketClient>>> = RwLock::new(None);
-}
+static GLOBAL_CLIENT: std::sync::LazyLock<RwLock<Option<Arc<dyn WebsocketClient>>>> =
+    std::sync::LazyLock::new(|| RwLock::new(None));
+static TUNGSTENITE_CLIENT: std::sync::LazyLock<RwLock<Option<Arc<TungsteniteWebsocketClient>>>> =
+    std::sync::LazyLock::new(|| RwLock::new(None));
 
 pub(crate) fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
     let mut client = TUNGSTENITE_CLIENT.write();
@@ -553,6 +548,7 @@ pub fn get_websocket_client() -> Arc<dyn WebsocketClient> {
     arc_c
 }
 
+#[cfg(test)]
 pub fn set_websocket_client(client: Arc<dyn WebsocketClient>) {
     let mut c = GLOBAL_CLIENT.write();
     *c = Some(client);
@@ -567,6 +563,10 @@ pub fn reset_websocket_client_for_test() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Serializes all tests that read/write ADACS_LTK to prevent env var races.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     // ============================================================================
     // WebSocket Authentication Tests - ported from websocket_auth_tests.rs
@@ -580,6 +580,7 @@ mod tests {
 
     #[test]
     fn test_start_requires_token() {
+        let _env = ENV_MUTEX.lock().unwrap();
         let client = TungsteniteWebsocketClient::new();
 
         // Clear any existing ADACS_LTK env var for this test
@@ -617,6 +618,7 @@ mod tests {
 
     #[test]
     fn test_token_from_env_var() {
+        let _env = ENV_MUTEX.lock().unwrap();
         std::env::set_var("ADACS_LTK", "env_token_456");
 
         let client = TungsteniteWebsocketClient::new();
@@ -634,6 +636,7 @@ mod tests {
 
     #[test]
     fn test_token_precedence_cli_over_env() {
+        let _env = ENV_MUTEX.lock().unwrap();
         std::env::set_var("ADACS_LTK", "env_token");
 
         let args = [
@@ -694,8 +697,8 @@ mod tests {
             "pongTimestamp was zero when it should not have been"
         );
 
-        let previous_ping_timestamp = client.get_ping_timestamp();
-        let previous_pong_timestamp = client.get_pong_timestamp();
+        let old_ping = client.get_ping_timestamp();
+        let prev_pong = client.get_pong_timestamp();
 
         // Run the ping pong again, the new ping/pong timestamps should be greater than the previous ones
         // Wait a small amount to ensure timestamps are different
@@ -703,9 +706,9 @@ mod tests {
         client.call_check_pings();
 
         // Check that neither ping or pong timestamp is zero
-        assert!(client.get_ping_timestamp() > previous_ping_timestamp,
+        assert!(client.get_ping_timestamp() > old_ping,
             "pingTimestamp was not greater than the previous ping timestamp when it should have been");
-        assert!(client.get_pong_timestamp() > previous_pong_timestamp,
+        assert!(client.get_pong_timestamp() > prev_pong,
             "pongTimestamp was not greater than the previous pong timestamp when it should have been");
     }
 
@@ -895,7 +898,7 @@ mod tests {
         // Verify all queues are empty
         for p in 0..20 {
             let map = client.queue[p].lock();
-            assert_eq!(map.len(), 0, "Priority {} should have no queues", p);
+            assert_eq!(map.len(), 0, "Priority {p} should have no queues");
         }
     }
 
@@ -910,8 +913,7 @@ mod tests {
             assert_eq!(
                 map.len(),
                 0,
-                "Priority {} queue should be empty on construction",
-                p
+                "Priority {p} queue should be empty on construction"
             );
         }
 

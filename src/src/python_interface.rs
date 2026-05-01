@@ -11,7 +11,7 @@ pub type PyObject = c_void;
 pub type PyInterpreterState = c_void;
 pub type Py_ssize_t = isize;
 
-/// Minimal repr of PyThreadState – only the fields we actually dereference.
+/// Minimal repr of `PyThreadState` – only the fields we actually dereference.
 /// The real struct has many more fields, but we only need `interp`.
 #[repr(C)]
 pub struct PyThreadState {
@@ -35,6 +35,7 @@ pub struct PyModuleDef_Base {
 }
 
 #[repr(C)]
+#[allow(clippy::struct_field_names)]
 pub struct PyModuleDef {
     pub m_base: PyModuleDef_Base,
     pub m_name: *const c_char,
@@ -48,6 +49,7 @@ pub struct PyModuleDef {
 }
 
 #[repr(C)]
+#[allow(clippy::struct_field_names)]
 pub struct PyMethodDef {
     pub ml_name: *const c_char,
     pub ml_meth: Option<unsafe extern "C" fn(*mut PyObject, *mut PyObject) -> *mut PyObject>,
@@ -209,8 +211,8 @@ pub extern "C" fn myPyGILState_Release(_state: PyGILState_STATE) {
 // ─── subhook FFI bindings ────────────────────────────────────────────────────
 include!(concat!(env!("OUT_DIR"), "/subhook_bindings.rs"));
 
-/// Install subhook-based patches on PyGILState_Ensure and PyGILState_Release.
-/// Mirrors the C++ PythonInterface::initPython() hook installation exactly.
+/// Install subhook-based patches on `PyGILState_Ensure` and `PyGILState_Release`.
+/// Mirrors the C++ `PythonInterface::initPython()` hook installation exactly.
 unsafe fn install_gil_hooks() {
     let lib = get_python_lib();
 
@@ -222,18 +224,20 @@ unsafe fn install_gil_hooks() {
         myPyGILState_Ensure as *mut c_void,
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
-    if subhook_install(hook_ensure) < 0 {
-        panic!("PyGILState_Ensure redirection failed to install");
-    }
+    assert!(
+        subhook_install(hook_ensure) >= 0,
+        "PyGILState_Ensure redirection failed to install"
+    );
 
     let hook_release = subhook_new(
         *p_release,
         myPyGILState_Release as *mut c_void,
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
-    if subhook_install(hook_release) < 0 {
-        panic!("myPyGILState_Release redirection failed to install");
-    }
+    assert!(
+        subhook_install(hook_release) >= 0,
+        "myPyGILState_Release redirection failed to install"
+    );
 
     tracing::info!("GIL hooks installed successfully");
 }
@@ -292,9 +296,7 @@ impl SubInterpreter {
         let saved_ts = PyThreadState_Get();
 
         let ts = Py_NewInterpreter();
-        if ts.is_null() {
-            panic!("Py_NewInterpreter failed");
-        }
+        assert!(!ts.is_null(), "Py_NewInterpreter failed");
 
         // Restore the original thread state (like C++ RestoreThreadStateScope destructor)
         PyThreadState_Swap(saved_ts);
@@ -302,7 +304,7 @@ impl SubInterpreter {
         SubInterpreter { ts }
     }
 
-    /// Get the interpreter state pointer (for creating ThreadScopes)
+    /// Get the interpreter state pointer (for creating `ThreadScopes`)
     pub unsafe fn interp(&self) -> *mut PyInterpreterState {
         (*self.ts).interp
     }
@@ -332,8 +334,8 @@ pub struct ThreadScope {
 }
 
 impl ThreadScope {
-    /// Create a new ThreadScope for the given interpreter.
-    /// This is the equivalent of C++ SubInterpreter::ThreadScope.
+    /// Create a new `ThreadScope` for the given interpreter.
+    /// This is the equivalent of C++ `SubInterpreter::ThreadScope`.
     pub unsafe fn new(interp: *mut PyInterpreterState) -> Self {
         // ThreadState constructor: create new ts, restore thread (acquires GIL for this ts)
         let ts = PyThreadState_New(interp);

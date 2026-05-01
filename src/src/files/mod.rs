@@ -17,54 +17,42 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessa
 use tracing::error;
 
 pub async fn handle_file_list(mut msg: Message) {
-    let job_id = msg.pop_uint() as i64;
+    let job_id = i64::from(msg.pop_uint());
     let uuid = msg.pop_string();
     let bundle_hash = msg.pop_string();
     let dir_path = msg.pop_string();
     let is_recursive = msg.pop_bool();
 
     let working_directory = if job_id != 0 {
-        let db = db::get_db();
-        match db::get_job_by_job_id(db, job_id).await {
-            Ok(Some(job)) => {
-                if job.submitting {
-                    send_file_list_error(&uuid, "Job is not submitted");
-                    return;
-                }
-                job.working_directory
-            }
-            _ => {
-                send_file_list_error(&uuid, "Job does not exist");
+        if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
+            if job.submitting {
+                send_file_list_error(&uuid, "Job is not submitted");
                 return;
             }
+            job.working_directory
+        } else {
+            send_file_list_error(&uuid, "Job does not exist");
+            return;
         }
     } else {
         let bm = BundleManager::singleton();
-        unsafe {
-            bm.run_bundle_string(
-                "working_directory",
-                &bundle_hash,
-                &json!(dir_path),
-                "file_list",
-            )
-        }
+        bm.run_bundle_string(
+            "working_directory",
+            &bundle_hash,
+            &json!(dir_path),
+            "file_list",
+        )
     };
 
     let full_path = Path::new(&working_directory).join(&dir_path);
-    let abs_path = match fs::canonicalize(&full_path).await {
-        Ok(p) => p,
-        Err(_) => {
-            send_file_list_error(&uuid, "Path to list files does not exist");
-            return;
-        }
+    let Ok(abs_path) = fs::canonicalize(&full_path).await else {
+        send_file_list_error(&uuid, "Path to list files does not exist");
+        return;
     };
 
-    let canonical_working = match fs::canonicalize(&working_directory).await {
-        Ok(p) => p,
-        Err(_) => {
-            send_file_list_error(&uuid, "Path to list files is outside the working directory");
-            return;
-        }
+    let Ok(canonical_working) = fs::canonicalize(&working_directory).await else {
+        send_file_list_error(&uuid, "Path to list files is outside the working directory");
+        return;
     };
 
     if !abs_path.starts_with(&canonical_working) {
@@ -72,11 +60,7 @@ pub async fn handle_file_list(mut msg: Message) {
         return;
     }
 
-    if !fs::metadata(&abs_path)
-        .await
-        .map(|m| m.is_dir())
-        .unwrap_or(false)
-    {
+    if !fs::metadata(&abs_path).await.is_ok_and(|m| m.is_dir()) {
         send_file_list_error(&uuid, "Path to list files is not a directory");
         return;
     }
@@ -106,28 +90,26 @@ pub async fn handle_file_list(mut msg: Message) {
                 }
             }
         }
-    } else {
-        if let Ok(mut entries) = fs::read_dir(&abs_path).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                let metadata = entry.metadata().await.unwrap();
-                if metadata.is_symlink() {
-                    continue;
-                }
-
-                let relative_path = path
-                    .strip_prefix(&working_directory)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .into_owned();
-                file_list.push((relative_path, metadata.is_dir(), metadata.len()));
+    } else if let Ok(mut entries) = fs::read_dir(&abs_path).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let metadata = entry.metadata().await.unwrap();
+            if metadata.is_symlink() {
+                continue;
             }
+
+            let relative_path = path
+                .strip_prefix(&working_directory)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
+            file_list.push((relative_path, metadata.is_dir(), metadata.len()));
         }
     }
 
     let mut result = Message::new(FILE_LIST, Priority::Highest, &uuid);
     result.push_string(&uuid);
-    result.push_uint(file_list.len() as u32);
+    result.push_uint(u32::try_from(file_list.len()).unwrap_or(u32::MAX));
     for (path, is_dir, size) in file_list {
         result.push_string(&path);
         result.push_bool(is_dir);
@@ -153,8 +135,8 @@ fn send_file_list_error(uuid: &str, error_msg: &str) {
     );
 }
 
-pub async fn handle_file_download(mut msg: Message) {
-    let job_id = msg.pop_uint() as i64;
+pub fn handle_file_download(mut msg: Message) {
+    let job_id = i64::from(msg.pop_uint());
     let uuid = msg.pop_string();
     let bundle_hash = msg.pop_string();
     let mut file_path = msg.pop_string();
@@ -164,7 +146,7 @@ pub async fn handle_file_download(mut msg: Message) {
         let ws_endpoint = config["websocketEndpoint"]
             .as_str()
             .unwrap_or("ws://127.0.0.1:8001/ws/");
-        let url = format!("{}?token={}", ws_endpoint, uuid);
+        let url = format!("{ws_endpoint}?token={uuid}");
 
         let (ws_stream, _) = match connect_async(&url).await {
             Ok(s) => s,
@@ -185,30 +167,24 @@ pub async fn handle_file_download(mut msg: Message) {
         }
 
         let working_directory = if job_id != 0 {
-            let db = db::get_db();
-            match db::get_job_by_job_id(db, job_id).await {
-                Ok(Some(job)) => {
-                    if job.submitting {
-                        send_download_error(&mut ws_sender, &uuid, "Job is not submitted").await;
-                        return;
-                    }
-                    job.working_directory
-                }
-                _ => {
-                    send_download_error(&mut ws_sender, &uuid, "Job does not exist").await;
+            if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
+                if job.submitting {
+                    send_download_error(&mut ws_sender, &uuid, "Job is not submitted").await;
                     return;
                 }
+                job.working_directory
+            } else {
+                send_download_error(&mut ws_sender, &uuid, "Job does not exist").await;
+                return;
             }
         } else {
             let bm = BundleManager::singleton();
-            unsafe {
-                bm.run_bundle_string(
-                    "working_directory",
-                    &bundle_hash,
-                    &json!(file_path),
-                    "file_download",
-                )
-            }
+            bm.run_bundle_string(
+                "working_directory",
+                &bundle_hash,
+                &json!(file_path),
+                "file_download",
+            )
         };
 
         while file_path.starts_with('/') {
@@ -216,17 +192,14 @@ pub async fn handle_file_download(mut msg: Message) {
         }
 
         let full_path = Path::new(&working_directory).join(&file_path);
-        let abs_path = match fs::canonicalize(&full_path).await {
-            Ok(p) => p,
-            Err(_) => {
-                send_download_error(
-                    &mut ws_sender,
-                    &uuid,
-                    "Path to file download does not exist",
-                )
-                .await;
-                return;
-            }
+        let Ok(abs_path) = fs::canonicalize(&full_path).await else {
+            send_download_error(
+                &mut ws_sender,
+                &uuid,
+                "Path to file download does not exist",
+            )
+            .await;
+            return;
         };
 
         let canonical_working = fs::canonicalize(&working_directory)
@@ -242,11 +215,7 @@ pub async fn handle_file_download(mut msg: Message) {
             return;
         }
 
-        if !fs::metadata(&abs_path)
-            .await
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-        {
+        if !fs::metadata(&abs_path).await.is_ok_and(|m| m.is_file()) {
             send_download_error(&mut ws_sender, &uuid, "Path to file download is not a file").await;
             return;
         }
@@ -331,9 +300,9 @@ async fn send_download_error(
         .await;
 }
 
-pub async fn handle_file_upload(mut msg: Message) {
+pub fn handle_file_upload(mut msg: Message) {
     let uuid = msg.pop_string();
-    let job_id = msg.pop_uint() as i64;
+    let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
     let target_path = msg.pop_string();
     let file_size = msg.pop_ulong();
@@ -343,22 +312,22 @@ pub async fn handle_file_upload(mut msg: Message) {
     let ws_endpoint = config["websocketEndpoint"]
         .as_str()
         .unwrap_or("ws://127.0.0.1:8001/ws/");
-    let url = format!("{}?token={}", ws_endpoint, uuid);
+    let url = format!("{ws_endpoint}?token={uuid}");
 
-    handle_file_upload_internal(uuid, job_id, bundle_hash, target_path, file_size, url).await;
+    handle_file_upload_internal(uuid, job_id, bundle_hash, target_path, file_size, url);
 }
 
-pub async fn handle_file_upload_with_url(mut msg: Message, url: String) {
+pub fn handle_file_upload_with_url(mut msg: Message, url: String) {
     let uuid = msg.pop_string();
-    let job_id = msg.pop_uint() as i64;
+    let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
     let target_path = msg.pop_string();
     let file_size = msg.pop_ulong();
 
-    handle_file_upload_internal(uuid, job_id, bundle_hash, target_path, file_size, url).await;
+    handle_file_upload_internal(uuid, job_id, bundle_hash, target_path, file_size, url);
 }
 
-async fn handle_file_upload_internal(
+fn handle_file_upload_internal(
     uuid: String,
     job_id: i64,
     bundle_hash: String,
@@ -391,30 +360,24 @@ async fn handle_file_upload_internal(
             .await;
 
         let working_directory = if job_id != 0 {
-            let db = db::get_db();
-            match db::get_job_by_job_id(db, job_id).await {
-                Ok(Some(job)) => {
-                    if job.submitting {
-                        send_upload_error(&mut ws_sender, &uuid, "Job is not submitted").await;
-                        return;
-                    }
-                    job.working_directory
-                }
-                _ => {
-                    send_upload_error(&mut ws_sender, &uuid, "Job does not exist").await;
+            if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
+                if job.submitting {
+                    send_upload_error(&mut ws_sender, &uuid, "Job is not submitted").await;
                     return;
                 }
+                job.working_directory
+            } else {
+                send_upload_error(&mut ws_sender, &uuid, "Job does not exist").await;
+                return;
             }
         } else {
             let bm = BundleManager::singleton();
-            unsafe {
-                bm.run_bundle_string(
-                    "working_directory",
-                    &bundle_hash,
-                    &json!(target_path),
-                    "file_upload",
-                )
-            }
+            bm.run_bundle_string(
+                "working_directory",
+                &bundle_hash,
+                &json!(target_path),
+                "file_upload",
+            )
         };
 
         while target_path.starts_with('/') {
@@ -440,12 +403,10 @@ async fn handle_file_upload_internal(
             if test_path.exists() {
                 existing_prefix = test_path;
                 remaining_suffix = PathBuf::new();
+            } else if remaining_suffix.as_os_str().is_empty() {
+                remaining_suffix = PathBuf::from(component.as_os_str());
             } else {
-                if remaining_suffix.as_os_str().is_empty() {
-                    remaining_suffix = PathBuf::from(component.as_os_str());
-                } else {
-                    remaining_suffix = remaining_suffix.join(component.as_os_str());
-                }
+                remaining_suffix = remaining_suffix.join(component.as_os_str());
             }
         }
 
@@ -455,10 +416,10 @@ async fn handle_file_upload_internal(
         } else {
             match fs::canonicalize(&existing_prefix).await {
                 Ok(canonical_prefix) => {
-                    if !remaining_suffix.as_os_str().is_empty() {
-                        canonical_prefix.join(remaining_suffix)
-                    } else {
+                    if remaining_suffix.as_os_str().is_empty() {
                         canonical_prefix
+                    } else {
+                        canonical_prefix.join(remaining_suffix)
                     }
                 }
                 Err(_) => full_path.clone(),
@@ -518,13 +479,35 @@ async fn handle_file_upload_internal(
                             &mut ws_sender,
                             &uuid,
                             &format!(
-                                "File size mismatch: expected {}, got {}",
-                                file_size, received_size
+                                "File size mismatch: expected {file_size}, got {received_size}"
                             ),
                         )
                         .await;
                         return;
                     }
+                    if let Err(e) = file.flush().await {
+                        error!("Failed to flush uploaded file: {}", e);
+                        let _ = fs::remove_file(&abs_path).await;
+                        send_upload_error(
+                            &mut ws_sender,
+                            &uuid,
+                            "Failed to finalize uploaded file",
+                        )
+                        .await;
+                        return;
+                    }
+                    if let Err(e) = file.sync_all().await {
+                        error!("Failed to sync uploaded file: {}", e);
+                        let _ = fs::remove_file(&abs_path).await;
+                        send_upload_error(
+                            &mut ws_sender,
+                            &uuid,
+                            "Failed to finalize uploaded file",
+                        )
+                        .await;
+                        return;
+                    }
+                    drop(file);
                     let complete_msg = Message::new(FILE_UPLOAD_COMPLETE, Priority::Highest, &uuid);
                     let _ = ws_sender
                         .send(WsMessage::Binary(complete_msg.get_data().clone().into()))

@@ -25,11 +25,11 @@ fn init_python_global() {
         crate::python_interface::load_python_library(&crate::config::get_python_library_path());
         unsafe {
             crate::python_interface::PyImport_AppendInittab(
-                b"_bundledb\0".as_ptr() as *const std::os::raw::c_char,
+                c"_bundledb".as_ptr(),
                 Some(crate::bundle_db::PyInit_bundledb),
             );
             crate::python_interface::PyImport_AppendInittab(
-                b"_bundlelogging\0".as_ptr() as *const std::os::raw::c_char,
+                c"_bundlelogging".as_ptr(),
                 Some(crate::bundle_logging::PyInit_bundlelogging),
             );
         }

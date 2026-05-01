@@ -1,21 +1,28 @@
-//! Port of C++ BundleInterface.
+//! Port of C++ `BundleInterface`.
 //!
-//! Each BundleInterface owns a SubInterpreter and caches the loaded bundle
+//! Each `BundleInterface` owns a `SubInterpreter` and caches the loaded bundle
 //! module plus json/traceback helpers.  The C++ version never creates
-//! temporary thread-states for every call – instead it creates a ThreadScope
+//! temporary thread-states for every call – instead it creates a `ThreadScope`
 //! that lives for the duration of the call.  We replicate that here.
 
-use crate::python_interface::*;
+use crate::python_interface::{
+    my_py_true_struct, MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString,
+    PyErr_Fetch, PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread,
+    PyEval_SaveThread, PyImport_ImportModule, PyIter_Next, PyList_Append,
+    PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject, PyObject_GetAttrString,
+    PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject, PyThreadState,
+    PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef,
+    Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
+};
 use crate::thread_bundle_map::{clear_current_thread_bundle, set_current_thread_bundle};
 use serde_json::Value;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::error;
 
 // The exact Python script used in C++ for stdout/stderr redirection.
-const STDOUT_REDIRECTION: &str = r#"
+const STDOUT_REDIRECTION: &str = r"
 import io, sys
 class StdoutCatcher(io.TextIOBase):
     def write(self, msg):
@@ -31,7 +38,7 @@ class StderrCatcher(io.TextIOBase):
 
 sys.stdout = StdoutCatcher()
 sys.stderr = StderrCatcher()
-"#;
+";
 
 struct BundleInterfaceInner {
     python_interpreter: SubInterpreter,
@@ -54,11 +61,12 @@ pub struct BundleInterface {
 pub struct NoneException;
 
 impl BundleInterface {
-    /// Create a new BundleInterface for the given bundle hash.
-    /// This exactly mirrors the C++ BundleInterface constructor.
+    /// Create a new `BundleInterface` for the given bundle hash.
+    /// This exactly mirrors the C++ `BundleInterface` constructor.
     ///
-    /// IMPORTANT: The PYTHON_MUTEX must NOT be held by the caller, and the
+    /// IMPORTANT: The `PYTHON_MUTEX` must NOT be held by the caller, and the
     /// main thread state must have been saved (GIL released) before calling this.
+    #[allow(clippy::items_after_statements)]
     pub unsafe fn new(bundle_hash: &str, bundle_path_root: &str) -> Self {
         let _guard = PYTHON_MUTEX.lock();
 
@@ -96,8 +104,7 @@ impl BundleInterface {
 
         // Create a new globals dict and enable the python builtins
         let p_global = PyDict_New();
-        let builtins_key = CString::new("__builtins__").unwrap();
-        PyDict_SetItemString(p_global, builtins_key.as_ptr(), PyEval_GetBuiltins());
+        PyDict_SetItemString(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
 
         // Set up logging so print() works as expected (run the redirection script)
         let p_local = PyDict_New();
@@ -121,25 +128,21 @@ impl BundleInterface {
         Py_DecRef(p_local);
 
         // Ensure the json module is loaded in the global scope
-        let s_json = CString::new("json").unwrap();
-        let json_module = PyImport_ImportModule(s_json.as_ptr());
-        let json_key = CString::new("json").unwrap();
-        PyDict_SetItemString(p_global, json_key.as_ptr(), json_module);
+        let json_module = PyImport_ImportModule(c"json".as_ptr());
+        PyDict_SetItemString(p_global, c"json".as_ptr(), json_module);
 
         // Load the traceback module
-        let s_traceback = CString::new("traceback").unwrap();
-        let traceback_module = PyImport_ImportModule(s_traceback.as_ptr());
+        let traceback_module = PyImport_ImportModule(c"traceback".as_ptr());
 
         // Add the bundle path to the system path
-        let p_path = PySys_GetObject(b"path\0".as_ptr() as *const c_char);
+        let p_path = PySys_GetObject(c"path".as_ptr());
         let c_bundle_path = CString::new(bundle_path.to_str().unwrap()).unwrap();
         let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
         PyList_Append(p_path, p_bundle_path);
         Py_DecRef(p_bundle_path);
 
         // Import the bundle module
-        let s_bundle = CString::new("bundle").unwrap();
-        let p_bundle_module = PyImport_ImportModule(s_bundle.as_ptr());
+        let p_bundle_module = PyImport_ImportModule(c"bundle".as_ptr());
         if !PyErr_Occurred().is_null() {
             error!("Error loading python bundle at path {:?}", bundle_path);
             PyErr_Print();
@@ -161,14 +164,14 @@ impl BundleInterface {
         }
     }
 
-    /// Get a ThreadScope for this bundle's interpreter.
+    /// Get a `ThreadScope` for this bundle's interpreter.
     /// Equivalent to C++ `bundle->threadScope()`.
     pub unsafe fn thread_scope(&self) -> ThreadScope {
         ThreadScope::new(self.inner.python_interpreter.interp())
     }
 
-    /// Run a bundle function. Mirrors C++ BundleInterface::run().
-    /// Returns the raw PyObject* result.
+    /// Run a bundle function. Mirrors C++ `BundleInterface::run()`.
+    /// Returns the raw `PyObject`* result.
     pub unsafe fn run(
         &self,
         func: &str,
@@ -189,7 +192,7 @@ impl BundleInterface {
                 let mut extype: *mut PyObject = std::ptr::null_mut();
                 let mut value: *mut PyObject = std::ptr::null_mut();
                 let mut tb: *mut PyObject = std::ptr::null_mut();
-                PyErr_Fetch(&mut extype, &mut value, &mut tb);
+                PyErr_Fetch(&raw mut extype, &raw mut value, &raw mut tb);
                 Py_XDECREF(extype);
                 Py_XDECREF(value);
                 Py_XDECREF(tb);
@@ -232,7 +235,8 @@ impl BundleInterface {
         Ok(p_result)
     }
 
-    /// Convert a PyObject to a Rust String. Mirrors C++ BundleInterface::toString().
+    /// Convert a `PyObject` to a Rust String. Mirrors C++ `BundleInterface::toString()`.
+    #[allow(clippy::unused_self)]
     pub unsafe fn to_string_py(&self, obj: *mut PyObject) -> String {
         if obj.is_null() {
             return String::new();
@@ -244,7 +248,8 @@ impl BundleInterface {
         CStr::from_ptr(c_str).to_string_lossy().into_owned()
     }
 
-    /// Convert a PyObject to u64. Mirrors C++ BundleInterface::toUint64().
+    /// Convert a `PyObject` to u64. Mirrors C++ `BundleInterface::toUint64()`.
+    #[allow(clippy::unused_self)]
     pub unsafe fn to_uint64(&self, obj: *mut PyObject) -> u64 {
         if obj.is_null() {
             return 0;
@@ -252,7 +257,8 @@ impl BundleInterface {
         PyLong_AsUnsignedLongLong(obj)
     }
 
-    /// Convert a PyObject to bool. Mirrors C++ BundleInterface::toBool().
+    /// Convert a `PyObject` to bool. Mirrors C++ `BundleInterface::toBool()`.
+    #[allow(clippy::unused_self)]
     pub unsafe fn to_bool(&self, obj: *mut PyObject) -> bool {
         if obj.is_null() {
             return false;
@@ -260,14 +266,13 @@ impl BundleInterface {
         obj == my_py_true_struct()
     }
 
-    /// Call json.dumps on a PyObject. Mirrors C++ BundleInterface::jsonDumps().
+    /// Call json.dumps on a `PyObject`. Mirrors C++ `BundleInterface::jsonDumps()`.
     pub unsafe fn json_dumps(&self, obj: *mut PyObject) -> String {
         if obj.is_null() {
             return "null".to_string();
         }
 
-        let s_dumps = CString::new("dumps").unwrap();
-        let p_func = PyObject_GetAttrString(self.inner.json_module, s_dumps.as_ptr());
+        let p_func = PyObject_GetAttrString(self.inner.json_module, c"dumps".as_ptr());
 
         let p_args = PyTuple_New(1);
         Py_IncRef(obj); // INCREF before SetItem (which steals a ref) – matches C++
@@ -292,10 +297,9 @@ impl BundleInterface {
         result
     }
 
-    /// Call json.loads on a string. Mirrors C++ BundleInterface::jsonLoads().
+    /// Call json.loads on a string. Mirrors C++ `BundleInterface::jsonLoads()`.
     pub unsafe fn json_loads(&self, content: &str) -> *mut PyObject {
-        let s_loads = CString::new("loads").unwrap();
-        let p_func = PyObject_GetAttrString(self.inner.json_module, s_loads.as_ptr());
+        let p_func = PyObject_GetAttrString(self.inner.json_module, c"loads".as_ptr());
 
         let p_args = PyTuple_New(1);
         let p_value = PyUnicode_FromString(CString::new(content).unwrap().as_ptr());
@@ -313,20 +317,20 @@ impl BundleInterface {
         result
     }
 
-    /// Print the last Python exception. Mirrors C++ BundleInterface::printLastPythonException().
+    /// Print the last Python exception. Mirrors C++ `BundleInterface::printLastPythonException()`.
     pub unsafe fn print_last_python_exception(&self) {
         let mut extype: *mut PyObject = std::ptr::null_mut();
         let mut value: *mut PyObject = std::ptr::null_mut();
         let mut traceback: *mut PyObject = std::ptr::null_mut();
 
-        PyErr_Fetch(&mut extype, &mut value, &mut traceback);
+        PyErr_Fetch(&raw mut extype, &raw mut value, &raw mut traceback);
         if extype.is_null() {
             tracing::info!("No active python exception to print");
             return;
         }
 
-        let s_format = CString::new("format_exception").unwrap();
-        let p_func = PyObject_GetAttrString(self.inner.traceback_module, s_format.as_ptr());
+        let p_func =
+            PyObject_GetAttrString(self.inner.traceback_module, c"format_exception".as_ptr());
 
         let p_args = PyTuple_New(3);
         PyTuple_SetItem(p_args, 0, extype);
@@ -366,7 +370,8 @@ impl BundleInterface {
         Py_XDECREF(p_func);
     }
 
-    /// Dispose a PyObject. Mirrors C++ BundleInterface::disposeObject().
+    /// Dispose a `PyObject`. Mirrors C++ `BundleInterface::disposeObject()`.
+    #[allow(clippy::unused_self)]
     pub unsafe fn dispose_object(&self, obj: *mut PyObject) {
         if !obj.is_null() {
             Py_DecRef(obj);

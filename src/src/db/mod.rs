@@ -1,229 +1,226 @@
 pub mod job;
 pub mod jobstatus;
 
-use crate::db::job::Column as JobColumn;
-use crate::db::job::Entity as Job;
-use crate::db::jobstatus::Column as JobStatusColumn;
-use crate::db::jobstatus::Entity as JobStatus;
-use sea_orm::{
-    ActiveModelBehavior, ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
-    IntoActiveModel, QueryFilter, Set,
+use crate::messaging::{
+    Message, Priority, DB_JOBSTATUS_DELETE_BY_ID_LIST, DB_JOBSTATUS_GET_BY_JOB_ID,
+    DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT, DB_JOBSTATUS_SAVE, DB_JOB_DELETE, DB_JOB_GET_BY_ID,
+    DB_JOB_GET_BY_JOB_ID, DB_JOB_GET_RUNNING_JOBS, DB_JOB_SAVE,
 };
+use crate::websocket::get_websocket_client;
 
-use std::sync::atomic::{AtomicPtr, Ordering};
+fn parse_response(resp: &Message) -> Message {
+    Message::from_data(resp.get_data().clone())
+}
 
-static DB_PTR: AtomicPtr<DatabaseConnection> = AtomicPtr::new(std::ptr::null_mut());
-
-pub async fn initialize(url: &str) -> Result<(), sea_orm::DbErr> {
-    let db = sea_orm::Database::connect(url).await?;
-    let boxed = Box::new(db);
-    let ptr = Box::into_raw(boxed);
-
-    let old_ptr = DB_PTR.swap(ptr, Ordering::SeqCst);
-    if !old_ptr.is_null() {
-        // Clean up the old connection to prevent leaks
-        unsafe {
-            drop(Box::from_raw(old_ptr));
-        }
+fn parse_job(resp: &mut Message) -> job::Model {
+    job::Model {
+        id: resp.pop_ulong() as i64,
+        job_id: {
+            let v = resp.pop_ulong() as i64;
+            if v != 0 {
+                Some(v)
+            } else {
+                None
+            }
+        },
+        scheduler_id: {
+            let v = resp.pop_ulong() as i64;
+            if v != 0 {
+                Some(v)
+            } else {
+                None
+            }
+        },
+        submitting: resp.pop_bool(),
+        submitting_count: resp.pop_uint() as i32,
+        bundle_hash: resp.pop_string(),
+        working_directory: resp.pop_string(),
+        running: resp.pop_bool(),
+        deleting: resp.pop_bool(),
+        deleted: resp.pop_bool(),
     }
+}
+
+fn parse_status(resp: &mut Message) -> jobstatus::Model {
+    jobstatus::Model {
+        id: resp.pop_ulong() as i64,
+        job_id: resp.pop_ulong() as i64,
+        what: resp.pop_string(),
+        state: resp.pop_int(),
+    }
+}
+
+pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
+    let msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Medium, "database");
+    let raw = get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    let _success = resp.pop_bool();
+    let count = resp.pop_uint() as usize;
+    let mut jobs = Vec::with_capacity(count);
+    for _ in 0..count {
+        jobs.push(parse_job(&mut resp));
+    }
+    Ok(jobs)
+}
+
+pub async fn get_job_by_id(id: i64) -> Result<Option<job::Model>, String> {
+    let mut msg = Message::new(DB_JOB_GET_BY_ID, Priority::Medium, "database");
+    msg.push_ulong(id as u64);
+    let raw = get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    let _success = resp.pop_bool();
+    let count = resp.pop_uint();
+    if count == 0 {
+        return Ok(None);
+    }
+    Ok(Some(parse_job(&mut resp)))
+}
+
+pub async fn get_job_by_job_id(job_id_val: i64) -> Result<Option<job::Model>, String> {
+    let mut msg = Message::new(DB_JOB_GET_BY_JOB_ID, Priority::Medium, "database");
+    msg.push_ulong(job_id_val as u64);
+    let raw = get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    let _success = resp.pop_bool();
+    let count = resp.pop_uint();
+    if count == 0 {
+        return Ok(None);
+    }
+    Ok(Some(parse_job(&mut resp)))
+}
+
+pub async fn delete_job(id: i64) -> Result<(), String> {
+    let mut msg = Message::new(DB_JOB_DELETE, Priority::Medium, "database");
+    msg.push_ulong(id as u64);
+    get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn get_db() -> &'static DatabaseConnection {
-    let ptr = DB_PTR.load(Ordering::SeqCst);
-    if ptr.is_null() {
-        panic!("DB not initialized");
-    }
-    unsafe { &*ptr }
-}
-
-#[cfg(test)]
-pub async fn reset_for_test(url: &str) -> Result<(), sea_orm::DbErr> {
-    use sea_orm::{ConnectionTrait, DbBackend};
-
-    // Drop the old connection if it exists
-    let old_ptr = DB_PTR.load(Ordering::SeqCst);
-    if !old_ptr.is_null() {
-        unsafe {
-            drop(Box::from_raw(old_ptr));
-        }
-    }
-
-    // Create a fresh connection
-    let db = sea_orm::Database::connect(url).await?;
-
-    // Create schema
-    let schema_job = r#"
-        CREATE TABLE IF NOT EXISTS jobclient_job (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id INTEGER,
-            scheduler_id INTEGER,
-            submitting BOOLEAN NOT NULL,
-            submitting_count INTEGER NOT NULL,
-            bundle_hash TEXT NOT NULL,
-            working_directory TEXT NOT NULL,
-            running BOOLEAN NOT NULL,
-            deleted BOOLEAN NOT NULL,
-            deleting BOOLEAN NOT NULL
-        );
-    "#;
-    let schema_status = r#"
-        CREATE TABLE IF NOT EXISTS jobclient_jobstatus (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            what TEXT NOT NULL,
-            state INTEGER NOT NULL,
-            job_id INTEGER NOT NULL,
-            FOREIGN KEY(job_id) REFERENCES jobclient_job(id)
-        );
-    "#;
-    let _ = db
-        .execute(sea_orm::Statement::from_string(
-            DbBackend::Sqlite,
-            schema_job.to_string(),
-        ))
-        .await;
-    let _ = db
-        .execute(sea_orm::Statement::from_string(
-            DbBackend::Sqlite,
-            schema_status.to_string(),
-        ))
-        .await;
-
-    // Store in the global pointer
-    let boxed = Box::new(db);
-    let ptr = Box::into_raw(boxed);
-    let _ = DB_PTR.swap(ptr, Ordering::SeqCst);
-    Ok(())
-}
-
-pub async fn get_running_jobs(db: &DatabaseConnection) -> Result<Vec<job::Model>, sea_orm::DbErr> {
-    Job::find()
-        .filter(JobColumn::Running.eq(true))
-        .all(db)
-        .await
-}
-
-pub async fn get_job_by_id(
-    db: &DatabaseConnection,
-    id: i64,
-) -> Result<Option<job::Model>, sea_orm::DbErr> {
-    Job::find_by_id(id).one(db).await
-}
-
-pub async fn get_job_by_job_id(
-    db: &DatabaseConnection,
-    job_id_val: i64,
-) -> Result<Option<job::Model>, sea_orm::DbErr> {
-    Job::find()
-        .filter(JobColumn::JobId.eq(job_id_val))
-        .one(db)
-        .await
-}
-
-pub async fn delete_job(
-    db: &DatabaseConnection,
-    id: i64,
-) -> Result<sea_orm::DeleteResult, sea_orm::DbErr> {
-    Job::delete_by_id(id).exec(db).await
-}
-
-pub async fn get_or_create_by_job_id(
-    db: &DatabaseConnection,
-    job_id_val: i64,
-) -> Result<job::Model, sea_orm::DbErr> {
-    let existing = Job::find()
-        .filter(JobColumn::JobId.eq(job_id_val))
-        .one(db)
-        .await?;
-
-    if let Some(job) = existing {
-        Ok(job)
-    } else {
-        Ok(job::Model {
+pub async fn get_or_create_by_job_id(job_id_val: i64) -> Result<job::Model, String> {
+    match get_job_by_job_id(job_id_val).await? {
+        Some(job) => Ok(job),
+        None => Ok(job::Model {
             id: 0,
             job_id: None,
             scheduler_id: None,
             submitting: false,
             submitting_count: 0,
-            bundle_hash: "".to_string(),
-            working_directory: "".to_string(),
+            bundle_hash: String::new(),
+            working_directory: String::new(),
             running: false,
             deleted: false,
             deleting: false,
-        })
+        }),
     }
 }
 
 pub async fn get_job_status_by_job_id_and_what(
-    db: &DatabaseConnection,
     job_id: i64,
     what: &str,
-) -> Result<Vec<jobstatus::Model>, sea_orm::DbErr> {
-    JobStatus::find()
-        .filter(JobStatusColumn::JobId.eq(job_id))
-        .filter(JobStatusColumn::What.eq(what))
-        .all(db)
+) -> Result<Vec<jobstatus::Model>, String> {
+    let mut msg = Message::new(
+        DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT,
+        Priority::Medium,
+        "database",
+    );
+    msg.push_ulong(job_id as u64);
+    msg.push_string(what);
+    let raw = get_websocket_client()
+        .send_db_request(msg)
         .await
-}
-
-pub async fn get_job_status_by_job_id(
-    db: &DatabaseConnection,
-    job_id: i64,
-) -> Result<Vec<jobstatus::Model>, sea_orm::DbErr> {
-    JobStatus::find()
-        .filter(JobStatusColumn::JobId.eq(job_id))
-        .all(db)
-        .await
-}
-
-pub async fn delete_status_by_id_list(
-    db: &DatabaseConnection,
-    ids: Vec<i64>,
-) -> Result<sea_orm::DeleteResult, sea_orm::DbErr> {
-    JobStatus::delete_many()
-        .filter(JobStatusColumn::Id.is_in(ids))
-        .exec(db)
-        .await
-}
-
-pub async fn save_job(
-    db: &DatabaseConnection,
-    job: job::Model,
-) -> Result<job::Model, sea_orm::DbErr> {
-    if job.id == 0 {
-        let mut active = job.into_active_model();
-        active.id = sea_orm::ActiveValue::NotSet;
-        active.insert(db).await
-    } else {
-        let mut active = job::ActiveModel::new();
-        active.id = Set(job.id);
-        active.job_id = Set(job.job_id);
-        active.scheduler_id = Set(job.scheduler_id);
-        active.submitting = Set(job.submitting);
-        active.submitting_count = Set(job.submitting_count);
-        active.bundle_hash = Set(job.bundle_hash);
-        active.working_directory = Set(job.working_directory);
-        active.running = Set(job.running);
-        active.deleted = Set(job.deleted);
-        active.deleting = Set(job.deleting);
-        active.update(db).await
+        .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    let _success = resp.pop_bool();
+    let count = resp.pop_uint() as usize;
+    let mut statuses = Vec::with_capacity(count);
+    for _ in 0..count {
+        statuses.push(parse_status(&mut resp));
     }
+    Ok(statuses)
 }
 
-pub async fn save_status(
-    db: &DatabaseConnection,
-    status: jobstatus::Model,
-) -> Result<jobstatus::Model, sea_orm::DbErr> {
-    if status.id == 0 {
-        let mut active = status.into_active_model();
-        active.id = sea_orm::ActiveValue::NotSet;
-        active.insert(db).await
-    } else {
-        let mut active = jobstatus::ActiveModel::new();
-        active.id = Set(status.id);
-        active.what = Set(status.what);
-        active.state = Set(status.state);
-        active.job_id = Set(status.job_id);
-        active.update(db).await
+pub async fn get_job_status_by_job_id(job_id: i64) -> Result<Vec<jobstatus::Model>, String> {
+    let mut msg = Message::new(DB_JOBSTATUS_GET_BY_JOB_ID, Priority::Medium, "database");
+    msg.push_ulong(job_id as u64);
+    let raw = get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    let _success = resp.pop_bool();
+    let count = resp.pop_uint() as usize;
+    let mut statuses = Vec::with_capacity(count);
+    for _ in 0..count {
+        statuses.push(parse_status(&mut resp));
     }
+    Ok(statuses)
+}
+
+pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
+    let mut msg = Message::new(DB_JOBSTATUS_DELETE_BY_ID_LIST, Priority::Medium, "database");
+    msg.push_uint(ids.len() as u32);
+    for id in ids {
+        msg.push_ulong(id as u64);
+    }
+    get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
+    let mut msg = Message::new(DB_JOB_SAVE, Priority::Medium, "database");
+    msg.push_ulong(job.id as u64);
+    msg.push_ulong(job.job_id.unwrap_or(0) as u64);
+    msg.push_ulong(job.scheduler_id.unwrap_or(0) as u64);
+    msg.push_bool(job.submitting);
+    msg.push_uint(job.submitting_count as u32);
+    msg.push_string(&job.bundle_hash);
+    msg.push_string(&job.working_directory);
+    msg.push_bool(job.running);
+    msg.push_bool(job.deleting);
+    msg.push_bool(job.deleted);
+    let raw = get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    let _success = resp.pop_bool();
+    let saved_id = resp.pop_ulong() as i64;
+    Ok(job::Model {
+        id: saved_id,
+        ..job
+    })
+}
+
+pub async fn save_status(status: jobstatus::Model) -> Result<jobstatus::Model, String> {
+    let mut msg = Message::new(DB_JOBSTATUS_SAVE, Priority::Medium, "database");
+    msg.push_ulong(status.id as u64);
+    msg.push_string(&status.what);
+    msg.push_int(status.state);
+    msg.push_ulong(status.job_id as u64);
+    let raw = get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    let _success = resp.pop_bool();
+    let saved_id = resp.pop_ulong() as i64;
+    Ok(jobstatus::Model {
+        id: saved_id,
+        ..status
+    })
 }

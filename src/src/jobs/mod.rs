@@ -6,7 +6,6 @@ use crate::messaging::{
     UPDATE_JOB,
 };
 use crate::websocket::get_websocket_client;
-use lazy_static::lazy_static;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::process::Command;
@@ -14,9 +13,8 @@ use tracing::{error, info, warn};
 
 use tokio::sync::Mutex as TokioMutex;
 
-lazy_static! {
-    static ref SUBMIT_MUTEX: TokioMutex<()> = TokioMutex::new(());
-}
+static SUBMIT_MUTEX: std::sync::LazyLock<TokioMutex<()>> =
+    std::sync::LazyLock::new(|| TokioMutex::new(()));
 
 pub const MAX_SUBMIT_COUNT: i32 = 60;
 
@@ -26,19 +24,18 @@ fn get_default_job_details() -> Value {
     })
 }
 
-pub async fn handle_job_submit(mut msg: Message) {
-    let job_id = msg.pop_uint() as i64;
+pub fn handle_job_submit(mut msg: Message) {
+    let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
     let params = msg.pop_string();
 
     tokio::spawn(async move {
-        let db = db::get_db();
         let mut job_model;
 
         let mut details = get_default_job_details();
         {
             let _lock = SUBMIT_MUTEX.lock().await;
-            job_model = match db::get_or_create_by_job_id(db, job_id).await {
+            job_model = match db::get_or_create_by_job_id(job_id).await {
                 Ok(j) => j,
                 Err(e) => {
                     error!("DB Error in handle_job_submit: {}", e);
@@ -54,7 +51,7 @@ pub async fn handle_job_submit(mut msg: Message) {
                     job_model.job_id = Some(0);
                 } else {
                     info!("Job with ID {} is being submitted, nothing to do", job_id);
-                    let _ = db::save_job(db, job_model).await;
+                    let _ = db::save_job(job_model).await;
                     return;
                 }
             }
@@ -74,28 +71,22 @@ pub async fn handle_job_submit(mut msg: Message) {
             job_model.job_id = Some(job_id);
             job_model.bundle_hash = bundle_hash.clone();
             job_model.submitting = true;
-            job_model.working_directory = "".to_string();
-            job_model = db::save_job(db, job_model)
-                .await
-                .expect("Failed to save job");
+            job_model.working_directory = String::new();
+            job_model = db::save_job(job_model).await.expect("Failed to save job");
         }
 
         let bm = BundleManager::singleton();
-        let working_dir =
-            unsafe { bm.run_bundle_string("working_directory", &bundle_hash, &details, "") };
+        let working_dir = bm.run_bundle_string("working_directory", &bundle_hash, &details, "");
         job_model.working_directory = working_dir;
-        job_model = db::save_job(db, job_model)
-            .await
-            .expect("Failed to save job");
+        job_model = db::save_job(job_model).await.expect("Failed to save job");
 
-        let scheduler_id =
-            unsafe { bm.run_bundle_uint64("submit", &bundle_hash, &details, &params) };
+        let scheduler_id = bm.run_bundle_uint64("submit", &bundle_hash, &details, &params);
 
         job_model.scheduler_id = Some(scheduler_id as i64);
 
         if scheduler_id == 0 {
             error!("Job with UI ID {} could not be submitted", job_id);
-            let _ = db::delete_job(db, job_model.id).await;
+            let _ = db::delete_job(job_model.id).await;
 
             let ws = get_websocket_client();
             let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
@@ -123,7 +114,7 @@ pub async fn handle_job_submit(mut msg: Message) {
             );
         } else {
             job_model.submitting = false;
-            let _ = db::save_job(db, job_model).await;
+            let _ = db::save_job(job_model).await;
 
             info!(
                 "Successfully submitted job with UI ID {}, got scheduler id {}",
@@ -147,14 +138,13 @@ pub async fn handle_job_submit(mut msg: Message) {
 }
 
 pub async fn check_job_status(job: job::Model, force_notification: bool) {
-    let db = db::get_db();
     let mut details = get_default_job_details();
     details["job_id"] = json!(job.job_id);
     details["scheduler_id"] = json!(job.scheduler_id);
 
     info!("A. Status");
     let bm = BundleManager::singleton();
-    let status_json = unsafe { bm.run_bundle_json("status", &job.bundle_hash, &details, "") };
+    let status_json = bm.run_bundle_json("status", &job.bundle_hash, &details, "");
     info!("A. Status Done");
 
     if let Some(statuses) = status_json["status"].as_array() {
@@ -169,32 +159,32 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
             }
 
             let status = json_status.as_u64().unwrap_or(0) as u32;
-            let mut v_status = db::get_job_status_by_job_id_and_what(db, job.id, what)
+            let mut v_status = db::get_job_status_by_job_id_and_what(job.id, what)
                 .await
                 .unwrap_or_default();
 
             if v_status.len() > 1 {
                 let ids: Vec<i64> = v_status.iter().map(|s| s.id).collect();
-                let _ = db::delete_status_by_id_list(db, ids).await;
+                let _ = db::delete_status_by_id_list(ids).await;
                 v_status = vec![];
             }
 
             if force_notification || v_status.is_empty() || status != v_status[0].state as u32 {
                 info!("A. Doing update");
-                let mut state_item = if !v_status.is_empty() {
-                    v_status[0].clone()
-                } else {
+                let mut state_item = if v_status.is_empty() {
                     jobstatus::Model {
                         id: 0,
                         job_id: job.id,
                         what: what.to_string(),
                         state: status as i32,
                     }
+                } else {
+                    v_status[0].clone()
                 };
 
                 state_item.what = what.to_string();
                 state_item.state = status as i32;
-                let _ = db::save_status(db, state_item).await;
+                let _ = db::save_status(state_item).await;
 
                 let ws = get_websocket_client();
                 let mut result = Message::new(
@@ -217,7 +207,7 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
         }
     }
 
-    let v_status = db::get_job_status_by_job_id(db, job.id)
+    let v_status = db::get_job_status_by_job_id(job.id)
         .await
         .unwrap_or_default();
     let mut job_error = 0u32;
@@ -238,7 +228,7 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
         info!("A. Job Complete save");
         let mut job_to_save = job.clone();
         job_to_save.running = false;
-        let _ = db::save_job(db, job_to_save).await;
+        let _ = db::save_job(job_to_save).await;
 
         info!("A. Archive Job");
         archive_job(&job).await;
@@ -264,9 +254,8 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
 }
 
 pub async fn check_all_jobs_status() {
-    let db = db::get_db();
     info!("Checking status of running jobs...");
-    let jobs = match db::get_running_jobs(db).await {
+    let jobs = match db::get_running_jobs().await {
         Ok(j) => j,
         Err(e) => {
             error!("Failed to get running jobs: {}", e);
@@ -315,14 +304,12 @@ pub async fn archive_job(job: &job::Model) -> bool {
     success
 }
 
-pub async fn handle_job_cancel(mut msg: Message) -> tokio::task::JoinHandle<()> {
+pub fn handle_job_cancel(mut msg: Message) {
     tokio::spawn(async move {
-        let db = db::get_db();
-        let job_id = msg.pop_uint() as i64;
+        let job_id = i64::from(msg.pop_uint());
 
-        let mut job_model = match db::get_or_create_by_job_id(db, job_id).await {
-            Ok(j) => j,
-            Err(_) => return,
+        let Ok(mut job_model) = db::get_or_create_by_job_id(job_id).await else {
+            return;
         };
 
         if job_model.id == 0 || !job_model.running || job_model.submitting {
@@ -349,7 +336,7 @@ pub async fn handle_job_cancel(mut msg: Message) -> tokio::task::JoinHandle<()> 
         }
 
         // Check if already cancelled before doing status check
-        let db_status = db::get_job_status_by_job_id(db, job_model.id)
+        let db_status = db::get_job_status_by_job_id(job_model.id)
             .await
             .unwrap_or_default();
         if db_status.iter().any(|s| s.state as u32 == CANCELLED) {
@@ -363,7 +350,7 @@ pub async fn handle_job_cancel(mut msg: Message) -> tokio::task::JoinHandle<()> 
         // Force a status check
         info!("Cancel: About to check status for job {}", job_id);
         check_job_status(job_model.clone(), false).await;
-        job_model = db::get_job_by_id(db, job_model.id).await.unwrap().unwrap();
+        job_model = db::get_job_by_id(job_model.id).await.unwrap().unwrap();
         info!(
             "Cancel: After status check, job.running = {}",
             job_model.running
@@ -383,18 +370,17 @@ pub async fn handle_job_cancel(mut msg: Message) -> tokio::task::JoinHandle<()> 
         details["cluster"] = json!("test_cluster");
 
         let bm = BundleManager::singleton();
-        let cancelled =
-            unsafe { bm.run_bundle_bool("cancel", &job_model.bundle_hash, &details, "") };
+        let cancelled = bm.run_bundle_bool("cancel", &job_model.bundle_hash, &details, "");
 
         if !cancelled {
             warn!("Job {} could not be cancelled by the bundle.", job_id);
             return;
         }
 
-        job_model = db::get_job_by_id(db, job_model.id).await.unwrap().unwrap();
+        job_model = db::get_job_by_id(job_model.id).await.unwrap().unwrap();
         check_job_status(job_model.clone(), false).await;
 
-        let db_status = db::get_job_status_by_job_id(db, job_model.id)
+        let db_status = db::get_job_status_by_job_id(job_model.id)
             .await
             .unwrap_or_default();
         if db_status.iter().any(|s| s.state as u32 == CANCELLED) {
@@ -402,7 +388,7 @@ pub async fn handle_job_cancel(mut msg: Message) -> tokio::task::JoinHandle<()> 
         }
 
         job_model.running = false;
-        let _ = db::save_job(db, job_model.clone()).await;
+        let _ = db::save_job(job_model.clone()).await;
 
         archive_job(&job_model).await;
 
@@ -418,17 +404,15 @@ pub async fn handle_job_cancel(mut msg: Message) -> tokio::task::JoinHandle<()> 
             Priority::Medium,
             Arc::new(|| {}),
         );
-    })
+    });
 }
 
-pub async fn handle_job_delete(mut msg: Message) {
+pub fn handle_job_delete(mut msg: Message) {
     tokio::spawn(async move {
-        let db = db::get_db();
-        let job_id = msg.pop_uint() as i64;
+        let job_id = i64::from(msg.pop_uint());
 
-        let mut job_model = match db::get_or_create_by_job_id(db, job_id).await {
-            Ok(j) => j,
-            Err(_) => return,
+        let Ok(mut job_model) = db::get_or_create_by_job_id(job_id).await else {
+            return;
         };
 
         if job_model.id == 0 || job_model.running || job_model.submitting || job_model.deleted {
@@ -459,27 +443,25 @@ pub async fn handle_job_delete(mut msg: Message) {
         }
 
         job_model.deleting = true;
-        job_model = db::save_job(db, job_model)
-            .await
-            .expect("Failed to save job");
+        job_model = db::save_job(job_model).await.expect("Failed to save job");
 
         let mut details = get_default_job_details();
         details["job_id"] = json!(job_model.job_id);
         details["scheduler_id"] = json!(job_model.scheduler_id);
 
         let bm = BundleManager::singleton();
-        let deleted = unsafe { bm.run_bundle_bool("delete", &job_model.bundle_hash, &details, "") };
+        let deleted = bm.run_bundle_bool("delete", &job_model.bundle_hash, &details, "");
 
         if !deleted {
             job_model.deleting = false;
-            let _ = db::save_job(db, job_model).await;
+            let _ = db::save_job(job_model).await;
             warn!("Job {} could not be deleted by the bundle.", job_id);
             return;
         }
 
         job_model.deleting = false;
         job_model.deleted = true;
-        let _ = db::save_job(db, job_model.clone()).await;
+        let _ = db::save_job(job_model.clone()).await;
 
         let ws = get_websocket_client();
         let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());

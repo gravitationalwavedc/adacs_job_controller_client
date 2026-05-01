@@ -1,7 +1,9 @@
+#![allow(clippy::uninlined_format_args)]
 use crate::bundle_logging::get_last_log_message;
 use crate::bundle_manager::BundleManager;
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use serde_json::json;
+use test_fork::test;
 use uuid::Uuid;
 
 fn setup() {
@@ -18,9 +20,8 @@ fn test_simple_stdout() {
     fixture.write_bundle_logging_std_out(&bundle_hash, test_message);
 
     BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-    let result = unsafe {
-        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
-    };
+    let result =
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
 
     assert!(result);
     let last_log = get_last_log_message().expect("No log message captured");
@@ -42,9 +43,8 @@ fn test_complex_stdout() {
     fixture.write_bundle_logging_std_out(&bundle_hash, test_message);
 
     BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-    let result = unsafe {
-        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
-    };
+    let result =
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
 
     assert!(result);
     let last_log = get_last_log_message().expect("No log message captured");
@@ -68,9 +68,8 @@ fn test_simple_stderr() {
     fixture.write_bundle_logging_std_err(&bundle_hash, test_message);
 
     BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-    let result = unsafe {
-        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
-    };
+    let result =
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
 
     assert!(result);
     let last_log = get_last_log_message().expect("No log message captured");
@@ -92,9 +91,8 @@ fn test_complex_stderr() {
     fixture.write_bundle_logging_std_err(&bundle_hash, test_message);
 
     BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-    let result = unsafe {
-        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
-    };
+    let result =
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
 
     assert!(result);
     let last_log = get_last_log_message().expect("No log message captured");
@@ -118,9 +116,8 @@ fn test_stdout_during_load() {
     fixture.write_bundle_logging_std_out_during_load(&bundle_hash, test_message);
 
     BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-    let result = unsafe {
-        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
-    };
+    let result =
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
 
     assert!(result);
     let last_log = get_last_log_message().expect("No log message captured");
@@ -141,9 +138,8 @@ fn test_stderr_during_load() {
     fixture.write_bundle_logging_std_err_during_load(&bundle_hash, test_message);
 
     BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
-    let result = unsafe {
-        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "")
-    };
+    let result =
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
 
     assert!(result);
     let last_log = get_last_log_message().expect("No log message captured");

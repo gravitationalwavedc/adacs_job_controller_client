@@ -1,12 +1,9 @@
-use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::thread::ThreadId;
 
-lazy_static! {
-    pub static ref THREAD_BUNDLE_HASH_MAP: RwLock<HashMap<ThreadId, String>> =
-        RwLock::new(HashMap::new());
-}
+pub static THREAD_BUNDLE_HASH_MAP: std::sync::LazyLock<RwLock<HashMap<ThreadId, String>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub fn set_current_thread_bundle(bundle_hash: String) {
     THREAD_BUNDLE_HASH_MAP

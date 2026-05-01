@@ -2,31 +2,31 @@ use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-pub const LOGGING_STDOUT_SCRIPT: &str = r#"
+pub const LOGGING_STDOUT_SCRIPT: &str = r"
 def logging_test(details, job_data):
     print(xxx)
     return True
-"#;
+";
 
-pub const LOGGING_STDERR_SCRIPT: &str = r#"
+pub const LOGGING_STDERR_SCRIPT: &str = r"
 def logging_test(details, job_data):
     import sys
     print(xxx, file=sys.stderr)
     return True
-"#;
+";
 
-pub const LOGGING_STDOUT_DURING_LOAD_SCRIPT: &str = r#"
+pub const LOGGING_STDOUT_DURING_LOAD_SCRIPT: &str = r"
 print(xxx)
 def logging_test(details, job_data):
     return True
-"#;
+";
 
-pub const LOGGING_STDERR_DURING_LOAD_SCRIPT: &str = r#"
+pub const LOGGING_STDERR_DURING_LOAD_SCRIPT: &str = r"
 import sys
 print(xxx, file=sys.stderr)
 def logging_test(details, job_data):
     return True
-"#;
+";
 
 pub const JOB_SUBMIT_SCRIPT: &str = r#"
 def working_directory(details, job_data):
@@ -122,22 +122,20 @@ impl BundleFixture {
 
     pub fn write_job_cancel(&self, hash: &str, return_val: &str) {
         let script = format!(
-            r#"
+            r"
 def cancel(details, job_data):
-    return {}
-"#,
-            return_val
+    return {return_val}
+"
         );
         self.write_script(hash, &script, &[]);
     }
 
     pub fn write_job_delete(&self, hash: &str, return_val: &str) {
         let script = format!(
-            r#"
+            r"
 def delete(details, job_data):
-    return {}
-"#,
-            return_val
+    return {return_val}
+"
         );
         self.write_script(hash, &script, &[]);
     }
@@ -162,12 +160,11 @@ def delete(details, job_data):
 
     pub fn write_job_status(&self, hash: &str, status_json: &str) {
         let script = format!(
-            r#"
+            r"
 def status(details, job_data):
     import json
-    return json.loads('{}')
-"#,
-            status_json
+    return json.loads('{status_json}')
+"
         );
         self.write_script(hash, &script, &[]);
     }
@@ -176,13 +173,16 @@ def status(details, job_data):
         let script = format!(
             r#"
 import _bundledb
+import json
+
 def submit(details, job_data):
+    job = json.loads('{job_json}')
     try:
-        return _bundledb.create_or_update_job({})
+        _bundledb.create_or_update_job(job)
+        return job
     except Exception as e:
         return {{"error": str(e)}}
-"#,
-            job_json
+"#
         );
         self.write_script(hash, &script, &[]);
     }
@@ -191,13 +191,13 @@ def submit(details, job_data):
         let script = format!(
             r#"
 import _bundledb
+
 def submit(details, job_data):
     try:
-        return _bundledb.get_job_by_id({})
+        return _bundledb.get_job_by_id({job_id})
     except Exception as e:
         return {{"error": str(e)}}
-"#,
-            job_id
+"#
         );
         self.write_script(hash, &script, &[]);
     }
@@ -206,14 +206,16 @@ def submit(details, job_data):
         let script = format!(
             r#"
 import _bundledb
+import json
+
 def submit(details, job_data):
+    job = json.loads('{job_json}')
     try:
-        _bundledb.delete_job({})
-        return None
+        _bundledb.delete_job(job)
+        return {{"error": False}}
     except Exception as e:
         return {{"error": str(e)}}
-"#,
-            job_json
+"#
         );
         self.write_script(hash, &script, &[]);
     }
@@ -222,21 +224,19 @@ def submit(details, job_data):
         let script = format!(
             r#"
 def working_directory(details, job_data):
-    return "{}"
-"#,
-            working_dir
+    return "{working_dir}"
+"#
         );
         self.write_script(hash, &script, &[]);
     }
 
     pub fn write_job_status_complete(&self, hash: &str, status_json: &str) {
         let script = format!(
-            r#"
+            r"
 def status(details, job_data):
     import json
-    return json.loads('{}')
-"#,
-            status_json
+    return json.loads('{status_json}')
+"
         );
         self.write_script(hash, &script, &[]);
     }
@@ -253,26 +253,18 @@ def status(details, job_data):
         let script = format!(
             r#"
 def cancel(details, job_data):
-    assert details["job_id"] == {}
-    assert details["cluster"] == "{}"
-    assert details["scheduler_id"] == {}
-    return {}
+    assert details["job_id"] == {job_id}
+    assert details["cluster"] == "{cluster}"
+    assert details["scheduler_id"] == {scheduler_id}
+    return {cancel_result}
 
 def status(details, job_data):
-    assert details["job_id"] == {}
-    assert details["scheduler_id"] == {}
-    assert details["cluster"] == "{}"
+    assert details["job_id"] == {job_id}
+    assert details["scheduler_id"] == {scheduler_id}
+    assert details["cluster"] == "{cluster}"
     import json
-    return json.loads('{}')
-"#,
-            job_id,
-            cluster,
-            scheduler_id,
-            cancel_result,
-            job_id,
-            scheduler_id,
-            cluster,
-            status_json
+    return json.loads('{status_json}')
+"#
         );
         self.write_script(hash, &script, &[]);
     }
