@@ -8,119 +8,122 @@ use crate::messaging::{
 use crate::websocket::get_websocket_client;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::{Component, Path};
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, Semaphore};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
 use tracing::error;
 
-pub async fn handle_file_list(mut msg: Message) {
-    let job_id = i64::from(msg.pop_uint());
-    let uuid = msg.pop_string();
-    let bundle_hash = msg.pop_string();
-    let dir_path = msg.pop_string();
-    let is_recursive = msg.pop_bool();
+static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
-    let working_directory = if job_id != 0 {
-        if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
-            if job.submitting {
-                send_file_list_error(&uuid, "Job is not submitted");
+/// Caller note: this function spawns internally and does not need to be awaited.
+pub fn handle_file_list(mut msg: Message) {
+    let sem = FILE_LIST_SEMAPHORE.clone();
+    tokio::spawn(async move {
+        let _permit = sem.acquire_owned().await.expect("semaphore closed");
+        let job_id = i64::from(msg.pop_uint());
+        let uuid = msg.pop_string();
+        let bundle_hash = msg.pop_string();
+        let dir_path = msg.pop_string();
+        let is_recursive = msg.pop_bool();
+
+        let working_directory = if job_id != 0 {
+            if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
+                if job.submitting {
+                    send_file_list_error(&uuid, "Job is not submitted");
+                    return;
+                }
+                job.working_directory
+            } else {
+                send_file_list_error(&uuid, "Job does not exist");
                 return;
             }
-            job.working_directory
         } else {
-            send_file_list_error(&uuid, "Job does not exist");
+            let bm = BundleManager::singleton();
+            bm.run_bundle_string(
+                "working_directory",
+                &bundle_hash,
+                &json!(dir_path),
+                "file_list",
+            )
+        };
+
+        let full_path = Path::new(&working_directory).join(&dir_path);
+        let Ok(abs_path) = fs::canonicalize(&full_path).await else {
+            send_file_list_error(&uuid, "Path to list files does not exist");
+            return;
+        };
+
+        if !validate_path_is_within(&abs_path, &working_directory).await {
+            send_file_list_error(&uuid, "Path to list files is outside the working directory");
             return;
         }
-    } else {
-        let bm = BundleManager::singleton();
-        bm.run_bundle_string(
-            "working_directory",
-            &bundle_hash,
-            &json!(dir_path),
-            "file_list",
-        )
-    };
 
-    let full_path = Path::new(&working_directory).join(&dir_path);
-    let Ok(abs_path) = fs::canonicalize(&full_path).await else {
-        send_file_list_error(&uuid, "Path to list files does not exist");
-        return;
-    };
+        if !fs::metadata(&abs_path).await.is_ok_and(|m| m.is_dir()) {
+            send_file_list_error(&uuid, "Path to list files is not a directory");
+            return;
+        }
 
-    let Ok(canonical_working) = fs::canonicalize(&working_directory).await else {
-        send_file_list_error(&uuid, "Path to list files is outside the working directory");
-        return;
-    };
+        let mut file_list = Vec::new();
+        if is_recursive {
+            let mut stack = vec![abs_path.clone()];
+            while let Some(current_dir) = stack.pop() {
+                if let Ok(mut entries) = fs::read_dir(current_dir).await {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        let path = entry.path();
+                        let Ok(metadata) = entry.metadata().await else {
+                            continue;
+                        };
+                        if metadata.is_symlink() {
+                            continue;
+                        }
 
-    if !abs_path.starts_with(&canonical_working) {
-        send_file_list_error(&uuid, "Path to list files is outside the working directory");
-        return;
-    }
+                        let relative_path = path
+                            .strip_prefix(&working_directory)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .into_owned();
+                        file_list.push((relative_path, metadata.is_dir(), metadata.len()));
 
-    if !fs::metadata(&abs_path).await.is_ok_and(|m| m.is_dir()) {
-        send_file_list_error(&uuid, "Path to list files is not a directory");
-        return;
-    }
-
-    let mut file_list = Vec::new();
-    if is_recursive {
-        let mut stack = vec![abs_path.clone()];
-        while let Some(current_dir) = stack.pop() {
-            if let Ok(mut entries) = fs::read_dir(current_dir).await {
-                while let Ok(Some(entry)) = entries.next_entry().await {
-                    let path = entry.path();
-                    let metadata = entry.metadata().await.unwrap();
-                    if metadata.is_symlink() {
-                        continue;
-                    }
-
-                    let relative_path = path
-                        .strip_prefix(&working_directory)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .into_owned();
-                    file_list.push((relative_path, metadata.is_dir(), metadata.len()));
-
-                    if metadata.is_dir() {
-                        stack.push(path);
+                        if metadata.is_dir() {
+                            stack.push(path);
+                        }
                     }
                 }
             }
-        }
-    } else if let Ok(mut entries) = fs::read_dir(&abs_path).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            let metadata = entry.metadata().await.unwrap();
-            if metadata.is_symlink() {
-                continue;
+        } else if let Ok(mut entries) = fs::read_dir(&abs_path).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                let Ok(metadata) = entry.metadata().await else {
+                    continue;
+                };
+                if metadata.is_symlink() {
+                    continue;
+                }
+
+                let relative_path = path
+                    .strip_prefix(&working_directory)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned();
+                file_list.push((relative_path, metadata.is_dir(), metadata.len()));
             }
-
-            let relative_path = path
-                .strip_prefix(&working_directory)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .into_owned();
-            file_list.push((relative_path, metadata.is_dir(), metadata.len()));
         }
-    }
 
-    let mut result = Message::new(FILE_LIST, Priority::Highest, &uuid);
-    result.push_string(&uuid);
-    result.push_uint(u32::try_from(file_list.len()).unwrap_or(u32::MAX));
-    for (path, is_dir, size) in file_list {
-        result.push_string(&path);
-        result.push_bool(is_dir);
-        result.push_ulong(size);
-    }
-    get_websocket_client().queue_message(
-        uuid,
-        result.get_data().clone(),
-        Priority::Highest,
-        Arc::new(|| {}),
-    );
+        let mut result = Message::new(FILE_LIST, Priority::Highest, &uuid);
+        result.push_string(&uuid);
+        result.push_uint(u32::try_from(file_list.len()).unwrap_or(u32::MAX));
+        for (path, is_dir, size) in file_list {
+            result.push_string(&path);
+            result.push_bool(is_dir);
+            result.push_ulong(size);
+        }
+        get_websocket_client().queue_message(uuid, result.get_data().clone(), Priority::Highest);
+    });
 }
 
 fn send_file_list_error(uuid: &str, error_msg: &str) {
@@ -131,7 +134,6 @@ fn send_file_list_error(uuid: &str, error_msg: &str) {
         uuid.to_string(),
         result.get_data().clone(),
         Priority::Highest,
-        Arc::new(|| {}),
     );
 }
 
@@ -146,7 +148,11 @@ pub fn handle_file_download(mut msg: Message) {
         let ws_endpoint = config["websocketEndpoint"]
             .as_str()
             .unwrap_or("ws://127.0.0.1:8001/ws/");
-        let url = format!("{ws_endpoint}?token={uuid}");
+        let url = if ws_endpoint.contains('?') {
+            format!("{ws_endpoint}&token={uuid}")
+        } else {
+            format!("{ws_endpoint}?token={uuid}")
+        };
 
         let (ws_stream, _) = match connect_async(&url).await {
             Ok(s) => s,
@@ -158,12 +164,8 @@ pub fn handle_file_download(mut msg: Message) {
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-        if let Some(Ok(WsMessage::Binary(data))) = ws_receiver.next().await {
-            let msg = Message::from_data(data.to_vec());
-            if msg.id != SERVER_READY {
-                error!("Expected SERVER_READY, got {}", msg.id);
-                return;
-            }
+        if wait_for_server_ready(&mut ws_receiver).await.is_none() {
+            return;
         }
 
         let working_directory = if job_id != 0 {
@@ -187,9 +189,7 @@ pub fn handle_file_download(mut msg: Message) {
             )
         };
 
-        while file_path.starts_with('/') {
-            file_path.remove(0);
-        }
+        file_path = file_path.trim_start_matches('/').to_string();
 
         let full_path = Path::new(&working_directory).join(&file_path);
         let Ok(abs_path) = fs::canonicalize(&full_path).await else {
@@ -202,10 +202,7 @@ pub fn handle_file_download(mut msg: Message) {
             return;
         };
 
-        let canonical_working = fs::canonicalize(&working_directory)
-            .await
-            .unwrap_or_else(|_| PathBuf::from(&working_directory));
-        if !abs_path.starts_with(&canonical_working) {
+        if !validate_path_is_within(&abs_path, &working_directory).await {
             send_download_error(
                 &mut ws_sender,
                 &uuid,
@@ -215,19 +212,31 @@ pub fn handle_file_download(mut msg: Message) {
             return;
         }
 
-        if !fs::metadata(&abs_path).await.is_ok_and(|m| m.is_file()) {
-            send_download_error(&mut ws_sender, &uuid, "Path to file download is not a file").await;
-            return;
-        }
+        let file_meta = match fs::metadata(&abs_path).await {
+            Ok(m) if m.is_file() => m,
+            _ => {
+                send_download_error(&mut ws_sender, &uuid, "Path to file download is not a file")
+                    .await;
+                return;
+            }
+        };
 
-        let file_size = fs::metadata(&abs_path).await.unwrap().len();
+        let file_size = file_meta.len();
         let mut details_msg = Message::new(FILE_DOWNLOAD_DETAILS, Priority::Highest, &uuid);
         details_msg.push_ulong(file_size);
         let _ = ws_sender
             .send(WsMessage::Binary(details_msg.get_data().clone().into()))
             .await;
 
-        let mut file = File::open(&abs_path).await.unwrap();
+        let mut file = match File::open(&abs_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                error!("Failed to open file for download: {}", e);
+                send_download_error(&mut ws_sender, &uuid, "Failed to open file for download")
+                    .await;
+                return;
+            }
+        };
         let mut buffer = vec![0u8; 64 * 1024];
 
         let paused = Arc::new(Notify::new());
@@ -312,7 +321,11 @@ pub fn handle_file_upload(mut msg: Message) {
     let ws_endpoint = config["websocketEndpoint"]
         .as_str()
         .unwrap_or("ws://127.0.0.1:8001/ws/");
-    let url = format!("{ws_endpoint}?token={uuid}");
+    let url = if ws_endpoint.contains('?') {
+        format!("{ws_endpoint}&token={uuid}")
+    } else {
+        format!("{ws_endpoint}?token={uuid}")
+    };
 
     handle_file_upload_internal(uuid, job_id, bundle_hash, target_path, file_size, url);
 }
@@ -346,12 +359,8 @@ fn handle_file_upload_internal(
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-        if let Some(Ok(WsMessage::Binary(data))) = ws_receiver.next().await {
-            let msg = Message::from_data(data.to_vec());
-            if msg.id != SERVER_READY {
-                error!("Expected SERVER_READY, got {}", msg.id);
-                return;
-            }
+        if wait_for_server_ready(&mut ws_receiver).await.is_none() {
+            return;
         }
 
         let ready_msg = Message::new(SERVER_READY, Priority::Highest, &uuid);
@@ -380,56 +389,11 @@ fn handle_file_upload_internal(
             )
         };
 
-        while target_path.starts_with('/') {
-            target_path.remove(0);
-        }
+        target_path = target_path.trim_start_matches('/').to_string();
 
         let full_path = Path::new(&working_directory).join(&target_path);
 
-        let canonical_working = fs::canonicalize(&working_directory)
-            .await
-            .unwrap_or_else(|_| PathBuf::from(&working_directory));
-
-        // Canonicalize as much of the path as exists to detect symlink escapes
-        // First, find the longest existing prefix of the path
-        let mut existing_prefix = PathBuf::new();
-        let mut remaining_suffix = PathBuf::new();
-        for component in full_path.components() {
-            let test_path = if existing_prefix.as_os_str().is_empty() {
-                PathBuf::from(component.as_os_str())
-            } else {
-                existing_prefix.join(component.as_os_str())
-            };
-            if test_path.exists() {
-                existing_prefix = test_path;
-                remaining_suffix = PathBuf::new();
-            } else if remaining_suffix.as_os_str().is_empty() {
-                remaining_suffix = PathBuf::from(component.as_os_str());
-            } else {
-                remaining_suffix = remaining_suffix.join(component.as_os_str());
-            }
-        }
-
-        // Canonicalize the existing prefix to resolve any symlinks
-        let abs_path = if existing_prefix.as_os_str().is_empty() {
-            full_path.clone()
-        } else {
-            match fs::canonicalize(&existing_prefix).await {
-                Ok(canonical_prefix) => {
-                    if remaining_suffix.as_os_str().is_empty() {
-                        canonical_prefix
-                    } else {
-                        canonical_prefix.join(remaining_suffix)
-                    }
-                }
-                Err(_) => full_path.clone(),
-            }
-        };
-
-        if !abs_path
-            .to_string_lossy()
-            .starts_with(&canonical_working.to_string_lossy().into_owned())
-        {
+        if !validate_path_is_within(&full_path, &working_directory).await {
             send_upload_error(
                 &mut ws_sender,
                 &uuid,
@@ -439,12 +403,12 @@ fn handle_file_upload_internal(
             return;
         }
 
-        // Now create parent directories if needed
+        // Create parent directories if needed
         if let Some(parent) = full_path.parent() {
             let _ = fs::create_dir_all(parent).await;
         }
 
-        let mut file = match File::create(&abs_path).await {
+        let mut file = match File::create(&full_path).await {
             Ok(f) => f,
             Err(e) => {
                 error!("Failed to create file: {}", e);
@@ -466,7 +430,7 @@ fn handle_file_upload_internal(
                     let chunk = m.pop_bytes();
                     if let Err(e) = file.write_all(&chunk).await {
                         error!("Failed to write chunk: {}", e);
-                        let _ = fs::remove_file(&abs_path).await;
+                        let _ = fs::remove_file(&full_path).await;
                         send_upload_error(&mut ws_sender, &uuid, "Failed to write chunk to file")
                             .await;
                         return;
@@ -474,7 +438,7 @@ fn handle_file_upload_internal(
                     received_size += chunk.len() as u64;
                 } else if m.id == FILE_UPLOAD_COMPLETE {
                     if received_size != file_size {
-                        let _ = fs::remove_file(&abs_path).await;
+                        let _ = fs::remove_file(&full_path).await;
                         send_upload_error(
                             &mut ws_sender,
                             &uuid,
@@ -487,7 +451,7 @@ fn handle_file_upload_internal(
                     }
                     if let Err(e) = file.flush().await {
                         error!("Failed to flush uploaded file: {}", e);
-                        let _ = fs::remove_file(&abs_path).await;
+                        let _ = fs::remove_file(&full_path).await;
                         send_upload_error(
                             &mut ws_sender,
                             &uuid,
@@ -498,7 +462,7 @@ fn handle_file_upload_internal(
                     }
                     if let Err(e) = file.sync_all().await {
                         error!("Failed to sync uploaded file: {}", e);
-                        let _ = fs::remove_file(&abs_path).await;
+                        let _ = fs::remove_file(&full_path).await;
                         send_upload_error(
                             &mut ws_sender,
                             &uuid,
@@ -517,6 +481,198 @@ fn handle_file_upload_internal(
             }
         }
     });
+}
+
+/// Wait for a `SERVER_READY` message with a 10-second timeout.
+async fn wait_for_server_ready(
+    ws_receiver: &mut futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+) -> Option<Message> {
+    let handshake = tokio::time::timeout(Duration::from_secs(10), ws_receiver.next()).await;
+    match handshake {
+        Ok(Some(Ok(WsMessage::Binary(data)))) => {
+            let msg = Message::from_data(data.to_vec());
+            if msg.id != SERVER_READY {
+                error!("Expected SERVER_READY, got {}", msg.id);
+                return None;
+            }
+            Some(msg)
+        }
+        Ok(Some(Ok(_))) => {
+            error!("Expected binary SERVER_READY, got unexpected frame");
+            None
+        }
+        Ok(Some(Err(e))) => {
+            error!("Handshake error: {}", e);
+            None
+        }
+        Ok(None) => {
+            error!("Server closed connection before sending SERVER_READY");
+            None
+        }
+        Err(_) => {
+            error!("Timeout waiting for SERVER_READY");
+            None
+        }
+    }
+}
+
+async fn validate_path_is_within(target_path: &Path, working_directory: &str) -> bool {
+    let Ok(canonical_working) = fs::canonicalize(working_directory).await else {
+        return false;
+    };
+
+    // Canonicalize the full target path (if it exists)
+    if let Ok(canonical_target) = fs::canonicalize(target_path).await {
+        return canonical_target.starts_with(&canonical_working);
+    }
+
+    // For non-existent paths (e.g., uploads), build the longest existing prefix
+    // by checking parent directories, then verify no path components escape.
+    let mut current = target_path.to_path_buf();
+    // Walk up until we find a path that exists
+    loop {
+        if current.exists() {
+            break;
+        }
+        if !current.pop() {
+            return false;
+        }
+    }
+
+    let Ok(canonical_prefix) = fs::canonicalize(&current).await else {
+        return false;
+    };
+
+    if !canonical_prefix.starts_with(&canonical_working) {
+        return false;
+    }
+
+    // Verify remaining components don't contain parent dir references
+    let remaining = target_path.strip_prefix(&current).unwrap_or(target_path);
+    for component in remaining.components() {
+        if matches!(component, Component::ParentDir) {
+            return false;
+        }
+    }
+
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn run_validate(target: &Path, working_dir: &str) -> bool {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(validate_path_is_within(target, working_dir))
+    }
+
+    #[test]
+    fn test_path_within_working_dir() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let sub = tmp.path().join("subdir");
+        fs::create_dir(&sub).unwrap();
+        let file = sub.join("test.txt");
+        fs::write(&file, "data").unwrap();
+
+        assert!(run_validate(&file, &wd), "file inside wd should pass");
+        assert!(run_validate(&sub, &wd), "subdir inside wd should pass");
+        assert!(run_validate(tmp.path(), &wd), "wd itself should pass");
+    }
+
+    #[test]
+    fn test_path_outside_working_dir() {
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let file = outside.path().join("secret.txt");
+        fs::write(&file, "data").unwrap();
+
+        assert!(!run_validate(&file, &wd), "file outside wd should fail");
+    }
+
+    #[test]
+    fn test_path_traversal_escape() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let escape = tmp.path().join("..").join("..").join("etc").join("passwd");
+        assert!(!run_validate(&escape, &wd), "path traversal should fail");
+
+        // Double-dot that resolves within wd is valid (canonicalization collapses it)
+        let sub = tmp.path().join("subdir").join("..").join("subdir");
+        fs::create_dir(tmp.path().join("subdir")).unwrap();
+        assert!(
+            run_validate(&sub, &wd),
+            ".. that resolves inside wd should pass"
+        );
+
+        // Double-dot that resolves outside wd should fail
+        let outside_escape = tmp.path().join("..").join("..").join("tmp");
+        assert!(
+            !run_validate(&outside_escape, &wd),
+            ".. that resolves outside wd should fail"
+        );
+    }
+
+    #[test]
+    fn test_non_existent_path_for_upload() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let new_file = tmp.path().join("new_dir").join("new_file.txt");
+        // Neither new_dir nor new_file exists yet — upload case
+        assert!(
+            run_validate(&new_file, &wd),
+            "non-existent path within wd should pass"
+        );
+
+        let escape = tmp.path().join("..").join("outside_file.txt");
+        assert!(
+            !run_validate(&escape, &wd),
+            "non-existent path escaping wd should fail"
+        );
+    }
+
+    #[test]
+    fn test_symlink_to_outside_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, "data").unwrap();
+        let link = tmp.path().join("link_to_outside");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+        assert!(!run_validate(&link, &wd), "symlink to outside should fail");
+    }
+
+    #[test]
+    fn test_invalid_working_directory() {
+        let tmp = TempDir::new().unwrap();
+        let wd = "/nonexistent/path/that/does/not/exist";
+        let file = tmp.path().join("test.txt");
+        fs::write(&file, "data").unwrap();
+
+        assert!(!run_validate(&file, wd), "invalid wd should fail");
+    }
+
+    #[test]
+    fn test_non_existent_path_with_all_parents_outside() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let escape = Path::new("/").join("etc").join("nonexistent_file");
+        assert!(
+            !run_validate(&escape, &wd),
+            "path at root outside wd should fail"
+        );
+    }
 }
 
 async fn send_upload_error(

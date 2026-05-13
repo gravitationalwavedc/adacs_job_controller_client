@@ -45,6 +45,7 @@ fn with_db_support(
 ) -> MockWebsocketClient {
     let state_clone = state.clone();
 
+    mock_ws.expect_is_connection_closed().returning(|| false);
     mock_ws.expect_is_server_ready().returning(|| true);
     mock_ws
         .expect_send_db_request()
@@ -204,6 +205,13 @@ fn setup_cancel_test(
 
     crate::tests::init_python_global();
 
+    // Ensure test config includes cluster so get_default_job_details matches
+    // what the fixture expects.
+    *crate::config::TEST_CONFIG.lock().unwrap() = Some(serde_json::json!({
+        "cluster": "test_cluster",
+        "websocketEndpoint": "ws://127.0.0.1:0/ws/"
+    }));
+
     let fixture = BundleFixture::new();
     let bundle_hash = Uuid::new_v4().to_string();
     BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
@@ -247,7 +255,7 @@ fn test_cancel_job_not_exists() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -299,7 +307,7 @@ fn test_cancel_job_not_running() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -394,7 +402,7 @@ fn test_cancel_job_success() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -450,7 +458,7 @@ fn test_cancel_job_not_running_after_status_check() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -495,7 +503,7 @@ fn test_cancel_job_running_after_status_check_cancel_error() {
         let db_name = Uuid::new_v4().to_string();
         let (fixture, bundle_hash, state, working_dir) = setup_cancel_test(&db_name);
 
-        // Write cancel+status scripts: status returns complete=false, cancel returns False (error)
+        // Write cancel+status scripts: status returns complete=false, cancel returns False (failure)
         let status_json = r#"{"status": [], "complete": false}"#;
         fixture.write_job_cancel_check_status(
             &bundle_hash,
@@ -556,7 +564,7 @@ fn test_cancel_job_running_after_status_check_cancel_success_already_cancelled()
         mock_ws
             .expect_queue_message()
             .times(..)
-            .returning(|_, _, _, _| {});
+            .returning(|_, _, _| {});
         set_websocket_client(Arc::new(mock_ws));
 
         // Add a CANCELLED status record to simulate already cancelled state
@@ -625,7 +633,7 @@ fn test_cancel_job_running_after_status_check_cancel_success_not_already_cancell
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 

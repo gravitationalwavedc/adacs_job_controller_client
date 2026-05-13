@@ -39,6 +39,7 @@ fn with_db_support(
 ) -> MockWebsocketClient {
     let state_clone = state.clone();
 
+    mock_ws.expect_is_connection_closed().returning(|| false);
     mock_ws.expect_is_server_ready().returning(|| true);
     mock_ws
         .expect_send_db_request()
@@ -199,7 +200,7 @@ fn test_delete_job_not_exists() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -248,7 +249,7 @@ fn test_delete_job_success() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -426,7 +427,7 @@ fn test_delete_job_job_deleted() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 

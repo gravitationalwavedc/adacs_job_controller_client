@@ -1,4 +1,4 @@
-mod fixtures;
+pub mod fixtures;
 // Integration tests that require cross-module coordination or complex fixtures
 // These tests use shared global state (BundleManager, WebSocket mocks, DB) and must run sequentially
 pub mod bundle_db_tests;
@@ -7,6 +7,7 @@ pub mod file_tests;
 pub mod job_cancel_tests;
 pub mod job_delete_tests;
 pub mod job_tests;
+pub mod main_tests;
 // Note: Unit tests for individual modules are now in their respective source files:
 // - messaging.rs has messaging/serialization tests
 // - daemon.rs has daemon fork tests

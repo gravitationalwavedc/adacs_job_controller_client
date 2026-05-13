@@ -22,10 +22,25 @@ pub fn read_client_config() -> Value {
     config_path.push("config.json");
     if let Ok(file) = File::open(config_path) {
         let reader = BufReader::new(file);
-        serde_json::from_reader(reader).unwrap_or(json!({}))
+        match serde_json::from_reader(reader) {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("Warning: config.json parse error: {e}");
+                json!({})
+            }
+        }
     } else {
         json!({})
     }
+}
+
+pub fn get_ltk_from_config(config: &Value) -> Option<String> {
+    config
+        .get("ltk")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 /// Get the Python library path from config or environment variable

@@ -43,8 +43,9 @@ pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
 
     // Decouple from parent environment
     // Change working directory to root to avoid keeping any directory mounted
-    unsafe {
-        libc::chdir(c"/".as_ptr());
+    let ret = unsafe { libc::chdir(c"/".as_ptr()) };
+    if ret != 0 {
+        tracing::warn!("chdir to / failed: {}", std::io::Error::last_os_error());
     }
 
     // Create a new session and become the session leader
@@ -90,6 +91,10 @@ pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
         .open("/dev/null")
         .map_err(|e| format!("open /dev/null: {e}"))?
         .into_raw_fd();
+    // Flush stdout and stderr before redirection (matches C++)
+    let _ = io::stdout().flush();
+    let _ = io::stderr().flush();
+
     unsafe {
         libc::dup2(fd_in, libc::STDIN_FILENO);
         libc::dup2(fd_out, libc::STDOUT_FILENO);
@@ -102,10 +107,6 @@ pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
             libc::close(fd_out);
         }
     }
-
-    // Flush stdout and stderr before redirection (matches C++)
-    let _ = io::stdout().flush();
-    let _ = io::stderr().flush();
 
     Ok(true)
 }
@@ -146,8 +147,9 @@ pub fn daemonize_with_log_redirect(
     }
 
     // Decouple from parent environment
-    unsafe {
-        libc::chdir(c"/".as_ptr());
+    let ret = unsafe { libc::chdir(c"/".as_ptr()) };
+    if ret != 0 {
+        tracing::warn!("chdir to / failed: {}", std::io::Error::last_os_error());
     }
 
     unsafe {
@@ -190,6 +192,10 @@ pub fn daemonize_with_log_redirect(
         .open("/dev/null")
         .map_err(|e| format!("open /dev/null: {e}"))?
         .into_raw_fd();
+    // Flush stdout and stderr before redirection
+    let _ = io::stdout().flush();
+    let _ = io::stderr().flush();
+
     unsafe {
         libc::dup2(fd_in, libc::STDIN_FILENO);
         libc::dup2(fd_out, libc::STDOUT_FILENO);
@@ -202,10 +208,6 @@ pub fn daemonize_with_log_redirect(
             libc::close(fd_out);
         }
     }
-
-    // Flush stdout and stderr before redirection
-    let _ = io::stdout().flush();
-    let _ = io::stderr().flush();
 
     // Redirect stdout and stderr to log files (matches C++ main.cpp lines 118-119)
     let stdout_path = log_dir.join("stdout.log");
@@ -246,9 +248,12 @@ pub fn daemonize_with_log_redirect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::TempDir;
+    use test_fork::test;
 
     #[test]
+    #[serial]
     fn test_daemonize_basic() {
         // This test verifies daemonize() can be called without panicking
         // Note: Due to fork() behavior, the test framework captures both parent and child
@@ -258,6 +263,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_daemonize_with_log_redirect_creates_files() {
         // Create a temporary directory for log files
         let temp_dir = TempDir::new().unwrap();

@@ -11,7 +11,6 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process;
-use tokio::runtime::Runtime;
 use tracing::{error, info, warn};
 
 // Constants from C++ Settings.h
@@ -72,6 +71,8 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
     // Use ureq for synchronous HTTPS requests
     let response = ureq::AgentBuilder::new()
         .user_agent("ADACS-Job-Controller-Client-Update-Check")
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(10))
         .build()
         .get(&format!("https://{GITHUB_ENDPOINT}{GITHUB_LATEST_URL}"))
         .call();
@@ -124,6 +125,8 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let response = ureq::AgentBuilder::new()
         .user_agent("ADACS-Job-Controller-Client-Update-Check")
         .redirects(3) // Handle up to 3 redirects (like C++)
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
         .build()
         .get(url)
         .call();
@@ -190,29 +193,28 @@ fn perform_update(download_url: &str) -> Result<(), Box<dyn std::error::Error>> 
         .spawn()?;
 
     // Exit current process
+    // NOTE: process::exit(0) after spawning the replacement defeats systemd service
+    // tracking — the original PID exits and the replacement runs as an orphan.
+    // If the daemon is managed by systemd with Type=simple, the service will be
+    // marked as "stopped" immediately. Consider using sd_notify(3) or Type=forking.
     process::exit(0);
 }
 
 /// Main update check function - call this at startup before connecting WebSocket
 pub fn check_for_updates() {
-    // Use a blocking runtime for the update check (before tokio::main starts)
-    let rt = Runtime::new().expect("Failed to create runtime");
-
-    rt.block_on(async {
-        match check_for_update() {
-            Ok(Some(download_url)) => {
-                if let Err(e) = perform_update(&download_url) {
-                    error!("Failed to perform update: {}", e);
-                }
-            }
-            Ok(None) => {
-                // No update available or error occurred
-            }
-            Err(e) => {
-                error!("Error checking for updates: {}", e);
+    match check_for_update() {
+        Ok(Some(download_url)) => {
+            if let Err(e) = perform_update(&download_url) {
+                error!("Failed to perform update: {}", e);
             }
         }
-    });
+        Ok(None) => {
+            // No update available or error occurred
+        }
+        Err(e) => {
+            error!("Error checking for updates: {}", e);
+        }
+    }
 }
 
 #[cfg(test)]

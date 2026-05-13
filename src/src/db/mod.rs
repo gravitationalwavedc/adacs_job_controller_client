@@ -50,6 +50,13 @@ fn parse_status(resp: &mut Message) -> jobstatus::Model {
     }
 }
 
+fn check_success(resp: &mut Message) -> Result<(), String> {
+    if !resp.pop_bool() {
+        return Err("Database operation failed (server returned failure)".to_string());
+    }
+    Ok(())
+}
+
 pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
     let msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Medium, "database");
     let raw = get_websocket_client()
@@ -57,7 +64,7 @@ pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
         .await
         .map_err(|e| e.to_string())?;
     let mut resp = parse_response(&raw);
-    let _success = resp.pop_bool();
+    check_success(&mut resp)?;
     let count = resp.pop_uint() as usize;
     let mut jobs = Vec::with_capacity(count);
     for _ in 0..count {
@@ -74,7 +81,7 @@ pub async fn get_job_by_id(id: i64) -> Result<Option<job::Model>, String> {
         .await
         .map_err(|e| e.to_string())?;
     let mut resp = parse_response(&raw);
-    let _success = resp.pop_bool();
+    check_success(&mut resp)?;
     let count = resp.pop_uint();
     if count == 0 {
         return Ok(None);
@@ -90,7 +97,7 @@ pub async fn get_job_by_job_id(job_id_val: i64) -> Result<Option<job::Model>, St
         .await
         .map_err(|e| e.to_string())?;
     let mut resp = parse_response(&raw);
-    let _success = resp.pop_bool();
+    check_success(&mut resp)?;
     let count = resp.pop_uint();
     if count == 0 {
         return Ok(None);
@@ -101,10 +108,12 @@ pub async fn get_job_by_job_id(job_id_val: i64) -> Result<Option<job::Model>, St
 pub async fn delete_job(id: i64) -> Result<(), String> {
     let mut msg = Message::new(DB_JOB_DELETE, Priority::Medium, "database");
     msg.push_ulong(id as u64);
-    get_websocket_client()
+    let raw = get_websocket_client()
         .send_db_request(msg)
         .await
         .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    check_success(&mut resp)?;
     Ok(())
 }
 
@@ -142,7 +151,7 @@ pub async fn get_job_status_by_job_id_and_what(
         .await
         .map_err(|e| e.to_string())?;
     let mut resp = parse_response(&raw);
-    let _success = resp.pop_bool();
+    check_success(&mut resp)?;
     let count = resp.pop_uint() as usize;
     let mut statuses = Vec::with_capacity(count);
     for _ in 0..count {
@@ -159,7 +168,7 @@ pub async fn get_job_status_by_job_id(job_id: i64) -> Result<Vec<jobstatus::Mode
         .await
         .map_err(|e| e.to_string())?;
     let mut resp = parse_response(&raw);
-    let _success = resp.pop_bool();
+    check_success(&mut resp)?;
     let count = resp.pop_uint() as usize;
     let mut statuses = Vec::with_capacity(count);
     for _ in 0..count {
@@ -174,10 +183,12 @@ pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     for id in ids {
         msg.push_ulong(id as u64);
     }
-    get_websocket_client()
+    let raw = get_websocket_client()
         .send_db_request(msg)
         .await
         .map_err(|e| e.to_string())?;
+    let mut resp = parse_response(&raw);
+    check_success(&mut resp)?;
     Ok(())
 }
 
@@ -198,7 +209,7 @@ pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
         .await
         .map_err(|e| e.to_string())?;
     let mut resp = parse_response(&raw);
-    let _success = resp.pop_bool();
+    check_success(&mut resp)?;
     let saved_id = resp.pop_ulong() as i64;
     Ok(job::Model {
         id: saved_id,
@@ -217,7 +228,7 @@ pub async fn save_status(status: jobstatus::Model) -> Result<jobstatus::Model, S
         .await
         .map_err(|e| e.to_string())?;
     let mut resp = parse_response(&raw);
-    let _success = resp.pop_bool();
+    check_success(&mut resp)?;
     let saved_id = resp.pop_ulong() as i64;
     Ok(jobstatus::Model {
         id: saved_id,

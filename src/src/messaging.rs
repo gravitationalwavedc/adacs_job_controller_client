@@ -120,8 +120,11 @@ impl Message {
     }
 
     pub fn pop_ubyte(&mut self) -> u8 {
-        let mut rdr = Cursor::new(&self.data[self.index..]);
-        let value = rdr.read_u8().unwrap();
+        if self.index + 1 > self.data.len() {
+            tracing::error!("pop_ubyte: buffer underflow at index {}", self.index);
+            return 0;
+        }
+        let value = self.data[self.index];
         self.index += 1;
         value
     }
@@ -131,8 +134,11 @@ impl Message {
     }
 
     pub fn pop_byte(&mut self) -> i8 {
-        let mut rdr = Cursor::new(&self.data[self.index..]);
-        let value = rdr.read_i8().unwrap();
+        if self.index + 1 > self.data.len() {
+            tracing::error!("pop_byte: buffer underflow at index {}", self.index);
+            return 0;
+        }
+        let value = self.data[self.index] as i8;
         self.index += 1;
         value
     }
@@ -142,6 +148,10 @@ impl Message {
     }
 
     pub fn pop_ushort(&mut self) -> u16 {
+        if self.index + 2 > self.data.len() {
+            tracing::error!("pop_ushort: buffer underflow at index {}", self.index);
+            return 0;
+        }
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_u16::<LittleEndian>().unwrap();
         self.index += 2;
@@ -153,6 +163,10 @@ impl Message {
     }
 
     pub fn pop_short(&mut self) -> i16 {
+        if self.index + 2 > self.data.len() {
+            tracing::error!("pop_short: buffer underflow at index {}", self.index);
+            return 0;
+        }
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_i16::<LittleEndian>().unwrap();
         self.index += 2;
@@ -164,6 +178,10 @@ impl Message {
     }
 
     pub fn pop_uint(&mut self) -> u32 {
+        if self.index + 4 > self.data.len() {
+            tracing::error!("pop_uint: buffer underflow at index {}", self.index);
+            return 0;
+        }
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_u32::<LittleEndian>().unwrap();
         self.index += 4;
@@ -175,6 +193,10 @@ impl Message {
     }
 
     pub fn pop_int(&mut self) -> i32 {
+        if self.index + 4 > self.data.len() {
+            tracing::error!("pop_int: buffer underflow at index {}", self.index);
+            return 0;
+        }
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_i32::<LittleEndian>().unwrap();
         self.index += 4;
@@ -186,6 +208,10 @@ impl Message {
     }
 
     pub fn pop_ulong(&mut self) -> u64 {
+        if self.index + 8 > self.data.len() {
+            tracing::error!("pop_ulong: buffer underflow at index {}", self.index);
+            return 0;
+        }
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_u64::<LittleEndian>().unwrap();
         self.index += 8;
@@ -197,6 +223,10 @@ impl Message {
     }
 
     pub fn pop_long(&mut self) -> i64 {
+        if self.index + 8 > self.data.len() {
+            tracing::error!("pop_long: buffer underflow at index {}", self.index);
+            return 0;
+        }
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_i64::<LittleEndian>().unwrap();
         self.index += 8;
@@ -208,6 +238,10 @@ impl Message {
     }
 
     pub fn pop_float(&mut self) -> f32 {
+        if self.index + 4 > self.data.len() {
+            tracing::error!("pop_float: buffer underflow at index {}", self.index);
+            return 0.0;
+        }
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_f32::<LittleEndian>().unwrap();
         self.index += 4;
@@ -219,6 +253,10 @@ impl Message {
     }
 
     pub fn pop_double(&mut self) -> f64 {
+        if self.index + 8 > self.data.len() {
+            tracing::error!("pop_double: buffer underflow at index {}", self.index);
+            return 0.0;
+        }
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_f64::<LittleEndian>().unwrap();
         self.index += 8;

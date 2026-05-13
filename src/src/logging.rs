@@ -11,8 +11,11 @@
 //! industry-standard tracing-appender crate.
 
 use std::path::Path;
+use std::sync::Once;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+static LOG_INIT: Once = Once::new();
 
 /// Initialize logging with rotating file appender.
 ///
@@ -67,8 +70,11 @@ pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize) {
         .with(file_layer)
         .with(stderr_layer);
 
-    // Set the global subscriber
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
+    // Set the global subscriber (safe to call multiple times)
+    LOG_INIT.call_once(|| {
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("Failed to set tracing subscriber");
+    });
 
     // Log initialization message
     tracing::info!(

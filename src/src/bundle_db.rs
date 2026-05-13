@@ -23,22 +23,63 @@ use crate::python_interface::{
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
 use crate::websocket::get_websocket_client;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::ptr;
+use std::sync::{Mutex, OnceLock};
 
-static mut BUNDLE_DB_ERROR: *mut PyObject = ptr::null_mut();
+/// Wrapper around `*mut PyObject` that implements `Send` (needed for `Mutex` storage).
+/// Safety: all access to the stored pointer is serialized through the mutex and `PYTHON_MUTEX`.
+struct SendPyObject(*mut crate::python_interface::PyObject);
+unsafe impl Send for SendPyObject {}
 
-/// Bridge from synchronous Python callback to async WebSocket.
-///
-/// Because this is called from a sync context (Python C callback) that may be
-/// running inside a `current_thread` tokio runtime, we cannot simply spawn a
-/// task and block-wait on the current thread — that would deadlock the runtime.
-/// Instead we spawn a dedicated OS thread with its own single-threaded runtime
-/// to drive the future to completion, then join the thread to get the result.
-unsafe fn send_and_wait(msg: Message) -> Result<Message, String> {
+/// Per-bundle-hash error exceptions. Each sub-interpreter gets its own
+/// `_bundledb.error` exception object during module init, stored here
+/// so callbacks can reference the correct one for their bundle.
+static BUNDLE_DB_ERRORS: OnceLock<Mutex<HashMap<String, SendPyObject>>> = OnceLock::new();
+
+fn get_bundle_db_error(bundle_hash: &str) -> *mut crate::python_interface::PyObject {
+    let errors = BUNDLE_DB_ERRORS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    errors.get(bundle_hash).map_or_else(
+        || {
+            // Fallback: create a generic RuntimeError if no exception was stored
+            // for this bundle hash. This should not happen in normal operation.
+            unsafe {
+                let err = crate::python_interface::PyErr_NewException(
+                    c"_bundledb.error".as_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                );
+                if err.is_null() {
+                    ptr::null_mut()
+                } else {
+                    err
+                }
+            }
+        },
+        |e| e.0,
+    )
+}
+
+fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
+    let mut errors = BUNDLE_DB_ERRORS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    errors.insert(bundle_hash.to_string(), SendPyObject(exc));
+}
+
+fn send_and_wait(msg: Message) -> Result<Message, String> {
+    // Use the persistent DbBridge if available (production path),
+    // otherwise fall back to thread-per-call (test paths without DbBridge).
+    if let Some(bridge) = crate::db_bridge::DbBridge::try_get() {
+        return bridge.send(msg);
+    }
     let ws = get_websocket_client();
     let fut = ws.send_db_request(msg);
-
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -94,6 +135,7 @@ unsafe extern "C" fn create_or_update_job(
         job_id
     );
 
+    let error_obj = get_bundle_db_error(&bundle_hash);
     match send_and_wait(msg) {
         Ok(response) => {
             let mut resp = parse_response(&response);
@@ -101,7 +143,7 @@ unsafe extern "C" fn create_or_update_job(
 
             if !success {
                 PyErr_SetString(
-                    BUNDLE_DB_ERROR,
+                    error_obj,
                     c"Job was unable to be created or updated.".as_ptr(),
                 );
                 return ptr::null_mut();
@@ -123,7 +165,7 @@ unsafe extern "C" fn create_or_update_job(
         }
         Err(e) => {
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
-            PyErr_SetString(BUNDLE_DB_ERROR, err_msg.as_ptr());
+            PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
         }
     }
@@ -147,6 +189,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
         job_id
     );
 
+    let error_obj = get_bundle_db_error(&bundle_hash);
     match send_and_wait(msg) {
         Ok(response) => {
             let mut resp = parse_response(&response);
@@ -155,7 +198,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
             if !success {
                 let err_msg =
                     CString::new(format!("Job with ID {job_id} does not exist.")).unwrap();
-                PyErr_SetString(BUNDLE_DB_ERROR, err_msg.as_ptr());
+                PyErr_SetString(error_obj, err_msg.as_ptr());
                 return ptr::null_mut();
             }
 
@@ -178,7 +221,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
         }
         Err(e) => {
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
-            PyErr_SetString(BUNDLE_DB_ERROR, err_msg.as_ptr());
+            PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
         }
     }
@@ -201,7 +244,8 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
         .unwrap_or(0);
 
     if job_id == 0 {
-        PyErr_SetString(BUNDLE_DB_ERROR, c"Job ID must be provided.".as_ptr());
+        let error_obj = get_bundle_db_error(&bundle_hash);
+        PyErr_SetString(error_obj, c"Job ID must be provided.".as_ptr());
         return ptr::null_mut();
     }
 
@@ -223,7 +267,8 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
             if !success {
                 let err_msg =
                     CString::new(format!("Job with ID {job_id} does not exist.")).unwrap();
-                PyErr_SetString(BUNDLE_DB_ERROR, err_msg.as_ptr());
+                let error_obj = get_bundle_db_error(&bundle_hash);
+                PyErr_SetString(error_obj, err_msg.as_ptr());
                 return ptr::null_mut();
             }
 
@@ -235,7 +280,8 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
         }
         Err(e) => {
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
-            PyErr_SetString(BUNDLE_DB_ERROR, err_msg.as_ptr());
+            let error_obj = get_bundle_db_error(&bundle_hash);
+            PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
         }
     }
@@ -297,18 +343,26 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
         return ptr::null_mut();
     }
 
-    BUNDLE_DB_ERROR = PyErr_NewException(
+    let exc = PyErr_NewException(
         c"_bundledb.error".as_ptr(),
         ptr::null_mut(),
         ptr::null_mut(),
     );
-    Py_IncRef(BUNDLE_DB_ERROR);
-
-    if PyModule_AddObject(module, c"error".as_ptr(), BUNDLE_DB_ERROR) < 0 {
-        Py_XDECREF(BUNDLE_DB_ERROR);
-        BUNDLE_DB_ERROR = ptr::null_mut();
+    if exc.is_null() {
         Py_DecRef(module);
         return ptr::null_mut();
+    }
+    Py_IncRef(exc);
+
+    if PyModule_AddObject(module, c"error".as_ptr(), exc) < 0 {
+        Py_XDECREF(exc);
+        Py_DecRef(module);
+        return ptr::null_mut();
+    }
+
+    // Store the exception for this bundle so callbacks can reference it.
+    if let Some(bundle_hash) = get_current_thread_bundle() {
+        set_bundle_db_error(&bundle_hash, exc);
     }
 
     module
