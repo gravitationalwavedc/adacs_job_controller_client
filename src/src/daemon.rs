@@ -248,10 +248,12 @@ pub fn daemonize_with_log_redirect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::TempDir;
     use test_fork::test;
 
     #[test]
+    #[serial]
     fn test_daemonize_basic() {
         // This test verifies daemonize() can be called without panicking
         // Note: Due to fork() behavior, the test framework captures both parent and child
@@ -261,6 +263,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_daemonize_with_log_redirect_creates_files() {
         // Create a temporary directory for log files
         let temp_dir = TempDir::new().unwrap();
