@@ -40,6 +40,7 @@ impl Default for MockDbState {
 fn create_mock_with_db_state(state: &Arc<std::sync::Mutex<MockDbState>>) -> MockWebsocketClient {
     let state_clone = state.clone();
     let mut mock = MockWebsocketClient::new();
+    mock.expect_is_connection_closed().returning(|| false);
     mock.expect_is_server_ready().returning(|| true);
     mock.expect_send_db_request()
         .times(..)
@@ -187,6 +188,7 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
     let state_clone = state.clone();
 
     let mut mock = MockWebsocketClient::new();
+    mock.expect_is_connection_closed().returning(|| false);
     mock.expect_is_server_ready().returning(|| true);
 
     mock.expect_send_db_request().returning(move |msg| {
@@ -404,9 +406,9 @@ fn test_submit_timeout() {
         // We expect 1 message when it finally submits
         mock_ws
             .expect_queue_message()
-            .with(always(), always(), eq(Priority::Medium), always())
+            .with(always(), always(), eq(Priority::Medium))
             .times(1)
-            .returning(move |_, _, _, _| {
+            .returning(move |_, _, _| {
                 let _ = tx_clone.send(());
             });
 
@@ -526,7 +528,7 @@ fn test_submit_error_none() {
         mock_ws
             .expect_queue_message()
             .times(2)
-            .returning(move |_, _, _, _| {
+            .returning(move |_, _, _| {
                 let _ = tx_clone.send(());
             });
 
@@ -587,7 +589,7 @@ fn test_submit_error_zero() {
         mock_ws
             .expect_queue_message()
             .times(2)
-            .returning(move |_, _, _, _| {
+            .returning(move |_, _, _| {
                 let _ = tx_clone.send(());
             });
 
@@ -792,8 +794,13 @@ fn test_archive_success() {
         };
         state.lock().unwrap().jobs.insert(1, job.clone());
 
-        let result = crate::jobs::archive_job(&job).await;
-        assert!(result);
+        let result = crate::jobs::archive_dir(
+            std::path::Path::new(&working_dir),
+            std::path::Path::new(&working_dir)
+                .join("archive.tar.gz")
+                .as_path(),
+        );
+        assert!(result.is_ok());
         assert!(std::path::Path::new(&working_dir)
             .join("archive.tar.gz")
             .exists());
@@ -849,7 +856,7 @@ fn test_submit_already_submitted() {
         mock_ws
             .expect_queue_message()
             .times(2)
-            .returning(move |_, _, _, _| {
+            .returning(move |_, _, _| {
                 let _ = tx_clone.send(());
             });
 
@@ -910,6 +917,7 @@ fn test_check_all_job_status_stress() {
         let state_clone = state.clone();
 
         let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_is_connection_closed().returning(|| false);
         mock_ws.expect_is_server_ready().returning(|| true);
         mock_ws
             .expect_send_db_request()
@@ -989,7 +997,7 @@ fn test_check_all_job_status_stress() {
         mock_ws
             .expect_queue_message()
             .times(..)
-            .returning(|_, _, _, _| {});
+            .returning(|_, _, _| {});
         set_websocket_client(Arc::new(mock_ws));
 
         // Create 100 jobs
@@ -1025,6 +1033,7 @@ fn test_check_all_job_status_stress() {
         // Re-create mock with strict expectations for the actual test, using SAME state
         let state_clone2 = state.clone();
         let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_is_connection_closed().returning(|| false);
         mock_ws.expect_is_server_ready().returning(|| true);
         mock_ws
             .expect_send_db_request()
@@ -1107,7 +1116,7 @@ fn test_check_all_job_status_stress() {
         mock_ws
             .expect_queue_message()
             .times(100)
-            .returning(move |_, _, _, _| {
+            .returning(move |_, _, _| {
                 let _ = tx_clone.send(());
             });
         set_websocket_client(Arc::new(mock_ws));
@@ -1161,7 +1170,7 @@ fn test_check_status_job_running_new_status() {
         state.lock().unwrap().jobs.insert(1, job.clone());
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let tx_clone = tx.clone();
-        mock_ws.expect_queue_message().returning(move |_, _, _, _| {
+        mock_ws.expect_queue_message().returning(move |_, _, _| {
             let _ = tx_clone.send(());
         });
         set_websocket_client(Arc::new(mock_ws));
@@ -1213,7 +1222,7 @@ fn test_check_status_no_job_complete() {
         // Act - this should handle it gracefully; the function will send a completion
         // message even for a non-existent job, so set up a permissive mock.
         let (mut mock_ws, _state) = setup_mock_ws();
-        mock_ws.expect_queue_message().returning(|_, _, _, _| {});
+        mock_ws.expect_queue_message().returning(|_, _, _| {});
         set_websocket_client(Arc::new(mock_ws));
 
         crate::jobs::check_job_status(job_model, false).await;
@@ -1250,7 +1259,7 @@ fn test_delete_job_success() {
         state.lock().unwrap().jobs.insert(1, job.clone());
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let tx_clone = tx.clone();
-        mock_ws.expect_queue_message().returning(move |_, _, _, _| {
+        mock_ws.expect_queue_message().returning(move |_, _, _| {
             let _ = tx_clone.send(());
         });
         set_websocket_client(Arc::new(mock_ws));
@@ -1282,17 +1291,11 @@ fn test_archive_fail() {
         let db_name = Uuid::new_v4().to_string();
         setup_test(&db_name);
 
-        let job = db::job::Model {
-            id: 1,
-            job_id: Some(1),
-            scheduler_id: Some(1),
-            bundle_hash: "h".to_string(),
-            working_directory: "/not/a/real/path/that/exists/123".to_string(),
-            ..Default::default()
-        };
-
-        let result = crate::jobs::archive_job(&job).await;
-        assert!(!result);
+        let result = crate::jobs::archive_dir(
+            std::path::Path::new("/not/a/real/path/that/exists/123"),
+            std::path::Path::new("/not/a/real/path/that/exists/123/archive.tar.gz"),
+        );
+        assert!(result.is_err());
     }
     inner();
 }
@@ -1330,6 +1333,7 @@ fn setup_check_status_test(
     let state = Arc::new(std::sync::Mutex::new(MockDbState::default()));
     let state_clone = state.clone();
     let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
     mock_ws.expect_is_server_ready().returning(|| true);
     mock_ws
         .expect_send_db_request()
@@ -1411,6 +1415,7 @@ fn test_check_status_no_status_not_complete() {
         // Create mock with DB support using the SAME state
         let state_clone = state.clone();
         let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_is_connection_closed().returning(|| false);
         mock_ws.expect_is_server_ready().returning(|| true);
         mock_ws
             .expect_send_db_request()
@@ -1511,7 +1516,7 @@ fn test_check_status_no_status_complete() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -1583,7 +1588,7 @@ fn test_check_status_job_running_force_notification_duplicates() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -1652,7 +1657,7 @@ fn test_check_status_job_running_force_notification() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -1718,6 +1723,7 @@ fn test_check_status_job_running_force_notification_same_status() {
         // Use the same state from setup_check_status_test
         let state_for_closure = Arc::clone(&state);
         let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_is_connection_closed().returning(|| false);
         mock_ws.expect_is_server_ready().returning(|| true);
         mock_ws
             .expect_send_db_request()
@@ -1756,7 +1762,7 @@ fn test_check_status_job_running_force_notification_same_status() {
         mock_ws
             .expect_queue_message()
             .times(..)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -1810,7 +1816,7 @@ fn test_check_status_new_status_no_existing() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -1868,7 +1874,7 @@ fn test_check_status_job_running_changed_status() {
         mock_ws
             .expect_queue_message()
             .times(..)
-            .returning(move |_, _, _, _| {});
+            .returning(move |_, _, _| {});
         set_websocket_client(Arc::new(mock_ws));
 
         let status = jobstatus::Model {
@@ -1885,7 +1891,7 @@ fn test_check_status_job_running_changed_status() {
         mock_ws
             .expect_queue_message()
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -1963,7 +1969,7 @@ fn test_check_status_job_running_error_1() {
         mock_ws
             .expect_queue_message()
             .times(3)
-            .returning(move |_, _data, _, _| {
+            .returning(move |_, _data, _| {
                 let _ = tx_clone.send(());
             });
 
@@ -2133,7 +2139,7 @@ fn test_check_status_job_running_error_2() {
         mock_ws
             .expect_queue_message()
             .times(3)
-            .returning(move |_, _data, _, _| {
+            .returning(move |_, _data, _| {
                 let _ = tx_clone.send(());
             });
 
@@ -2204,7 +2210,7 @@ fn test_check_status_job_running_new_status_multiple() {
         mock_ws
             .expect_queue_message()
             .times(2)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 
@@ -2298,7 +2304,7 @@ fn test_check_status_job_running_changed_status_multiple() {
         mock_ws
             .expect_queue_message()
             .times(2)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let _ = tx_clone.send(data);
             });
 

@@ -21,3 +21,22 @@ src/target/
 
 # Temporary/planning markdown docs in src/
 src/*.md
+
+# AI/Agent tooling
+.agents/
+.claude/
+.serena/
+.opencode/
+.codex/
+.cursor/
+.windsurf/
+.copilot/
+.gitlab-ci-local/
+AGENTS.md
+CLAUDE.md
+adacs-deployment-status.md
+
+# AI-generated documentation
+docs/plans/
+docs/generated/
+docs/references/

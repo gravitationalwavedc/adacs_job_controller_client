@@ -14,7 +14,9 @@ use crate::python_interface::{
     PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef,
     Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
-use crate::thread_bundle_map::{clear_current_thread_bundle, set_current_thread_bundle};
+use crate::thread_bundle_map::{
+    clear_current_thread_bundle, set_current_thread_bundle, ThreadBundleGuard,
+};
 use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::path::Path;
@@ -136,16 +138,18 @@ impl BundleInterface {
 
         // Add the bundle path to the system path
         let p_path = PySys_GetObject(c"path".as_ptr());
-        let c_bundle_path = CString::new(bundle_path.to_str().unwrap()).unwrap();
+        let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
+            .expect("Bundle path contains NUL byte");
         let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
         PyList_Append(p_path, p_bundle_path);
         Py_DecRef(p_bundle_path);
 
         // Import the bundle module
         let p_bundle_module = PyImport_ImportModule(c"bundle".as_ptr());
-        if !PyErr_Occurred().is_null() {
+        if p_bundle_module.is_null() || !PyErr_Occurred().is_null() {
             error!("Error loading python bundle at path {:?}", bundle_path);
             PyErr_Print();
+            clear_current_thread_bundle();
             panic!("Failed to load bundle module");
         }
 
@@ -208,27 +212,25 @@ impl BundleInterface {
         let p_job_data = PyUnicode_FromString(CString::new(job_data).unwrap().as_ptr());
         PyTuple_SetItem(p_args, 1, p_job_data);
 
-        // Set up the thread bundle hash map
-        set_current_thread_bundle(self.inner.bundle_hash.clone());
+        // Set up the thread bundle hash map (RAII guard clears on drop)
+        let bundle_guard = ThreadBundleGuard::new(self.inner.bundle_hash.clone());
 
         // Call the bundle function
         let p_result = PyObject_CallObject(p_func, p_args);
         if !PyErr_Occurred().is_null() {
             error!("Error calling bundle function {}", func);
             self.print_last_python_exception();
-            clear_current_thread_bundle();
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
             return Err(NoneException);
         }
 
-        // Clear the thread from the thread bundle hash map
-        clear_current_thread_bundle();
-
+        drop(bundle_guard);
         Py_DecRef(p_args);
         Py_XDECREF(p_func);
 
         if MyPy_IsNone(p_result) {
+            Py_DecRef(p_result);
             return Err(NoneException);
         }
 

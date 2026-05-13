@@ -43,6 +43,7 @@ fn with_db_support(
 ) -> MockWebsocketClient {
     let state_clone = state.clone();
 
+    mock_ws.expect_is_connection_closed().returning(|| false);
     mock_ws.expect_is_server_ready().returning(|| true);
     mock_ws
         .expect_send_db_request()
@@ -187,9 +188,9 @@ fn test_get_file_list_job_not_exist() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -204,7 +205,7 @@ fn test_get_file_list_job_not_exist() {
         msg_raw.push_bool(false);
 
         let msg = Message::from_data(msg_raw.get_data().clone());
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -234,9 +235,9 @@ fn test_get_file_list_job_submitting() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -268,7 +269,7 @@ fn test_get_file_list_job_submitting() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -300,9 +301,9 @@ fn test_get_file_list_job_outside_working_directory() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -333,7 +334,7 @@ fn test_get_file_list_job_outside_working_directory() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -368,9 +369,9 @@ fn test_get_file_list_job_directory_not_exist() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -401,7 +402,7 @@ fn test_get_file_list_job_directory_not_exist() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -436,9 +437,9 @@ fn test_get_file_list_job_directory_is_a_file() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -469,7 +470,7 @@ fn test_get_file_list_job_directory_is_a_file() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -508,9 +509,9 @@ fn test_get_file_list_job_success_recursive() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -541,7 +542,7 @@ fn test_get_file_list_job_success_recursive() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -594,9 +595,9 @@ fn test_get_file_list_job_success_not_recursive() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -627,7 +628,7 @@ fn test_get_file_list_job_success_not_recursive() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -665,9 +666,9 @@ fn test_get_file_list_no_job_success() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -683,7 +684,7 @@ fn test_get_file_list_no_job_success() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -721,9 +722,9 @@ fn test_get_file_list_no_job_outside_working_directory() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -740,7 +741,7 @@ fn test_get_file_list_no_job_outside_working_directory() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -782,9 +783,9 @@ fn test_get_file_list_no_job_directory_not_exist() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -801,7 +802,7 @@ fn test_get_file_list_no_job_directory_not_exist() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -843,9 +844,9 @@ fn test_get_file_list_no_job_directory_is_a_file() {
         let uuid_clone = test_uuid.clone();
         mock_ws
             .expect_queue_message()
-            .with(eq(uuid_clone), always(), eq(Priority::Highest), always())
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
             .times(1)
-            .returning(move |_, data, _, _| {
+            .returning(move |_, data, _| {
                 let msg = Message::from_data(data);
                 let _ = tx_clone.send(msg);
             });
@@ -862,7 +863,7 @@ fn test_get_file_list_no_job_directory_is_a_file() {
 
         let msg = Message::from_data(msg_raw.get_data().clone());
 
-        handle_file_list(msg).await;
+        handle_file_list(msg);
 
         let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -876,6 +877,78 @@ fn test_get_file_list_no_job_directory_is_a_file() {
             "Path to list files is not a directory"
         );
     } // end inner()
+    inner();
+}
+
+#[test_fork::test]
+fn test_get_file_list_multiple_concurrent_calls_release_semaphore() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_fl_semaphore");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let list_root = fixture.create_test_directory("list_root");
+        let working_dir = list_root.to_str().unwrap().to_string();
+        fixture.create_test_file("list_root/file1.txt", "content1");
+
+        let state = create_mock_state();
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "test-uuid-semaphore".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(5)
+            .returning(move |_, data, _| {
+                let msg = Message::from_data(data);
+                let _ = tx_clone.send(msg);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 7777i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        // Fire 5 rapid file list requests — proves semaphore releases between calls
+        for _ in 0..5 {
+            let mut msg_raw = Message::new(FILE_LIST, Priority::Highest, SYSTEM_SOURCE);
+            msg_raw.push_uint(job_id as u32);
+            msg_raw.push_string(&test_uuid);
+            msg_raw.push_string("some_hash");
+            msg_raw.push_string(".");
+            msg_raw.push_bool(false);
+            let msg = Message::from_data(msg_raw.get_data().clone());
+            handle_file_list(msg);
+        }
+
+        // Collect all 5 responses
+        for i in 0..5 {
+            let response = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .unwrap_or_else(|_| panic!("Timeout waiting for response {i}"))
+                .unwrap_or_else(|| panic!("No response for call {i}"));
+            assert_eq!(response.id, FILE_LIST, "call {i} should return FILE_LIST");
+            let mut response_msg = response;
+            assert_eq!(response_msg.pop_string(), test_uuid);
+            let count = response_msg.pop_uint();
+            assert_eq!(count, 1, "call {i} should list 1 file");
+        }
+    }
     inner();
 }
 
@@ -1264,7 +1337,7 @@ fn test_get_file_download_no_job_success() {
         mock_ws
             .expect_queue_message()
             .times(..)
-            .returning(|_, _, _, _| {});
+            .returning(|_, _, _| {});
         mock_ws.expect_is_server_ready().returning(|| true);
         set_websocket_client(Arc::new(mock_ws));
 
