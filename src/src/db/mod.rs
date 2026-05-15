@@ -233,7 +233,7 @@ mod tests {
     use crate::websocket::{
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     fn make_job_response() -> Message {
         let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
@@ -251,8 +251,11 @@ mod tests {
         resp
     }
 
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
     #[test]
     fn get_running_jobs_parses_server_payload_without_success_flag() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let mut mock = MockWebsocketClient::new();
         mock.expect_send_db_request().times(1).returning(|_| {
@@ -273,6 +276,7 @@ mod tests {
 
     #[test]
     fn get_running_jobs_parses_response_after_request_id_consumed() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let mut mock = MockWebsocketClient::new();
         mock.expect_send_db_request().times(1).returning(|_| {
@@ -326,6 +330,7 @@ mod tests {
 
     #[test]
     fn save_status_sends_job_id_before_status_fields() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let mut mock = MockWebsocketClient::new();
         mock.expect_send_db_request().times(1).returning(|message| {
