@@ -125,12 +125,21 @@ impl BundleManager {
         );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            info!("run_bundle_string creating thread scope for {}", function_name);
+            info!(
+                "run_bundle_string creating thread scope for {}",
+                function_name
+            );
             let _scope = bundle.thread_scope();
-            info!("run_bundle_string created thread scope for {}", function_name);
+            info!(
+                "run_bundle_string created thread scope for {}",
+                function_name
+            );
             match bundle.run(function_name, details, job_data) {
                 Ok(result_obj) => {
-                    info!("run_bundle_string bundle.run returned for {}", function_name);
+                    info!(
+                        "run_bundle_string bundle.run returned for {}",
+                        function_name
+                    );
                     let result = bundle.to_string_py(result_obj);
                     bundle.dispose_object(result_obj);
                     info!("run_bundle_string completed {}", function_name);
@@ -167,12 +176,21 @@ impl BundleManager {
         );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            info!("run_bundle_uint64 creating thread scope for {}", function_name);
+            info!(
+                "run_bundle_uint64 creating thread scope for {}",
+                function_name
+            );
             let _scope = bundle.thread_scope();
-            info!("run_bundle_uint64 created thread scope for {}", function_name);
+            info!(
+                "run_bundle_uint64 created thread scope for {}",
+                function_name
+            );
             match bundle.run(function_name, details, job_data) {
                 Ok(result_obj) => {
-                    info!("run_bundle_uint64 bundle.run returned for {}", function_name);
+                    info!(
+                        "run_bundle_uint64 bundle.run returned for {}",
+                        function_name
+                    );
                     let result = bundle.to_uint64(result_obj);
                     bundle.dispose_object(result_obj);
                     info!("run_bundle_uint64 completed {}", function_name);

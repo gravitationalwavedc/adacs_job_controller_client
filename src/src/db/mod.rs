@@ -309,10 +309,10 @@ mod tests {
     #[test]
     fn parse_status_reads_state_as_uint() {
         let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(99);      // id
-        msg.push_ulong(42);      // job_id
-        msg.push_string("scheduler_id");  // what
-        msg.push_uint(500);      // state (as u32, matching server)
+        msg.push_ulong(99); // id
+        msg.push_ulong(42); // job_id
+        msg.push_string("scheduler_id"); // what
+        msg.push_uint(500); // state (as u32, matching server)
 
         let mut resp = Message::from_data(msg.get_data().clone());
         // from_data consumes header (source + id), cursor is at payload

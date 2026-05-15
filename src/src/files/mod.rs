@@ -18,7 +18,7 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::{
         client::IntoClientRequest,
-        http::header::{AUTHORIZATION, HeaderValue},
+        http::header::{HeaderValue, AUTHORIZATION},
         protocol::Message as WsMessage,
     },
 };

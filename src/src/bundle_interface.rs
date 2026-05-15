@@ -6,13 +6,13 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    my_py_true_struct, MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString,
-    PyErr_Fetch, PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread,
-    PyEval_SaveThread, PyImport_ImportModule, PyIter_Next, PyList_Append,
+    get_main_ts, my_py_true_struct, MyPy_IsNone, PyCallable_Check, PyDict_New,
+    PyDict_SetItemString, PyErr_Fetch, PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins,
+    PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule, PyIter_Next, PyList_Append,
     PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject, PyObject_GetAttrString,
     PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject, PyThreadState,
     PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef,
-    Py_XDECREF, Py_file_input, get_main_ts, SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::{
     clear_current_thread_bundle, set_current_thread_bundle, ThreadBundleGuard,
