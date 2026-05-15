@@ -48,31 +48,33 @@ fn create_mock_with_db_state(state: &Arc<std::sync::Mutex<MockDbState>>) -> Mock
             let mut resp =
                 Message::new(crate::messaging::DB_RESPONSE, Priority::Medium, "database");
             match msg.id {
-                DB_JOBSTATUS_GET_BY_JOB_ID => {
+                DB_JOBSTATUS_GET_BY_JOB_ID | DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT => {
                     let mut m = Message::from_data(msg.get_data().clone());
                     let job_id = m.pop_ulong() as i64;
+                    if msg.id == DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT {
+                        let _what = m.pop_string();
+                    }
                     let s = state_clone.lock().unwrap();
                     let statuses: Vec<_> = s
                         .statuses
-                        .iter()
-                        .filter(|(_, st)| st.job_id == job_id)
-                        .map(|(_, st)| st.clone())
+                        .values()
+                        .filter(|st| st.job_id == job_id)
+                        .cloned()
                         .collect();
-                    resp.push_bool(true);
                     resp.push_uint(statuses.len() as u32);
                     for status in statuses {
                         resp.push_ulong(status.id as u64);
                         resp.push_ulong(status.job_id as u64);
                         resp.push_string(&status.what);
-                        resp.push_int(status.state);
+                        resp.push_uint(status.state as u32);
                     }
                 }
                 DB_JOBSTATUS_SAVE => {
                     let mut m = Message::from_data(msg.get_data().clone());
                     let id = m.pop_ulong() as i64;
-                    let what = m.pop_string();
-                    let state_val = m.pop_int();
                     let job_id = m.pop_ulong() as i64;
+                    let what = m.pop_string();
+                    let state_val = m.pop_uint() as i32;
                     let mut s = state_clone.lock().unwrap();
                     let saved_id = if id > 0 { id } else { s.next_status_id };
                     if id > 0 {
@@ -87,7 +89,6 @@ fn create_mock_with_db_state(state: &Arc<std::sync::Mutex<MockDbState>>) -> Mock
                         what,
                     };
                     s.statuses.insert(saved_id, status);
-                    resp.push_bool(true);
                     resp.push_ulong(saved_id as u64);
                 }
                 DB_JOB_GET_BY_ID => {
@@ -95,7 +96,6 @@ fn create_mock_with_db_state(state: &Arc<std::sync::Mutex<MockDbState>>) -> Mock
                     let id = m.pop_ulong() as i64;
                     let s = state_clone.lock().unwrap();
                     if let Some(job) = s.jobs.get(&id) {
-                        resp.push_bool(true);
                         resp.push_uint(1);
                         resp.push_ulong(job.id as u64);
                         resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -108,7 +108,6 @@ fn create_mock_with_db_state(state: &Arc<std::sync::Mutex<MockDbState>>) -> Mock
                         resp.push_bool(job.deleting);
                         resp.push_bool(job.deleted);
                     } else {
-                        resp.push_bool(true);
                         resp.push_uint(0);
                     }
                 }
@@ -118,7 +117,6 @@ fn create_mock_with_db_state(state: &Arc<std::sync::Mutex<MockDbState>>) -> Mock
                     let s = state_clone.lock().unwrap();
                     let found = s.jobs.values().find(|j| j.job_id == Some(job_id));
                     if let Some(job) = found {
-                        resp.push_bool(true);
                         resp.push_uint(1);
                         resp.push_ulong(job.id as u64);
                         resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -131,7 +129,6 @@ fn create_mock_with_db_state(state: &Arc<std::sync::Mutex<MockDbState>>) -> Mock
                         resp.push_bool(job.deleting);
                         resp.push_bool(job.deleted);
                     } else {
-                        resp.push_bool(true);
                         resp.push_uint(0);
                     }
                 }
@@ -299,9 +296,9 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
             DB_JOBSTATUS_SAVE => {
                 let mut m = Message::from_data(msg.get_data().clone());
                 let id = m.pop_ulong() as i64;
-                let what = m.pop_string();
-                let state = m.pop_int();
                 let job_id = m.pop_ulong() as i64;
+                let what = m.pop_string();
+                let state = m.pop_uint() as i32;
                 let mut s = state_clone.lock().unwrap();
                 let saved_id = if id > 0 { id } else { s.next_status_id };
                 if id > 0 {
@@ -350,7 +347,7 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     resp.push_ulong(st.id as u64);
                     resp.push_ulong(st.job_id as u64);
                     resp.push_string(&st.what);
-                    resp.push_int(st.state);
+                    resp.push_uint(st.state as u32);
                 }
             }
             DB_JOBSTATUS_DELETE_BY_ID_LIST => {
@@ -936,9 +933,9 @@ fn test_check_all_job_status_stress() {
                     DB_JOBSTATUS_SAVE => {
                         let mut m = Message::from_data(msg.get_data().clone());
                         let id = m.pop_ulong() as i64;
-                        let what = m.pop_string();
-                        let state_val = m.pop_int();
                         let job_id = m.pop_ulong() as i64;
+                        let what = m.pop_string();
+                        let state_val = m.pop_uint() as i32;
                         let mut s = state_clone.lock().unwrap();
                         let saved_id = if id > 0 { id } else { s.next_status_id };
                         if id > 0 {
@@ -953,7 +950,6 @@ fn test_check_all_job_status_stress() {
                             what,
                         };
                         s.statuses.insert(saved_id, status);
-                        resp.push_bool(true);
                         resp.push_ulong(saved_id as u64);
                     }
                     DB_JOBSTATUS_GET_BY_JOB_ID => {
@@ -1051,9 +1047,9 @@ fn test_check_all_job_status_stress() {
                     DB_JOBSTATUS_SAVE => {
                         let mut m = Message::from_data(msg.get_data().clone());
                         let id = m.pop_ulong() as i64;
-                        let what = m.pop_string();
-                        let state_val = m.pop_int();
                         let job_id = m.pop_ulong() as i64;
+                        let what = m.pop_string();
+                        let state_val = m.pop_uint() as i32;
                         let mut s = state_clone2.lock().unwrap();
                         let saved_id = if id > 0 { id } else { s.next_status_id };
                         if id > 0 {
@@ -1068,7 +1064,6 @@ fn test_check_all_job_status_stress() {
                             what,
                         };
                         s.statuses.insert(saved_id, status);
-                        resp.push_bool(true);
                         resp.push_ulong(saved_id as u64);
                     }
                     DB_JOBSTATUS_GET_BY_JOB_ID => {
@@ -1361,10 +1356,8 @@ fn setup_check_status_test(
                     deleted,
                 };
                 s.jobs.insert(saved_id, saved.clone());
-                resp.push_bool(true);
                 resp.push_ulong(saved_id as u64);
             } else {
-                resp.push_bool(true);
                 resp.push_ulong(0);
             }
             Box::pin(async move { Ok(resp) })

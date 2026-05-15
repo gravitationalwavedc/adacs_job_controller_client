@@ -136,8 +136,8 @@ fn with_db_support(
                     let mut m = Message::from_data(msg.get_data().clone());
                     let _id = m.pop_ulong() as i64;
                     let _job_id = m.pop_ulong() as i64;
-                    let _state = m.pop_int();
                     let _what = m.pop_string();
+                    let _state = m.pop_uint() as i32;
                     resp.push_ulong(1);
                 }
                 _ => {
