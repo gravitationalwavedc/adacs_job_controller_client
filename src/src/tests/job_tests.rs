@@ -915,7 +915,6 @@ fn test_check_all_job_status_stress() {
                     DB_JOB_GET_RUNNING_JOBS => {
                         let s = state_clone.lock().unwrap();
                         let running: Vec<_> = s.jobs.values().filter(|j| j.running).collect();
-                        resp.push_bool(true);
                         resp.push_uint(running.len() as u32);
                         for job in running {
                             resp.push_ulong(job.id as u64);
@@ -962,17 +961,15 @@ fn test_check_all_job_status_stress() {
                             .filter(|(_, st)| st.job_id == job_id)
                             .map(|(_, st)| st.clone())
                             .collect();
-                        resp.push_bool(true);
                         resp.push_uint(statuses.len() as u32);
                         for status in statuses {
                             resp.push_ulong(status.id as u64);
                             resp.push_ulong(status.job_id as u64);
                             resp.push_string(&status.what);
-                            resp.push_int(status.state);
+                            resp.push_uint(status.state as u32);
                         }
                     }
                     _ => {
-                        resp.push_bool(true);
                         resp.push_ulong(0);
                     }
                 }
@@ -1029,7 +1026,6 @@ fn test_check_all_job_status_stress() {
                     DB_JOB_GET_RUNNING_JOBS => {
                         let s = state_clone2.lock().unwrap();
                         let running: Vec<_> = s.jobs.values().filter(|j| j.running).collect();
-                        resp.push_bool(true);
                         resp.push_uint(running.len() as u32);
                         for job in running {
                             resp.push_ulong(job.id as u64);
@@ -1076,17 +1072,15 @@ fn test_check_all_job_status_stress() {
                             .filter(|(_, st)| st.job_id == job_id)
                             .map(|(_, st)| st.clone())
                             .collect();
-                        resp.push_bool(true);
                         resp.push_uint(statuses.len() as u32);
                         for status in statuses {
                             resp.push_ulong(status.id as u64);
                             resp.push_ulong(status.job_id as u64);
                             resp.push_string(&status.what);
-                            resp.push_int(status.state);
+                            resp.push_uint(status.state as u32);
                         }
                     }
                     _ => {
-                        resp.push_bool(true);
                         resp.push_ulong(0);
                     }
                 }
