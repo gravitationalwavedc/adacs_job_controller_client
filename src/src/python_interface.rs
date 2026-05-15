@@ -148,6 +148,7 @@ py_wrap!(PyTuple_GetItem, (tuple: *mut PyObject, pos: Py_ssize_t) -> *mut PyObje
 py_wrap!(Py_IncRef, (obj: *mut PyObject) -> ());
 py_wrap!(Py_DecRef, (obj: *mut PyObject) -> ());
 py_wrap!(PyThreadState_New, (interp: *mut PyInterpreterState) -> *mut PyThreadState);
+py_wrap!(PyThreadState_Delete, (state: *mut PyThreadState) -> ());
 py_wrap!(PyEval_RestoreThread, (state: *mut PyThreadState) -> ());
 py_wrap!(PyEval_InitThreads, () -> ());
 py_wrap!(PyThreadState_Clear, (state: *mut PyThreadState) -> ());
@@ -263,8 +264,9 @@ pub fn init_python() {
             Py_Initialize();
             PyEval_InitThreads();
 
-            // Save the main thread state so we can restore it later
-            let ts = PyThreadState_Get();
+            // Save the main thread state and release the GIL so worker threads can
+            // restore it before creating sub-interpreters.
+            let ts = PyEval_SaveThread();
             let _ = MAIN_TS.set(ThreadStatePtr(ts));
         }
     });
@@ -327,34 +329,25 @@ impl Drop for SubInterpreter {
 // Exact port of C++ SubInterpreter::ThreadScope (ThreadState + SwapThreadStateScope).
 //
 // Creates a new thread state for the given interpreter, makes it current,
-// and on drop: clears the thread state and deletes it (via PyThreadState_DeleteCurrent).
+// and on drop releases the GIL, clears the thread state, and deletes it.
 pub struct ThreadScope {
-    _ts: *mut PyThreadState,
-    saved_ts: *mut PyThreadState,
+    ts: *mut PyThreadState,
 }
 
 impl ThreadScope {
     /// Create a new `ThreadScope` for the given interpreter.
     /// This is the equivalent of C++ `SubInterpreter::ThreadScope`.
     pub unsafe fn new(interp: *mut PyInterpreterState) -> Self {
-        // ThreadState constructor: create new ts, restore thread (acquires GIL for this ts)
         let ts = PyThreadState_New(interp);
         PyEval_RestoreThread(ts);
-
-        // SwapThreadStateScope: swap to the new ts, save the one RestoreThread set
-        let saved_ts = PyThreadState_Swap(ts);
-
-        ThreadScope { _ts: ts, saved_ts }
+        ThreadScope { ts }
     }
 }
 
 impl Drop for ThreadScope {
     fn drop(&mut self) {
         unsafe {
-            // ~SwapThreadStateScope: restore the saved ts
-            let ts = PyThreadState_Swap(self.saved_ts);
-            // ~ThreadState: clear and delete the thread state
-            PyThreadState_Clear(ts);
+            PyThreadState_Clear(self.ts);
             PyThreadState_DeleteCurrent();
         }
     }

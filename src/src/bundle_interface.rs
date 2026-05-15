@@ -12,7 +12,7 @@ use crate::python_interface::{
     PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject, PyObject_GetAttrString,
     PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject, PyThreadState,
     PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef,
-    Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    Py_XDECREF, Py_file_input, get_main_ts, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::{
     clear_current_thread_bundle, set_current_thread_bundle, ThreadBundleGuard,
@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 
 // The exact Python script used in C++ for stdout/stderr redirection.
 const STDOUT_REDIRECTION: &str = r"
@@ -71,6 +71,7 @@ impl BundleInterface {
     #[allow(clippy::items_after_statements)]
     pub unsafe fn new(bundle_hash: &str, bundle_path_root: &str) -> Self {
         let _guard = PYTHON_MUTEX.lock();
+        info!("BundleInterface::new start for {}", bundle_hash);
 
         // Set up the thread bundle hash map (needed for logging during load)
         set_current_thread_bundle(bundle_hash.to_string());
@@ -83,26 +84,36 @@ impl BundleInterface {
         static STATE: StdMutex<SendPtr> = StdMutex::new(SendPtr(std::ptr::null_mut()));
         {
             let mut state = STATE.lock().unwrap();
+            if state.0.is_null() {
+                state.0 = get_main_ts();
+            }
             if !state.0.is_null() {
+                info!("BundleInterface::new restoring saved main thread state");
                 PyEval_RestoreThread(state.0);
                 state.0 = std::ptr::null_mut();
             }
         }
 
+        info!("BundleInterface::new creating sub-interpreter");
         let python_interpreter = SubInterpreter::new();
+        info!("BundleInterface::new created sub-interpreter");
 
         {
             let mut state = STATE.lock().unwrap();
             if state.0.is_null() {
+                info!("BundleInterface::new saving main thread state");
                 state.0 = PyEval_SaveThread();
             }
         }
 
         // Activate the new interpreter via ThreadScope
         let interp = python_interpreter.interp();
+        info!("BundleInterface::new creating thread scope");
         let _scope = ThreadScope::new(interp);
+        info!("BundleInterface::new created thread scope");
 
         let bundle_path = Path::new(bundle_path_root).join(bundle_hash);
+        info!("BundleInterface::new bundle path {:?}", bundle_path);
 
         // Create a new globals dict and enable the python builtins
         let p_global = PyDict_New();
@@ -111,6 +122,7 @@ impl BundleInterface {
         // Set up logging so print() works as expected (run the redirection script)
         let p_local = PyDict_New();
         let c_redirect = CString::new(STDOUT_REDIRECTION).unwrap();
+        info!("BundleInterface::new installing stdout/stderr redirection");
         let result = PyRun_StringFlags(
             c_redirect.as_ptr(),
             Py_file_input,
@@ -130,13 +142,16 @@ impl BundleInterface {
         Py_DecRef(p_local);
 
         // Ensure the json module is loaded in the global scope
+        info!("BundleInterface::new importing json");
         let json_module = PyImport_ImportModule(c"json".as_ptr());
         PyDict_SetItemString(p_global, c"json".as_ptr(), json_module);
 
         // Load the traceback module
+        info!("BundleInterface::new importing traceback");
         let traceback_module = PyImport_ImportModule(c"traceback".as_ptr());
 
         // Add the bundle path to the system path
+        info!("BundleInterface::new appending bundle path to sys.path");
         let p_path = PySys_GetObject(c"path".as_ptr());
         let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
             .expect("Bundle path contains NUL byte");
@@ -145,6 +160,7 @@ impl BundleInterface {
         Py_DecRef(p_bundle_path);
 
         // Import the bundle module
+        info!("BundleInterface::new importing bundle module");
         let p_bundle_module = PyImport_ImportModule(c"bundle".as_ptr());
         if p_bundle_module.is_null() || !PyErr_Occurred().is_null() {
             error!("Error loading python bundle at path {:?}", bundle_path);
@@ -154,6 +170,7 @@ impl BundleInterface {
         }
 
         // Clear the thread from the thread bundle hash map
+        info!("BundleInterface::new finished for {}", bundle_hash);
         clear_current_thread_bundle();
 
         BundleInterface {

@@ -10,6 +10,7 @@ use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tracing::info;
 
 pub struct BundleManager {
     bundle_path_root: String,
@@ -74,6 +75,7 @@ impl BundleManager {
         {
             let bundles = self.bundles.read();
             if let Some(bundle) = bundles.get(bundle_hash) {
+                info!("Using cached bundle {}", bundle_hash);
                 return bundle.clone();
             }
         }
@@ -87,7 +89,12 @@ impl BundleManager {
 
         // SAFETY: BundleInterface::new requires that Python has been initialised
         // (init_python was called) and that the bundle path is valid.
+        info!(
+            "Loading bundle {} from {}",
+            bundle_hash, self.bundle_path_root
+        );
         let bundle = unsafe { BundleInterface::new(bundle_hash, &self.bundle_path_root) };
+        info!("Loaded bundle {}", bundle_hash);
         bundles.insert(bundle_hash.to_string(), bundle.clone());
         bundle
     }
@@ -101,16 +108,32 @@ impl BundleManager {
         details: &Value,
         job_data: &str,
     ) -> String {
+        info!(
+            "run_bundle_string entering {} for bundle {}",
+            function_name, bundle_hash
+        );
         let bundle = self.load_bundle(bundle_hash);
+        info!(
+            "run_bundle_string loaded bundle {} for {}",
+            bundle_hash, function_name
+        );
 
         let _guard = PYTHON_MUTEX.lock();
+        info!(
+            "run_bundle_string acquired python mutex for {}",
+            function_name
+        );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
+            info!("run_bundle_string creating thread scope for {}", function_name);
             let _scope = bundle.thread_scope();
+            info!("run_bundle_string created thread scope for {}", function_name);
             match bundle.run(function_name, details, job_data) {
                 Ok(result_obj) => {
+                    info!("run_bundle_string bundle.run returned for {}", function_name);
                     let result = bundle.to_string_py(result_obj);
                     bundle.dispose_object(result_obj);
+                    info!("run_bundle_string completed {}", function_name);
                     result
                 }
                 Err(NoneException) => String::new(),
@@ -127,16 +150,32 @@ impl BundleManager {
         details: &Value,
         job_data: &str,
     ) -> u64 {
+        info!(
+            "run_bundle_uint64 entering {} for bundle {}",
+            function_name, bundle_hash
+        );
         let bundle = self.load_bundle(bundle_hash);
+        info!(
+            "run_bundle_uint64 loaded bundle {} for {}",
+            bundle_hash, function_name
+        );
 
         let _guard = PYTHON_MUTEX.lock();
+        info!(
+            "run_bundle_uint64 acquired python mutex for {}",
+            function_name
+        );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
+            info!("run_bundle_uint64 creating thread scope for {}", function_name);
             let _scope = bundle.thread_scope();
+            info!("run_bundle_uint64 created thread scope for {}", function_name);
             match bundle.run(function_name, details, job_data) {
                 Ok(result_obj) => {
+                    info!("run_bundle_uint64 bundle.run returned for {}", function_name);
                     let result = bundle.to_uint64(result_obj);
                     bundle.dispose_object(result_obj);
+                    info!("run_bundle_uint64 completed {}", function_name);
                     result
                 }
                 Err(NoneException) => 0,

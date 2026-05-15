@@ -231,7 +231,6 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     deleted,
                 };
                 s.jobs.insert(saved_id, saved.clone());
-                resp.push_bool(true);
                 resp.push_ulong(saved_id as u64);
             }
             id if id == DB_JOB_GET_BY_ID => {
@@ -239,7 +238,6 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                 let id = m.pop_ulong() as i64;
                 let s = state_clone.lock().unwrap();
                 if let Some(job) = s.jobs.get(&id) {
-                    resp.push_bool(true);
                     resp.push_uint(1);
                     resp.push_ulong(job.id as u64);
                     resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -252,8 +250,7 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     resp.push_bool(job.deleting);
                     resp.push_bool(job.deleted);
                 } else {
-                    resp.push_bool(true);
-                    resp.push_ulong(0);
+                    resp.push_uint(0);
                 }
             }
             id if id == DB_JOB_GET_BY_JOB_ID => {
@@ -262,7 +259,6 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                 let s = state_clone.lock().unwrap();
                 let found = s.jobs.values().find(|j| j.job_id == Some(job_id));
                 if let Some(job) = found {
-                    resp.push_bool(true);
                     resp.push_uint(1);
                     resp.push_ulong(job.id as u64);
                     resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -275,7 +271,6 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     resp.push_bool(job.deleting);
                     resp.push_bool(job.deleted);
                 } else {
-                    resp.push_bool(true);
                     resp.push_uint(0);
                 }
             }
@@ -283,12 +278,10 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                 let mut m = Message::from_data(msg.get_data().clone());
                 let id = m.pop_ulong() as i64;
                 state_clone.lock().unwrap().jobs.remove(&id);
-                resp.push_bool(true);
             }
             DB_JOB_GET_RUNNING_JOBS => {
                 let s = state_clone.lock().unwrap();
                 let running: Vec<_> = s.jobs.values().filter(|j| j.running).collect();
-                resp.push_bool(true);
                 resp.push_uint(running.len() as u32);
                 for job in running {
                     resp.push_ulong(job.id as u64);
@@ -323,7 +316,6 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     job_id,
                 };
                 s.statuses.insert(saved_id, saved.clone());
-                resp.push_bool(true);
                 resp.push_ulong(saved_id as u64);
             }
             DB_JOBSTATUS_GET_BY_JOB_ID => {
@@ -335,7 +327,6 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     .values()
                     .filter(|st| st.job_id == job_id)
                     .collect();
-                resp.push_bool(true);
                 resp.push_uint(statuses.len() as u32);
                 for st in statuses {
                     resp.push_ulong(st.id as u64);
@@ -354,7 +345,6 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     .values()
                     .filter(|st| st.job_id == job_id && st.what == what)
                     .collect();
-                resp.push_bool(true);
                 resp.push_uint(statuses.len() as u32);
                 for st in statuses {
                     resp.push_ulong(st.id as u64);
@@ -371,10 +361,8 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     let id = m.pop_ulong() as i64;
                     s.statuses.remove(&id);
                 }
-                resp.push_bool(true);
             }
             _ => {
-                resp.push_bool(true);
                 resp.push_ulong(0);
             }
         }

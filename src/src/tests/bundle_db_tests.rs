@@ -7,7 +7,7 @@ use test_fork::test;
 use uuid::Uuid;
 
 /// Create a mock response matching the C++ server response format.
-/// `parse_response` in `bundle_db` will call `from_data` to skip the header.
+/// `parse_response` in `bundle_db` reads from the current cursor position.
 fn make_db_response() -> Message {
     Message::new(DB_RESPONSE, Priority::Medium, "database")
 }
@@ -29,7 +29,6 @@ fn test_create_or_update_job() {
         let mut mock_ws = MockWebsocketClient::new();
         mock_ws.expect_send_db_request().times(1).returning(|_msg| {
             let mut resp = make_db_response();
-            resp.push_bool(true); // success
             resp.push_ulong(4321); // returned job_id
             Box::pin(async move { Ok(resp) })
         });
@@ -63,7 +62,7 @@ fn test_create_or_update_job_failure() {
         let mut mock_ws = MockWebsocketClient::new();
         mock_ws.expect_send_db_request().times(1).returning(|_msg| {
             let mut resp = make_db_response();
-            resp.push_bool(false); // failure
+            resp.push_ulong(0); // failure
             Box::pin(async move { Ok(resp) })
         });
 
@@ -98,7 +97,7 @@ fn test_get_job_by_id() {
         let mut mock_ws = MockWebsocketClient::new();
         mock_ws.expect_send_db_request().times(1).returning(|_msg| {
             let mut resp = make_db_response();
-            resp.push_bool(true); // success
+            resp.push_uint(1); // count
             resp.push_ulong(1234); // job_id (echoed back, ignored by code)
             resp.push_string(r#"{"status": "running"}"#); // job data JSON
             Box::pin(async move { Ok(resp) })
@@ -133,7 +132,7 @@ fn test_get_job_by_id_failure() {
         let mut mock_ws = MockWebsocketClient::new();
         mock_ws.expect_send_db_request().times(1).returning(|_msg| {
             let mut resp = make_db_response();
-            resp.push_bool(false); // failure
+            resp.push_uint(0); // failure
             Box::pin(async move { Ok(resp) })
         });
 
@@ -163,11 +162,10 @@ fn test_delete_job_success() {
         fixture.write_bundle_db_delete_job(&bundle_hash, r#"{"job_id": 1234}"#);
 
         let mut mock_ws = MockWebsocketClient::new();
-        mock_ws.expect_send_db_request().times(1).returning(|_msg| {
-            let mut resp = make_db_response();
-            resp.push_bool(true); // success
-            Box::pin(async move { Ok(resp) })
-        });
+        mock_ws
+            .expect_send_db_request()
+            .times(1)
+            .returning(|_msg| Box::pin(async move { Ok(make_db_response()) }));
 
         set_websocket_client(Arc::new(mock_ws));
 
@@ -196,9 +194,9 @@ fn test_delete_job_failure() {
 
         let mut mock_ws = MockWebsocketClient::new();
         mock_ws.expect_send_db_request().times(1).returning(|_msg| {
-            let mut resp = make_db_response();
-            resp.push_bool(false); // failure
-            Box::pin(async move { Ok(resp) })
+            Box::pin(async move {
+                Err::<Message, Box<dyn std::error::Error + Send + Sync>>("delete failed".into())
+            })
         });
 
         set_websocket_client(Arc::new(mock_ws));
@@ -210,7 +208,7 @@ fn test_delete_job_failure() {
             "",
         );
 
-        assert!(result["error"].as_str().unwrap().contains("does not exist"));
+        assert!(result["error"].as_str().unwrap().contains("delete failed"));
     }
     inner();
 }
