@@ -84,7 +84,15 @@ pub fn handle_job_submit(mut msg: Message) {
         }
 
         let bm = BundleManager::singleton();
+        info!(
+            "Resolving working directory for ui job id {} via bundle {}",
+            job_id, bundle_hash
+        );
         let working_dir = bm.run_bundle_string("working_directory", &bundle_hash, &details, "");
+        info!(
+            "Resolved working directory for ui job id {}: {}",
+            job_id, working_dir
+        );
         job_model.working_directory = working_dir;
         match db::save_job(job_model).await {
             Ok(j) => job_model = j,
@@ -94,7 +102,15 @@ pub fn handle_job_submit(mut msg: Message) {
             }
         }
 
+        info!(
+            "Submitting ui job id {} through bundle {}",
+            job_id, bundle_hash
+        );
         let scheduler_id = bm.run_bundle_uint64("submit", &bundle_hash, &details, &params);
+        info!(
+            "Bundle submit returned scheduler id {} for ui job id {}",
+            scheduler_id, job_id
+        );
 
         job_model.scheduler_id = Some(scheduler_id as i64);
 

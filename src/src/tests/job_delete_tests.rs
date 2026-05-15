@@ -84,7 +84,6 @@ fn with_db_support(
                         deleted,
                     };
                     s.jobs.insert(saved_id, saved.clone());
-                    resp.push_bool(true);
                     resp.push_ulong(saved_id as u64);
                 }
                 id if id == DB_JOB_GET_BY_JOB_ID => {
@@ -93,7 +92,6 @@ fn with_db_support(
                     let s = state_clone.lock().unwrap();
                     let found = s.jobs.values().find(|j| j.job_id == Some(job_id));
                     if let Some(job) = found {
-                        resp.push_bool(true);
                         resp.push_uint(1);
                         resp.push_ulong(job.id as u64);
                         resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -106,7 +104,6 @@ fn with_db_support(
                         resp.push_bool(job.deleting);
                         resp.push_bool(job.deleted);
                     } else {
-                        resp.push_bool(true);
                         resp.push_uint(0);
                     }
                 }
@@ -116,7 +113,6 @@ fn with_db_support(
                     let s = state_clone.lock().unwrap();
                     let found = s.jobs.get(&id);
                     if let Some(job) = found {
-                        resp.push_bool(true);
                         resp.push_uint(1);
                         resp.push_ulong(job.id as u64);
                         resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -129,12 +125,10 @@ fn with_db_support(
                         resp.push_bool(job.deleting);
                         resp.push_bool(job.deleted);
                     } else {
-                        resp.push_bool(true);
                         resp.push_uint(0);
                     }
                 }
                 _ => {
-                    resp.push_bool(true);
                     resp.push_uint(0);
                 }
             }

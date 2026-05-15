@@ -14,7 +14,14 @@ use std::time::Duration;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, Semaphore};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{
+        client::IntoClientRequest,
+        http::header::{HeaderValue, AUTHORIZATION},
+        protocol::Message as WsMessage,
+    },
+};
 use tracing::error;
 
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
@@ -148,13 +155,15 @@ pub fn handle_file_download(mut msg: Message) {
         let ws_endpoint = config["websocketEndpoint"]
             .as_str()
             .unwrap_or("ws://127.0.0.1:8001/ws/");
-        let url = if ws_endpoint.contains('?') {
-            format!("{ws_endpoint}&token={uuid}")
-        } else {
-            format!("{ws_endpoint}?token={uuid}")
+        let request = match build_file_ws_request(ws_endpoint, &uuid) {
+            Ok(request) => request,
+            Err(e) => {
+                error!("Failed to build file download request: {}", e);
+                return;
+            }
         };
 
-        let (ws_stream, _) = match connect_async(&url).await {
+        let (ws_stream, _) = match connect_async(request).await {
             Ok(s) => s,
             Err(e) => {
                 error!("Failed to connect for file download: {}", e);
@@ -321,23 +330,32 @@ pub fn handle_file_upload(mut msg: Message) {
     let ws_endpoint = config["websocketEndpoint"]
         .as_str()
         .unwrap_or("ws://127.0.0.1:8001/ws/");
-    let url = if ws_endpoint.contains('?') {
-        format!("{ws_endpoint}&token={uuid}")
-    } else {
-        format!("{ws_endpoint}?token={uuid}")
-    };
 
-    handle_file_upload_internal(uuid, job_id, bundle_hash, target_path, file_size, url);
+    handle_file_upload_internal(
+        uuid,
+        job_id,
+        bundle_hash,
+        target_path,
+        file_size,
+        ws_endpoint.to_string(),
+    );
 }
 
-pub fn handle_file_upload_with_url(mut msg: Message, url: String) {
+pub fn handle_file_upload_with_url(mut msg: Message, ws_endpoint: String) {
     let uuid = msg.pop_string();
     let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
     let target_path = msg.pop_string();
     let file_size = msg.pop_ulong();
 
-    handle_file_upload_internal(uuid, job_id, bundle_hash, target_path, file_size, url);
+    handle_file_upload_internal(
+        uuid,
+        job_id,
+        bundle_hash,
+        target_path,
+        file_size,
+        ws_endpoint,
+    );
 }
 
 fn handle_file_upload_internal(
@@ -346,10 +364,18 @@ fn handle_file_upload_internal(
     bundle_hash: String,
     mut target_path: String,
     file_size: u64,
-    url: String,
+    ws_endpoint: String,
 ) {
     tokio::spawn(async move {
-        let (ws_stream, _) = match connect_async(&url).await {
+        let request = match build_file_ws_request(&ws_endpoint, &uuid) {
+            Ok(request) => request,
+            Err(e) => {
+                error!("Failed to build file upload request: {}", e);
+                return;
+            }
+        };
+
+        let (ws_stream, _) = match connect_async(request).await {
             Ok(s) => s,
             Err(e) => {
                 error!("Failed to connect for file upload: {}", e);
@@ -483,6 +509,19 @@ fn handle_file_upload_internal(
     });
 }
 
+fn build_file_ws_request(
+    ws_endpoint: &str,
+    token: &str,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, String> {
+    let mut request = ws_endpoint
+        .into_client_request()
+        .map_err(|e| format!("invalid websocket endpoint: {e}"))?;
+    let auth_value = HeaderValue::from_str(&format!("Bearer {token}"))
+        .map_err(|e| format!("invalid authorization header: {e}"))?;
+    request.headers_mut().insert(AUTHORIZATION, auth_value);
+    Ok(request)
+}
+
 /// Wait for a `SERVER_READY` message with a 10-second timeout.
 async fn wait_for_server_ready(
     ws_receiver: &mut futures_util::stream::SplitStream<
@@ -567,6 +606,7 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
     fn run_validate(target: &Path, working_dir: &str) -> bool {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -672,6 +712,23 @@ mod tests {
             !run_validate(&escape, &wd),
             "path at root outside wd should fail"
         );
+    }
+
+    #[test]
+    fn test_build_file_ws_request_sets_bearer_header() {
+        let request = build_file_ws_request("ws://127.0.0.1:9001/ws/", "test-token").unwrap();
+
+        assert_eq!(request.uri().to_string(), "ws://127.0.0.1:9001/ws/");
+        assert_eq!(
+            request.headers().get(AUTHORIZATION).unwrap(),
+            "Bearer test-token"
+        );
+    }
+
+    #[test]
+    fn test_build_file_ws_request_rejects_invalid_endpoint() {
+        let err = build_file_ws_request("not a websocket url", "test-token").unwrap_err();
+        assert!(err.contains("invalid websocket endpoint"));
     }
 }
 

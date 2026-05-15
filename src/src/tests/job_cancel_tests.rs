@@ -90,7 +90,6 @@ fn with_db_support(
                         deleted,
                     };
                     s.jobs.insert(saved_id, saved.clone());
-                    resp.push_bool(true);
                     resp.push_ulong(saved_id as u64);
                 }
                 id if id == DB_JOB_GET_BY_JOB_ID => {
@@ -99,7 +98,6 @@ fn with_db_support(
                     let s = state_clone.lock().unwrap();
                     let found = s.jobs.values().find(|j| j.job_id == Some(job_id));
                     if let Some(job) = found {
-                        resp.push_bool(true);
                         resp.push_uint(1);
                         resp.push_ulong(job.id as u64);
                         resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -112,7 +110,6 @@ fn with_db_support(
                         resp.push_bool(job.deleting);
                         resp.push_bool(job.deleted);
                     } else {
-                        resp.push_bool(true);
                         resp.push_uint(0);
                     }
                 }
@@ -122,7 +119,6 @@ fn with_db_support(
                     let s = state_clone.lock().unwrap();
                     let found = s.jobs.get(&id);
                     if let Some(job) = found {
-                        resp.push_bool(true);
                         resp.push_uint(1);
                         resp.push_ulong(job.id as u64);
                         resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -135,16 +131,15 @@ fn with_db_support(
                         resp.push_bool(job.deleting);
                         resp.push_bool(job.deleted);
                     } else {
-                        resp.push_bool(true);
                         resp.push_uint(0);
                     }
                 }
                 id if id == DB_JOBSTATUS_SAVE => {
                     let mut m = Message::from_data(msg.get_data().clone());
                     let id = m.pop_ulong() as i64;
-                    let what = m.pop_string();
-                    let state = m.pop_int();
                     let job_id = m.pop_ulong() as i64;
+                    let what = m.pop_string();
+                    let state = m.pop_uint() as i32;
                     let mut s = state_clone.lock().unwrap();
                     let saved_id = if id > 0 { id } else { s.next_status_id };
                     if id > 0 {
@@ -159,7 +154,6 @@ fn with_db_support(
                         what,
                     };
                     s.statuses.insert(saved_id, status);
-                    resp.push_bool(true);
                     resp.push_ulong(saved_id as u64);
                 }
                 id if id == DB_JOBSTATUS_GET_BY_JOB_ID => {
@@ -172,17 +166,15 @@ fn with_db_support(
                         .filter(|(_, st)| st.job_id == job_id)
                         .map(|(_, st)| st.clone())
                         .collect();
-                    resp.push_bool(true);
                     resp.push_uint(statuses.len() as u32);
                     for status in statuses {
                         resp.push_ulong(status.id as u64);
                         resp.push_ulong(status.job_id as u64);
                         resp.push_string(&status.what);
-                        resp.push_int(status.state);
+                        resp.push_uint(status.state as u32);
                     }
                 }
                 _ => {
-                    resp.push_bool(true);
                     resp.push_uint(0);
                 }
             }

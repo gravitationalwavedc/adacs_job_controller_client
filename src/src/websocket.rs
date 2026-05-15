@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex, Notify};
 use tokio::time::{interval, Duration};
@@ -62,8 +62,8 @@ struct ConnectionConfig {
 
 pub struct TungsteniteWebsocketClient {
     server_ready: AtomicBool,
-    db_request_counter: AtomicU64,
-    db_request_promises: RwLock<HashMap<u64, oneshot::Sender<Message>>>,
+    db_request_counter: AtomicU32,
+    db_request_promises: RwLock<HashMap<u32, oneshot::Sender<Message>>>,
     pub(crate) queue: PriorityQueue,
     data_ready: Arc<Notify>,
     ping_timestamp: AtomicI64,
@@ -78,7 +78,7 @@ impl Clone for TungsteniteWebsocketClient {
     fn clone(&self) -> Self {
         let mut c = Self::new_internal();
         c.server_ready = AtomicBool::new(self.server_ready.load(Ordering::SeqCst));
-        c.db_request_counter = AtomicU64::new(self.db_request_counter.load(Ordering::SeqCst));
+        c.db_request_counter = AtomicU32::new(self.db_request_counter.load(Ordering::SeqCst));
         c.ping_timestamp = AtomicI64::new(self.ping_timestamp.load(Ordering::SeqCst));
         c.pong_timestamp = AtomicI64::new(self.pong_timestamp.load(Ordering::SeqCst));
         c.connection_closed = AtomicBool::new(self.connection_closed.load(Ordering::SeqCst));
@@ -96,7 +96,7 @@ impl TungsteniteWebsocketClient {
 
         Self {
             server_ready: AtomicBool::new(false),
-            db_request_counter: AtomicU64::new(0),
+            db_request_counter: AtomicU32::new(0),
             db_request_promises: RwLock::new(HashMap::new()),
             queue,
             data_ready: Arc::new(Notify::new()),
@@ -473,7 +473,7 @@ impl TungsteniteWebsocketClient {
                 get_reconnect_notify().notify_waiters();
             }
             DB_RESPONSE => {
-                let db_request_id = message.pop_ulong();
+                let db_request_id = message.pop_uint();
                 let mut promises = self.db_request_promises.write();
                 if let Some(tx) = promises.remove(&db_request_id) {
                     if tx.send(message).is_err() {
@@ -533,7 +533,7 @@ impl WebsocketClient for TungsteniteWebsocketClient {
             self_arc
                 .reconnectable
                 .store(reconnectable, Ordering::SeqCst);
-            self_arc.connection_closed.store(true, Ordering::SeqCst);
+            self_arc.connection_closed.store(false, Ordering::SeqCst);
             self_arc.server_ready.store(false, Ordering::SeqCst);
             *self_arc.connection_config.write() = Some(ConnectionConfig { url, token });
 
@@ -570,7 +570,7 @@ impl WebsocketClient for TungsteniteWebsocketClient {
 
     fn send_db_request(
         &self,
-        mut message: Message,
+        message: Message,
     ) -> BoxFuture<'static, Result<Message, Box<dyn Error + Send + Sync>>> {
         if self.connection_closed.load(Ordering::SeqCst)
             || !self.server_ready.load(Ordering::SeqCst)
@@ -586,11 +586,13 @@ impl WebsocketClient for TungsteniteWebsocketClient {
             promises.insert(request_id, tx);
         }
 
-        message.push_ulong(request_id);
+        let mut wrapped = Message::new(message.id, message.priority, &message.source);
+        wrapped.push_uint(request_id);
+        wrapped.append_raw_bytes(&message.clone_payload_bytes());
 
         self.queue_message(
             "db".to_string(),
-            message.get_data().clone(),
+            wrapped.get_data().clone(),
             Priority::Highest,
         );
 
@@ -704,6 +706,7 @@ pub fn reset_websocket_client_for_test() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::messaging::DB_JOB_GET_RUNNING_JOBS;
     use crate::tests::fixtures::websocket_server_fixture::WebsocketServerFixture;
     use std::sync::Mutex;
 
@@ -750,7 +753,7 @@ mod tests {
         });
 
         assert!(result.is_ok());
-        assert!(client.is_connection_closed());
+        assert!(!client.is_connection_closed());
     }
 
     #[test]
@@ -772,6 +775,75 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(client.reconnectable.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_send_db_request_prefixes_u32_request_id_before_payload() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+
+        let mut msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Highest, "database");
+        msg.push_ulong(42);
+
+        let fut = client.send_db_request(msg);
+        std::mem::drop(fut);
+
+        let queue = client.queue[Priority::Highest as usize].lock();
+        let queued = queue.get("db").unwrap().front().unwrap();
+        let mut parsed = Message::from_data(queued.data.clone());
+        assert_eq!(parsed.id, DB_JOB_GET_RUNNING_JOBS);
+        assert_eq!(parsed.pop_uint(), 0);
+        assert_eq!(parsed.pop_ulong(), 42);
+    }
+
+    #[tokio::test]
+    async fn test_handle_db_response_uses_u32_request_id() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        let mut server = WebsocketServerFixture::new().await;
+
+        client
+            .start_with_token(server.get_url(), "test-token".to_string(), false)
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.is_server_ready() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let mut request = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Highest, "database");
+        request.push_ulong(42);
+        let response_fut = client.send_db_request(request);
+
+        let mut outbound = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(outbound.id, DB_JOB_GET_RUNNING_JOBS);
+        let request_id = outbound.pop_uint();
+        assert_eq!(request_id, 0);
+        assert_eq!(outbound.pop_ulong(), 42);
+
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_uint(request_id);
+        response.push_uint(1);
+        server.msg_tx.send(response.get_data().clone()).unwrap();
+
+        let mut returned = tokio::time::timeout(Duration::from_secs(2), response_fut)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(returned.pop_uint(), 1);
+
+        server.stop().await;
     }
 
     #[test]

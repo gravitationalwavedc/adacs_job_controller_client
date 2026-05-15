@@ -88,7 +88,6 @@ fn with_db_support(
                         deleted,
                     };
                     s.jobs.insert(saved_id, saved.clone());
-                    resp.push_bool(true);
                     resp.push_ulong(saved_id as u64);
                 }
                 id if id == DB_JOB_GET_BY_JOB_ID => {
@@ -97,7 +96,6 @@ fn with_db_support(
                     let s = state_clone.lock().unwrap();
                     let found = s.jobs.values().find(|j| j.job_id == Some(job_id));
                     if let Some(job) = found {
-                        resp.push_bool(true);
                         resp.push_uint(1);
                         resp.push_ulong(job.id as u64);
                         resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -110,7 +108,6 @@ fn with_db_support(
                         resp.push_bool(job.deleting);
                         resp.push_bool(job.deleted);
                     } else {
-                        resp.push_bool(true);
                         resp.push_uint(0);
                     }
                 }
@@ -120,7 +117,6 @@ fn with_db_support(
                     let s = state_clone.lock().unwrap();
                     let found = s.jobs.get(&id);
                     if let Some(job) = found {
-                        resp.push_bool(true);
                         resp.push_uint(1);
                         resp.push_ulong(job.id as u64);
                         resp.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -133,7 +129,6 @@ fn with_db_support(
                         resp.push_bool(job.deleting);
                         resp.push_bool(job.deleted);
                     } else {
-                        resp.push_bool(true);
                         resp.push_uint(0);
                     }
                 }
@@ -141,13 +136,11 @@ fn with_db_support(
                     let mut m = Message::from_data(msg.get_data().clone());
                     let _id = m.pop_ulong() as i64;
                     let _job_id = m.pop_ulong() as i64;
-                    let _state = m.pop_int();
                     let _what = m.pop_string();
-                    resp.push_bool(true);
+                    let _state = m.pop_uint() as i32;
                     resp.push_ulong(1);
                 }
                 _ => {
-                    resp.push_bool(true);
                     resp.push_uint(0);
                 }
             }
@@ -2122,7 +2115,7 @@ fn test_multiple_concurrent_file_uploads() {
             let handle = tokio::spawn(async move {
                 let test_uuid = format!("test-uuid-concurrent-{i}");
                 let bundle_hash = format!("bundle_{i}");
-                let ws_url = format!("ws://127.0.0.1:{port}/ws/?token={test_uuid}");
+                let ws_url = format!("ws://127.0.0.1:{port}/ws/");
 
                 let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
                 msg_raw.push_string(&test_uuid);
