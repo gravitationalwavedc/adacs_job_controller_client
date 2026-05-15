@@ -1,8 +1,4 @@
 .idea
-legacy/cmake-build-debug
-legacy/cmake-build-release
-legacy/third_party/boost_install
-legacy/third_party/elfutils_install
 out
 venv
 __pycache__
@@ -11,7 +7,6 @@ db.sqlite3
 
 # Ignore local build directories
 build/
-legacy/build/
 
 # IDE/editor config
 .vscode/
