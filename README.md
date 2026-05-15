@@ -1,6 +1,6 @@
 # ADACS Job Controller Client (Rust)
 
-Rust port of the ADACS Job Controller Client. The original C++ implementation is in `legacy/`.
+Rust daemon for managing computational jobs on distributed clusters via WebSocket.
 
 ## First-Time Setup
 
