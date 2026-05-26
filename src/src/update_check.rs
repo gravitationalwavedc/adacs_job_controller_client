@@ -4,75 +4,91 @@
 //! 1. Checks GitHub API for latest release
 //! 2. Compares semantic versions
 //! 3. Downloads the new binary if update is available
-//! 4. Replaces the current binary and exits
+//! 4. Replaces the current binary and restarts
 
+use semver::Version;
 use serde_json::Value;
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process;
-use tracing::{error, info, warn};
+use std::time::Duration;
+use tracing::{error, info};
 
-// Constants from C++ Settings.h
 const GITHUB_ENDPOINT: &str = "api.github.com";
 const GITHUB_LATEST_URL: &str =
     "/repos/gravitationalwavedc/adacs_job_controller_client/releases/latest";
 
-/// Get the current version string (from Cargo.toml or environment)
+const MAX_DOWNLOAD_RETRIES: u32 = 3;
+const INITIAL_RETRY_DELAY_SECS: u64 = 1;
+
 fn get_current_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// Parse semantic version string into comparable components
-fn parse_semver(version: &str) -> Result<(u64, u64, u64), String> {
-    let version = version.trim_start_matches('v');
-    let parts: Vec<&str> = version.split('.').collect();
-
-    if parts.len() < 3 {
-        return Err(format!("Invalid semver format: {version}"));
-    }
-
-    let major = parts[0]
-        .parse::<u64>()
-        .map_err(|e| format!("Invalid major version: {e}"))?;
-    let minor = parts[1]
-        .parse::<u64>()
-        .map_err(|e| format!("Invalid minor version: {e}"))?;
-    let patch = parts[2]
-        .parse::<u64>()
-        .map_err(|e| format!("Invalid patch version: {e}"))?;
-
-    Ok((major, minor, patch))
+/// Returns the path where the update binary should be written.
+/// The update file is placed next to the current executable.
+fn get_update_path(executable_path: &Path) -> PathBuf {
+    executable_path.with_file_name("adacs_job_client.update")
 }
 
-/// Compare two semver strings. Returns true if latest > current
-fn is_update_available(current: &str, latest: &str) -> bool {
-    if let (Ok((cur_major, cur_minor, cur_patch)), Ok((lat_major, lat_minor, lat_patch))) =
-        (parse_semver(current), parse_semver(latest))
+/// Computes the delay in seconds for retry attempt N (1-indexed using exponential backoff).
+fn retry_delay_secs(attempt: u32) -> u64 {
+    INITIAL_RETRY_DELAY_SECS * 2u64.pow(attempt - 1)
+}
+
+/// Parse a GitHub releases API JSON response and return the download URL
+/// if a newer version is available, or None if already up-to-date.
+fn parse_release_response(
+    response: &Value,
+    current_version: &str,
+) -> Result<Option<String>, String> {
+    let latest_tag = response["tag_name"].as_str().unwrap_or("");
+    let latest_version_str = latest_tag.trim_start_matches('v');
+
+    let current = Version::parse(current_version)
+        .map_err(|e| format!("Failed to parse current version '{current_version}': {e}"))?;
+    let latest = Version::parse(latest_version_str)
+        .map_err(|e| format!("Failed to parse latest version '{latest_version_str}': {e}"))?;
+
+    if latest <= current {
+        return Ok(None);
+    }
+
+    let download_url = response["assets"][0]["browser_download_url"]
+        .as_str()
+        .ok_or("No download URL found in GitHub response")?;
+
+    Ok(Some(download_url.to_string()))
+}
+
+/// Replace the running binary with downloaded update data.
+/// Writes the new binary to a `.update` sibling file, then atomically renames it
+/// over the running binary (safe on Linux — kernel keeps the old inode alive).
+fn replace_binary(executable_path: &Path, update_data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let update_path = get_update_path(executable_path);
+
+    fs::write(&update_path, update_data)?;
+    fs::rename(&update_path, executable_path)?;
+
+    #[cfg(unix)]
     {
-        if lat_major != cur_major {
-            return lat_major > cur_major;
-        }
-        if lat_minor != cur_minor {
-            return lat_minor > cur_minor;
-        }
-        lat_patch > cur_patch
-    } else {
-        warn!("Failed to parse semver, assuming no update available");
-        false
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(executable_path, fs::Permissions::from_mode(0o755))?;
     }
+
+    Ok(())
 }
 
-/// Check GitHub for latest release and return download URL if update is available
+/// Check GitHub for latest release and return download URL if update is available.
 fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
     let current_version = get_current_version();
-    info!("Checking for updates. Current version: {}", current_version);
+    info!("Checking for updates. Current version: {current_version}");
 
-    // Use ureq for synchronous HTTPS requests
     let response = ureq::AgentBuilder::new()
         .user_agent("ADACS-Job-Controller-Client-Update-Check")
-        .timeout_connect(std::time::Duration::from_secs(10))
-        .timeout_read(std::time::Duration::from_secs(10))
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(10))
         .build()
         .get(&format!("https://{GITHUB_ENDPOINT}{GITHUB_LATEST_URL}"))
         .call();
@@ -80,139 +96,80 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
     match response {
         Ok(resp) => {
             let result: Value = resp.into_json()?;
-
-            // Extract tag_name and remove 'v' prefix
-            let latest_version = result["tag_name"]
-                .as_str()
-                .unwrap_or("")
-                .trim_start_matches('v')
-                .to_string();
-
-            info!("Latest version from GitHub: {}", latest_version);
-
-            // Check if update is available
-            if !is_update_available(&current_version, &latest_version) {
-                info!("No updates available. Continuing...");
-                return Ok(None);
-            }
-
-            info!(
-                "Found update. Local version: {}, latest version: {}",
-                current_version, latest_version
-            );
-
-            // Get download URL from first asset
-            let download_url = result["assets"][0]["browser_download_url"]
-                .as_str()
-                .ok_or("No download URL found in GitHub response")?;
-
-            info!("Downloading update from url: {}", download_url);
-
-            Ok(Some(download_url.to_string()))
+            let download_url = parse_release_response(&result, &current_version)
+                .map_err(|e| format!("Failed to parse release response: {e}"))?;
+            Ok(download_url)
         }
         Err(e) => {
-            error!("Unable to check for update: {}", e);
+            error!("Unable to check for update: {e}");
             Ok(None)
         }
     }
 }
 
-/// Download file from URL
+/// Download file from URL with retry and exponential backoff.
 fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    info!("Downloading from: {}", url);
+    for attempt in 1..=MAX_DOWNLOAD_RETRIES {
+        let agent = ureq::AgentBuilder::new()
+            .user_agent("ADACS-Job-Controller-Client-Update-Check")
+            .redirects(3)
+            .timeout_connect(Duration::from_secs(10))
+            .timeout_read(Duration::from_secs(30))
+            .build();
 
-    // Use ureq for synchronous HTTPS requests with redirect handling
-    let response = ureq::AgentBuilder::new()
-        .user_agent("ADACS-Job-Controller-Client-Update-Check")
-        .redirects(3) // Handle up to 3 redirects (like C++)
-        .timeout_connect(std::time::Duration::from_secs(10))
-        .timeout_read(std::time::Duration::from_secs(30))
-        .build()
-        .get(url)
-        .call();
-
-    match response {
-        Ok(resp) => {
-            let mut data = Vec::new();
-            let mut reader = resp.into_reader();
-            reader.read_to_end(&mut data)?;
-            Ok(data)
-        }
-        Err(e) => {
-            error!("Unable to download updated binary: {}", e);
-            Err(format!("Download failed: {e}").into())
+        match agent.get(url).call() {
+            Ok(resp) => {
+                let mut data = Vec::new();
+                resp.into_reader().read_to_end(&mut data)?;
+                return Ok(data);
+            }
+            Err(e) if attempt < MAX_DOWNLOAD_RETRIES => {
+                let delay = retry_delay_secs(attempt);
+                error!(
+                    "Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES} failed: {e}. \
+                     Retrying in {delay}s..."
+                );
+                std::thread::sleep(Duration::from_secs(delay));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Download failed after {MAX_DOWNLOAD_RETRIES} attempts: {e}"
+                )
+                .into());
+            }
         }
     }
+    unreachable!()
 }
 
-/// Get the path to the current executable
-fn get_executable_path() -> PathBuf {
-    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("./adacs_job_client"))
-}
-
-/// Perform the update: download, replace binary, and restart
+/// Perform the update: download, replace binary, and restart.
 fn perform_update(download_url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let executable_path = get_executable_path();
-    let update_path = executable_path.with_extension("adacs_job_client.update");
-    let old_path = &executable_path;
-
-    info!("Downloading update...");
+    let executable_path = std::env::current_exe()?;
     let update_data = download_file(download_url)?;
 
-    info!("Writing update to disk...");
-    let mut out_file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&update_path)?;
-    out_file.write_all(&update_data)?;
-    out_file.flush()?;
-    drop(out_file);
-
-    info!("Download finished, moving new binary in place and restarting");
-
-    // Move update file to executable path (with retry loop like C++)
-    // Note: In Rust, we can't easily do the shell loop, so we use a simple move
-    fs::rename(&update_path, old_path)?;
-
-    // Make executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(old_path)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(old_path, perms)?;
-    }
+    replace_binary(&executable_path, &update_data)?;
 
     info!("Update complete, restarting...");
 
-    // Restart the application
     let args: Vec<String> = std::env::args().collect();
     process::Command::new(&executable_path)
         .args(&args[1..])
         .spawn()?;
 
-    // Exit current process
-    // NOTE: process::exit(0) after spawning the replacement defeats systemd service
-    // tracking — the original PID exits and the replacement runs as an orphan.
-    // If the daemon is managed by systemd with Type=simple, the service will be
-    // marked as "stopped" immediately. Consider using sd_notify(3) or Type=forking.
     process::exit(0);
 }
 
-/// Main update check function - call this at startup before connecting WebSocket
+/// Main update check function — call this at startup before connecting WebSocket.
 pub fn check_for_updates() {
     match check_for_update() {
         Ok(Some(download_url)) => {
             if let Err(e) = perform_update(&download_url) {
-                error!("Failed to perform update: {}", e);
+                error!("Failed to perform update: {e}");
             }
         }
-        Ok(None) => {
-            // No update available or error occurred
-        }
+        Ok(None) => {}
         Err(e) => {
-            error!("Error checking for updates: {}", e);
+            error!("Error checking for updates: {e}");
         }
     }
 }
@@ -220,32 +177,259 @@ pub fn check_for_updates() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
 
     #[test]
-    fn test_parse_semver() {
-        assert_eq!(parse_semver("1.2.3"), Ok((1, 2, 3)));
-        assert_eq!(parse_semver("v1.2.3"), Ok((1, 2, 3)));
-        assert_eq!(parse_semver("0.0.1"), Ok((0, 0, 1)));
+    fn test_get_update_path() {
+        let cases = [
+            ("/usr/local/bin/adacs_job_client", "/usr/local/bin/adacs_job_client.update"),
+            ("/usr/bin/adacs_job_client", "/usr/bin/adacs_job_client.update"),
+            ("./adacs_job_client", "./adacs_job_client.update"),
+        ];
+        for (exe, expected) in &cases {
+            let result = get_update_path(&PathBuf::from(exe));
+            assert_eq!(result, PathBuf::from(expected), "Failed for {exe}");
+        }
     }
 
     #[test]
-    fn test_is_update_available() {
-        // Major version updates
-        assert!(is_update_available("1.0.0", "2.0.0"));
-        assert!(!is_update_available("2.0.0", "1.0.0"));
+    fn test_get_update_path_sibling_not_child() {
+        let path = PathBuf::from("/usr/local/bin/adacs_job_client");
+        let result = get_update_path(&path);
+        assert_eq!(result.parent(), path.parent());
+        assert_eq!(result.file_name().unwrap(), "adacs_job_client.update");
+    }
 
-        // Minor version updates
-        assert!(is_update_available("1.2.0", "1.3.0"));
-        assert!(!is_update_available("1.3.0", "1.2.0"));
+    #[test]
+    fn test_version_parse() {
+        let v = Version::parse("1.2.3").unwrap();
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+        assert!(v.pre.is_empty());
+    }
 
-        // Patch version updates
-        assert!(is_update_available("1.2.3", "1.2.4"));
-        assert!(!is_update_available("1.2.4", "1.2.3"));
+    #[test]
+    fn test_v_prefix_handling() {
+        let parsed = Version::parse("v1.2.3".trim_start_matches('v')).unwrap();
+        assert_eq!(parsed, Version::new(1, 2, 3));
+    }
 
-        // Same version
-        assert!(!is_update_available("1.2.3", "1.2.3"));
+    #[test]
+    fn test_version_compare_update_available() {
+        assert!(Version::parse("2.0.0").unwrap() > Version::parse("1.0.0").unwrap());
+        assert!(Version::parse("1.3.0").unwrap() > Version::parse("1.2.0").unwrap());
+        assert!(Version::parse("1.2.4").unwrap() > Version::parse("1.2.3").unwrap());
+        assert!(!(Version::parse("1.2.3").unwrap() > Version::parse("1.2.3").unwrap()));
+    }
 
-        // With 'v' prefix
-        assert!(is_update_available("v1.2.3", "v1.2.4"));
+    #[test]
+    fn test_pre_release_version() {
+        let release = Version::parse("1.0.0").unwrap();
+        let pre_release = Version::parse("1.0.0-rc1").unwrap();
+        assert!(release > pre_release);
+        assert!(!(pre_release > release));
+    }
+
+    #[test]
+    fn test_build_metadata() {
+        let v1 = Version::parse("1.0.0+build123").unwrap();
+        let v2 = Version::parse("1.0.0+build456").unwrap();
+        assert_eq!(v1.cmp_precedence(&v2), std::cmp::Ordering::Equal);
+        assert!(v1 != v2);
+    }
+
+    #[test]
+    fn test_version_invalid_input() {
+        assert!(Version::parse("").is_err());
+        assert!(Version::parse("abc").is_err());
+        assert!(Version::parse("1.2").is_err());
+        assert!(Version::parse("v1.2.3").is_err());
+        assert!(Version::parse("1.2.3.4").is_err());
+    }
+
+    #[test]
+    fn test_get_current_version() {
+        let version = get_current_version();
+        assert!(Version::parse(&version).is_ok(),
+            "CARGO_PKG_VERSION '{version}' is not valid semver");
+        assert!(!version.is_empty());
+    }
+
+    #[test]
+    fn test_get_executable_path_exists() {
+        let path = std::env::current_exe().unwrap();
+        assert!(path.exists());
+        assert!(path.is_file());
+    }
+
+    #[test]
+    fn test_retry_delay_secs() {
+        assert_eq!(retry_delay_secs(1), 1);
+        assert_eq!(retry_delay_secs(2), 2);
+        assert_eq!(retry_delay_secs(3), 4);
+        assert_eq!(retry_delay_secs(4), 8);
+        assert_eq!(retry_delay_secs(5), 16);
+    }
+
+    #[test]
+    fn test_retry_constants() {
+        assert!(MAX_DOWNLOAD_RETRIES >= 1);
+        assert!(MAX_DOWNLOAD_RETRIES <= 10);
+        assert_eq!(INITIAL_RETRY_DELAY_SECS, 1);
+    }
+
+    // ─── parse_release_response tests ─────────────────────────────────────
+
+    #[test]
+    fn test_parse_release_update_available() {
+        let resp = json!({
+            "tag_name": "v1.2.0",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "1.1.0").unwrap();
+        assert_eq!(result, Some("https://example.com/adacs_job_client".to_string()));
+    }
+
+    #[test]
+    fn test_parse_release_no_update() {
+        let resp = json!({
+            "tag_name": "v1.1.0",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "1.1.0").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_release_current_ahead() {
+        let resp = json!({
+            "tag_name": "v1.0.0",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "2.0.0").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_release_empty_tag() {
+        let resp = json!({
+            "tag_name": "",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "1.0.0");
+        assert!(result.is_err(), "empty tag should fail to parse");
+    }
+
+    #[test]
+    fn test_parse_release_no_tag() {
+        let resp = json!({
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "1.0.0");
+        assert!(result.is_err(), "missing tag should fail to parse");
+    }
+
+    #[test]
+    fn test_parse_release_no_assets() {
+        let resp = json!({
+            "tag_name": "v2.0.0",
+            "assets": []
+        });
+        let result = parse_release_response(&resp, "1.0.0");
+        assert!(result.is_err(), "empty assets should fail: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_release_pre_release_version() {
+        // Pre-release tags — should not auto-upgrade to a lower pre-release
+        let resp = json!({
+            "tag_name": "v1.0.0-rc1",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "1.0.0").unwrap();
+        assert_eq!(result, None, "should not downgrade from release to pre-release");
+
+        // But should upgrade FROM older version TO pre-release
+        let resp2 = json!({
+            "tag_name": "v2.0.0-rc1",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result2 = parse_release_response(&resp2, "1.9.0").unwrap();
+        assert_eq!(result2, Some("https://example.com/adacs_job_client".to_string()));
+    }
+
+    #[test]
+    fn test_parse_release_without_v_prefix() {
+        let resp = json!({
+            "tag_name": "1.2.0",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "1.1.0").unwrap();
+        assert_eq!(result, Some("https://example.com/adacs_job_client".to_string()));
+    }
+
+    #[test]
+    fn test_parse_release_invalid_current_version() {
+        let resp = json!({
+            "tag_name": "v1.2.0",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "not-a-version");
+        assert!(result.is_err(), "invalid current version should error");
+    }
+
+    // ─── replace_binary tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_replace_binary_writes_and_renames() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_path = dir.path().join("adacs_job_client");
+        // Create a "running" binary so rename has something to overwrite
+        fs::write(&exe_path, b"old binary content").unwrap();
+
+        let update_data = b"new binary content v2.0";
+        replace_binary(&exe_path, update_data).unwrap();
+
+        // Verify the update sibling file is GONE (was renamed over the exe)
+        let update_path = get_update_path(&exe_path);
+        assert!(!update_path.exists(), "update file should be removed after rename");
+
+        // Verify the executable now has the new content
+        let new_content = fs::read(&exe_path).unwrap();
+        assert_eq!(new_content, update_data, "binary should have new content after update");
+
+        // Verify it's executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(&exe_path).unwrap();
+            assert!(meta.permissions().mode() & 0o111 != 0, "binary should be executable");
+        }
+    }
+
+    #[test]
+    fn test_replace_binary_creates_update_sibling() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_path = dir.path().join("adacs_job_client");
+        fs::write(&exe_path, b"old").unwrap();
+
+        replace_binary(&exe_path, b"new data").unwrap();
+
+        // The update file should NOT remain as a sibling
+        let update_path = get_update_path(&exe_path);
+        assert!(!update_path.exists(),
+            "update file '{}' should be gone after rename", update_path.display());
+    }
+
+    #[test]
+    fn test_replace_binary_fails_on_missing_parent_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // Parent directory doesn't exist
+        let exe_path = dir.path().join("missing_dir").join("adacs_job_client");
+        let result = replace_binary(&exe_path, b"data");
+        assert!(result.is_err(),
+            "should fail when parent directory doesn't exist");
     }
 }
