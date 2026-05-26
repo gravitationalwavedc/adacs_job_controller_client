@@ -15,3 +15,4 @@ src/build/
 
 # IDE/editor config
 .vscode/
+rust/target/
