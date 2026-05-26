@@ -65,7 +65,10 @@ fn parse_release_response(
 /// Replace the running binary with downloaded update data.
 /// Writes the new binary to a `.update` sibling file, then atomically renames it
 /// over the running binary (safe on Linux — kernel keeps the old inode alive).
-fn replace_binary(executable_path: &Path, update_data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+fn replace_binary(
+    executable_path: &Path,
+    update_data: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
     let update_path = get_update_path(executable_path);
 
     fs::write(&update_path, update_data)?;
@@ -132,10 +135,9 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
                 std::thread::sleep(Duration::from_secs(delay));
             }
             Err(e) => {
-                return Err(format!(
-                    "Download failed after {MAX_DOWNLOAD_RETRIES} attempts: {e}"
-                )
-                .into());
+                return Err(
+                    format!("Download failed after {MAX_DOWNLOAD_RETRIES} attempts: {e}").into(),
+                );
             }
         }
     }
@@ -183,8 +185,14 @@ mod tests {
     #[test]
     fn test_get_update_path() {
         let cases = [
-            ("/usr/local/bin/adacs_job_client", "/usr/local/bin/adacs_job_client.update"),
-            ("/usr/bin/adacs_job_client", "/usr/bin/adacs_job_client.update"),
+            (
+                "/usr/local/bin/adacs_job_client",
+                "/usr/local/bin/adacs_job_client.update",
+            ),
+            (
+                "/usr/bin/adacs_job_client",
+                "/usr/bin/adacs_job_client.update",
+            ),
             ("./adacs_job_client", "./adacs_job_client.update"),
         ];
         for (exe, expected) in &cases {
@@ -221,7 +229,7 @@ mod tests {
         assert!(Version::parse("2.0.0").unwrap() > Version::parse("1.0.0").unwrap());
         assert!(Version::parse("1.3.0").unwrap() > Version::parse("1.2.0").unwrap());
         assert!(Version::parse("1.2.4").unwrap() > Version::parse("1.2.3").unwrap());
-        assert!(!(Version::parse("1.2.3").unwrap() > Version::parse("1.2.3").unwrap()));
+        assert!(Version::parse("1.2.3").unwrap() <= Version::parse("1.2.3").unwrap());
     }
 
     #[test]
@@ -229,7 +237,7 @@ mod tests {
         let release = Version::parse("1.0.0").unwrap();
         let pre_release = Version::parse("1.0.0-rc1").unwrap();
         assert!(release > pre_release);
-        assert!(!(pre_release > release));
+        assert!(pre_release <= release);
     }
 
     #[test]
@@ -252,8 +260,10 @@ mod tests {
     #[test]
     fn test_get_current_version() {
         let version = get_current_version();
-        assert!(Version::parse(&version).is_ok(),
-            "CARGO_PKG_VERSION '{version}' is not valid semver");
+        assert!(
+            Version::parse(&version).is_ok(),
+            "CARGO_PKG_VERSION '{version}' is not valid semver"
+        );
         assert!(!version.is_empty());
     }
 
@@ -275,8 +285,8 @@ mod tests {
 
     #[test]
     fn test_retry_constants() {
-        assert!(MAX_DOWNLOAD_RETRIES >= 1);
-        assert!(MAX_DOWNLOAD_RETRIES <= 10);
+        const _: () = assert!(MAX_DOWNLOAD_RETRIES >= 1);
+        const _: () = assert!(MAX_DOWNLOAD_RETRIES <= 10);
         assert_eq!(INITIAL_RETRY_DELAY_SECS, 1);
     }
 
@@ -289,7 +299,10 @@ mod tests {
             "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
         });
         let result = parse_release_response(&resp, "1.1.0").unwrap();
-        assert_eq!(result, Some("https://example.com/adacs_job_client".to_string()));
+        assert_eq!(
+            result,
+            Some("https://example.com/adacs_job_client".to_string())
+        );
     }
 
     #[test]
@@ -338,7 +351,7 @@ mod tests {
             "assets": []
         });
         let result = parse_release_response(&resp, "1.0.0");
-        assert!(result.is_err(), "empty assets should fail: {:?}", result);
+        assert!(result.is_err(), "empty assets should fail: {result:?}");
     }
 
     #[test]
@@ -349,7 +362,10 @@ mod tests {
             "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
         });
         let result = parse_release_response(&resp, "1.0.0").unwrap();
-        assert_eq!(result, None, "should not downgrade from release to pre-release");
+        assert_eq!(
+            result, None,
+            "should not downgrade from release to pre-release"
+        );
 
         // But should upgrade FROM older version TO pre-release
         let resp2 = json!({
@@ -357,7 +373,10 @@ mod tests {
             "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
         });
         let result2 = parse_release_response(&resp2, "1.9.0").unwrap();
-        assert_eq!(result2, Some("https://example.com/adacs_job_client".to_string()));
+        assert_eq!(
+            result2,
+            Some("https://example.com/adacs_job_client".to_string())
+        );
     }
 
     #[test]
@@ -367,7 +386,10 @@ mod tests {
             "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
         });
         let result = parse_release_response(&resp, "1.1.0").unwrap();
-        assert_eq!(result, Some("https://example.com/adacs_job_client".to_string()));
+        assert_eq!(
+            result,
+            Some("https://example.com/adacs_job_client".to_string())
+        );
     }
 
     #[test]
@@ -394,18 +416,27 @@ mod tests {
 
         // Verify the update sibling file is GONE (was renamed over the exe)
         let update_path = get_update_path(&exe_path);
-        assert!(!update_path.exists(), "update file should be removed after rename");
+        assert!(
+            !update_path.exists(),
+            "update file should be removed after rename"
+        );
 
         // Verify the executable now has the new content
         let new_content = fs::read(&exe_path).unwrap();
-        assert_eq!(new_content, update_data, "binary should have new content after update");
+        assert_eq!(
+            new_content, update_data,
+            "binary should have new content after update"
+        );
 
         // Verify it's executable
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let meta = fs::metadata(&exe_path).unwrap();
-            assert!(meta.permissions().mode() & 0o111 != 0, "binary should be executable");
+            assert!(
+                meta.permissions().mode() & 0o111 != 0,
+                "binary should be executable"
+            );
         }
     }
 
@@ -419,8 +450,11 @@ mod tests {
 
         // The update file should NOT remain as a sibling
         let update_path = get_update_path(&exe_path);
-        assert!(!update_path.exists(),
-            "update file '{}' should be gone after rename", update_path.display());
+        assert!(
+            !update_path.exists(),
+            "update file '{}' should be gone after rename",
+            update_path.display()
+        );
     }
 
     #[test]
@@ -429,7 +463,9 @@ mod tests {
         // Parent directory doesn't exist
         let exe_path = dir.path().join("missing_dir").join("adacs_job_client");
         let result = replace_binary(&exe_path, b"data");
-        assert!(result.is_err(),
-            "should fail when parent directory doesn't exist");
+        assert!(
+            result.is_err(),
+            "should fail when parent directory doesn't exist"
+        );
     }
 }
