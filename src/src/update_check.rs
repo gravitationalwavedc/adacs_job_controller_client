@@ -13,7 +13,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{debug, error, info, trace, warn};
 
 const GITHUB_ENDPOINT: &str = "api.github.com";
 const GITHUB_LATEST_URL: &str =
@@ -87,6 +87,7 @@ fn replace_binary(
 fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
     let current_version = get_current_version();
     info!("Checking for updates. Current version: {current_version}");
+    debug!("Update check: GitHub endpoint={}", GITHUB_ENDPOINT);
 
     let response = ureq::AgentBuilder::new()
         .user_agent("ADACS-Job-Controller-Client-Update-Check")
@@ -99,8 +100,14 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
     match response {
         Ok(resp) => {
             let result: Value = resp.into_json()?;
+            trace!("Update check: received response: {:?}", result);
             let download_url = parse_release_response(&result, &current_version)
                 .map_err(|e| format!("Failed to parse release response: {e}"))?;
+            if let Some(ref url) = download_url {
+                info!("Update check: update available, download URL={}", url);
+            } else {
+                debug!("Update check: already up to date");
+            }
             Ok(download_url)
         }
         Err(e) => {
@@ -112,7 +119,9 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
 
 /// Download file from URL with retry and exponential backoff.
 fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    info!("Downloading update from: {}", url);
     for attempt in 1..=MAX_DOWNLOAD_RETRIES {
+        debug!("Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES}");
         let agent = ureq::AgentBuilder::new()
             .user_agent("ADACS-Job-Controller-Client-Update-Check")
             .redirects(3)
@@ -124,17 +133,19 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             Ok(resp) => {
                 let mut data = Vec::new();
                 resp.into_reader().read_to_end(&mut data)?;
+                info!("Download complete: {} bytes", data.len());
                 return Ok(data);
             }
             Err(e) if attempt < MAX_DOWNLOAD_RETRIES => {
                 let delay = retry_delay_secs(attempt);
-                error!(
+                warn!(
                     "Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES} failed: {e}. \
                      Retrying in {delay}s..."
                 );
                 std::thread::sleep(Duration::from_secs(delay));
             }
             Err(e) => {
+                error!("Download failed after {MAX_DOWNLOAD_RETRIES} attempts: {e}");
                 return Err(
                     format!("Download failed after {MAX_DOWNLOAD_RETRIES} attempts: {e}").into(),
                 );
@@ -147,8 +158,10 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 /// Perform the update: download, replace binary, and restart.
 fn perform_update(download_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let executable_path = std::env::current_exe()?;
+    debug!("Performing update: executable_path={:?}", executable_path);
     let update_data = download_file(download_url)?;
 
+    debug!("Replacing binary...");
     replace_binary(&executable_path, &update_data)?;
 
     info!("Update complete, restarting...");

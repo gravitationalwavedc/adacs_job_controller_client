@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 // The exact Python script used in C++ for stdout/stderr redirection.
 const STDOUT_REDIRECTION: &str = r"
@@ -71,7 +71,7 @@ impl BundleInterface {
     #[allow(clippy::items_after_statements)]
     pub unsafe fn new(bundle_hash: &str, bundle_path_root: &str) -> Self {
         let _guard = PYTHON_MUTEX.lock();
-        info!("BundleInterface::new start for {}", bundle_hash);
+        debug!("BundleInterface::new start for {}", bundle_hash);
 
         // Set up the thread bundle hash map (needed for logging during load)
         set_current_thread_bundle(bundle_hash.to_string());
@@ -94,9 +94,9 @@ impl BundleInterface {
             }
         }
 
-        info!("BundleInterface::new creating sub-interpreter");
+        debug!("BundleInterface::new creating sub-interpreter");
         let python_interpreter = SubInterpreter::new();
-        info!("BundleInterface::new created sub-interpreter");
+        debug!("BundleInterface::new created sub-interpreter");
 
         {
             let mut state = STATE.lock().unwrap();
@@ -108,9 +108,9 @@ impl BundleInterface {
 
         // Activate the new interpreter via ThreadScope
         let interp = python_interpreter.interp();
-        info!("BundleInterface::new creating thread scope");
+        debug!("BundleInterface::new creating thread scope");
         let _scope = ThreadScope::new(interp);
-        info!("BundleInterface::new created thread scope");
+        debug!("BundleInterface::new created thread scope");
 
         let bundle_path = Path::new(bundle_path_root).join(bundle_hash);
         info!("BundleInterface::new bundle path {:?}", bundle_path);
@@ -122,7 +122,7 @@ impl BundleInterface {
         // Set up logging so print() works as expected (run the redirection script)
         let p_local = PyDict_New();
         let c_redirect = CString::new(STDOUT_REDIRECTION).unwrap();
-        info!("BundleInterface::new installing stdout/stderr redirection");
+        debug!("BundleInterface::new installing stdout/stderr redirection");
         let result = PyRun_StringFlags(
             c_redirect.as_ptr(),
             Py_file_input,
@@ -142,12 +142,12 @@ impl BundleInterface {
         Py_DecRef(p_local);
 
         // Ensure the json module is loaded in the global scope
-        info!("BundleInterface::new importing json");
+        debug!("BundleInterface::new importing json");
         let json_module = PyImport_ImportModule(c"json".as_ptr());
         PyDict_SetItemString(p_global, c"json".as_ptr(), json_module);
 
         // Load the traceback module
-        info!("BundleInterface::new importing traceback");
+        debug!("BundleInterface::new importing traceback");
         let traceback_module = PyImport_ImportModule(c"traceback".as_ptr());
 
         // Add the bundle path to the system path
@@ -160,7 +160,7 @@ impl BundleInterface {
         Py_DecRef(p_bundle_path);
 
         // Import the bundle module
-        info!("BundleInterface::new importing bundle module");
+        debug!("BundleInterface::new importing bundle module");
         let p_bundle_module = PyImport_ImportModule(c"bundle".as_ptr());
         if p_bundle_module.is_null() || !PyErr_Occurred().is_null() {
             error!("Error loading python bundle at path {:?}", bundle_path);
@@ -170,7 +170,7 @@ impl BundleInterface {
         }
 
         // Clear the thread from the thread bundle hash map
-        info!("BundleInterface::new finished for {}", bundle_hash);
+        debug!("BundleInterface::new finished for {}", bundle_hash);
         clear_current_thread_bundle();
 
         BundleInterface {
@@ -233,14 +233,27 @@ impl BundleInterface {
         let bundle_guard = ThreadBundleGuard::new(self.inner.bundle_hash.clone());
 
         // Call the bundle function
+        debug!(
+            "bundle: calling function {} for hash {} with details={}",
+            func, self.inner.bundle_hash, details
+        );
+        let call_start = std::time::Instant::now();
         let p_result = PyObject_CallObject(p_func, p_args);
+        let call_time = call_start.elapsed();
         if !PyErr_Occurred().is_null() {
-            error!("Error calling bundle function {}", func);
+            error!(
+                "Error calling bundle function {} after {:?} for hash {}",
+                func, call_time, self.inner.bundle_hash
+            );
             self.print_last_python_exception();
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
             return Err(NoneException);
         }
+        debug!(
+            "bundle: function {} returned successfully after {:?} for hash {}",
+            func, call_time, self.inner.bundle_hash
+        );
 
         drop(bundle_guard);
         Py_DecRef(p_args);
@@ -348,6 +361,64 @@ impl BundleInterface {
             return;
         }
 
+        // Log the raw exception type name as fallback before trying format_exception
+        let type_name = {
+            let type_str = PyObject_GetAttrString(extype, c"__name__".as_ptr());
+            if type_str.is_null() {
+                // Clear any error from __name__ lookup
+                let mut tmp_ex: *mut PyObject = std::ptr::null_mut();
+                let mut tmp_val: *mut PyObject = std::ptr::null_mut();
+                let mut tmp_tb: *mut PyObject = std::ptr::null_mut();
+                PyErr_Fetch(&raw mut tmp_ex, &raw mut tmp_val, &raw mut tmp_tb);
+                Py_XDECREF(tmp_ex);
+                Py_XDECREF(tmp_val);
+                Py_XDECREF(tmp_tb);
+                "unknown".to_string()
+            } else {
+                let c_str = PyUnicode_AsUTF8(type_str);
+                let name = if c_str.is_null() {
+                    "unknown".to_string()
+                } else {
+                    CStr::from_ptr(c_str).to_string_lossy().into_owned()
+                };
+                Py_DecRef(type_str);
+                name
+            }
+        };
+
+        // Try to get the exception value as a string
+        let value_str = if value.is_null() {
+            String::new()
+        } else {
+            let str_obj = PyObject_Repr(value);
+            if str_obj.is_null() {
+                // Clear error from PyObject_Repr
+                let mut tmp_ex: *mut PyObject = std::ptr::null_mut();
+                let mut tmp_val: *mut PyObject = std::ptr::null_mut();
+                let mut tmp_tb: *mut PyObject = std::ptr::null_mut();
+                PyErr_Fetch(&raw mut tmp_ex, &raw mut tmp_val, &raw mut tmp_tb);
+                Py_XDECREF(tmp_ex);
+                Py_XDECREF(tmp_val);
+                Py_XDECREF(tmp_tb);
+                String::new()
+            } else {
+                let c_str = PyUnicode_AsUTF8(str_obj);
+                let s = if c_str.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(c_str).to_string_lossy().into_owned()
+                };
+                Py_DecRef(str_obj);
+                s
+            }
+        };
+
+        tracing::info!(
+            "Python exception: type={} value=\"{}\"",
+            type_name,
+            value_str
+        );
+
         let p_func =
             PyObject_GetAttrString(self.inner.traceback_module, c"format_exception".as_ptr());
 
@@ -358,7 +429,7 @@ impl BundleInterface {
 
         let p_lines = PyObject_CallObject(p_func, p_args);
         if !PyErr_Occurred().is_null() {
-            error!("Error printing active python exception");
+            error!("Error printing active python exception with traceback.format_exception (type was {})", type_name);
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
             return;

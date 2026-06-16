@@ -1,27 +1,45 @@
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::thread::ThreadId;
+use tracing::trace;
 
 pub static THREAD_BUNDLE_HASH_MAP: std::sync::LazyLock<RwLock<HashMap<ThreadId, String>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub fn set_current_thread_bundle(bundle_hash: String) {
+    let thread_id = std::thread::current().id();
+    trace!(
+        "thread_bundle_map: set bundle='{}' for thread {:?}",
+        bundle_hash,
+        thread_id
+    );
     THREAD_BUNDLE_HASH_MAP
         .write()
-        .insert(std::thread::current().id(), bundle_hash);
+        .insert(thread_id, bundle_hash);
 }
 
 pub fn clear_current_thread_bundle() {
-    THREAD_BUNDLE_HASH_MAP
-        .write()
-        .remove(&std::thread::current().id());
+    let thread_id = std::thread::current().id();
+    trace!(
+        "thread_bundle_map: clearing bundle for thread {:?}",
+        thread_id
+    );
+    THREAD_BUNDLE_HASH_MAP.write().remove(&thread_id);
 }
 
 pub fn get_current_thread_bundle() -> Option<String> {
-    THREAD_BUNDLE_HASH_MAP
-        .read()
-        .get(&std::thread::current().id())
-        .cloned()
+    let thread_id = std::thread::current().id();
+    let result = THREAD_BUNDLE_HASH_MAP.read().get(&thread_id).cloned();
+    if result.is_some() {
+        trace!(
+            "thread_bundle_map: get bundle='{:?}' for thread {:?}",
+            result,
+            thread_id
+        );
+    } else {
+        trace!("thread_bundle_map: no bundle for thread {:?}", thread_id);
+    }
+    result
 }
 
 /// RAII guard that sets the current thread bundle on creation

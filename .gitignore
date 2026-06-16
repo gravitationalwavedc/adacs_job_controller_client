@@ -35,3 +35,7 @@ adacs-deployment-status.md
 docs/plans/
 docs/generated/
 docs/references/
+
+# Local deploy scripts (runbook-only, not for the repo)
+scripts/deploy_client.sh
+scripts/deploy_server.sh

@@ -4,13 +4,13 @@
 //! All runBundle_* methods acquire the `PYTHON_MUTEX`, create a `ThreadScope`, call
 //! the bundle function, convert the result, and dispose the `PyObject`.
 
-use crate::bundle_interface::{BundleInterface, NoneException};
+use crate::bundle_interface::BundleInterface;
 use crate::python_interface::PYTHON_MUTEX;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{debug, info, trace};
 
 pub struct BundleManager {
     bundle_path_root: String,
@@ -71,31 +71,53 @@ impl BundleManager {
     /// Load (or return cached) `BundleInterface` for a given hash.
     /// Mirrors C++ `BundleManager::loadBundle()`.
     pub fn load_bundle(&self, bundle_hash: &str) -> BundleInterface {
+        debug!(
+            "BundleManager: load_bundle() called for hash '{}'",
+            bundle_hash
+        );
         // Check if already loaded (read lock)
         {
             let bundles = self.bundles.read();
             if let Some(bundle) = bundles.get(bundle_hash) {
-                info!("Using cached bundle {}", bundle_hash);
+                info!("BundleManager: using cached bundle {}", bundle_hash);
                 return bundle.clone();
             }
         }
 
         // Not loaded – acquire write lock and create
+        debug!(
+            "BundleManager: bundle {} not cached, acquiring write lock",
+            bundle_hash
+        );
+        let lock_start = std::time::Instant::now();
         let mut bundles = self.bundles.write();
+        trace!(
+            "BundleManager: acquired write lock in {:?}",
+            lock_start.elapsed()
+        );
         // Double-check after acquiring write lock
         if let Some(existing) = bundles.get(bundle_hash) {
+            debug!(
+                "BundleManager: bundle {} loaded by another thread, using cached",
+                bundle_hash
+            );
             return existing.clone();
         }
 
         // SAFETY: BundleInterface::new requires that Python has been initialised
         // (init_python was called) and that the bundle path is valid.
         info!(
-            "Loading bundle {} from {}",
+            "BundleManager: loading bundle {} from {}",
             bundle_hash, self.bundle_path_root
         );
         let bundle = unsafe { BundleInterface::new(bundle_hash, &self.bundle_path_root) };
-        info!("Loaded bundle {}", bundle_hash);
+        info!(
+            "BundleManager: loaded bundle {} ({} bytes)",
+            bundle_hash,
+            bundle_hash.len()
+        );
         bundles.insert(bundle_hash.to_string(), bundle.clone());
+        debug!("BundleManager: bundle {} inserted into cache", bundle_hash);
         bundle
     }
 
@@ -108,44 +130,53 @@ impl BundleManager {
         details: &Value,
         job_data: &str,
     ) -> String {
-        info!(
-            "run_bundle_string entering {} for bundle {}",
-            function_name, bundle_hash
+        debug!(
+            "run_bundle_string entering {} for bundle {} with details={}",
+            function_name, bundle_hash, details
         );
         let bundle = self.load_bundle(bundle_hash);
-        info!(
+        debug!(
             "run_bundle_string loaded bundle {} for {}",
             bundle_hash, function_name
         );
 
+        let mutex_start = std::time::Instant::now();
         let _guard = PYTHON_MUTEX.lock();
-        info!(
-            "run_bundle_string acquired python mutex for {}",
-            function_name
+        let mutex_time = mutex_start.elapsed();
+        trace!(
+            "run_bundle_string: acquired PYTHON_MUTEX in {:?}",
+            mutex_time
         );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            info!(
+            trace!(
                 "run_bundle_string creating thread scope for {}",
                 function_name
             );
             let _scope = bundle.thread_scope();
-            info!(
+            trace!(
                 "run_bundle_string created thread scope for {}",
                 function_name
             );
-            match bundle.run(function_name, details, job_data) {
-                Ok(result_obj) => {
-                    info!(
-                        "run_bundle_string bundle.run returned for {}",
-                        function_name
-                    );
-                    let result = bundle.to_string_py(result_obj);
-                    bundle.dispose_object(result_obj);
-                    info!("run_bundle_string completed {}", function_name);
-                    result
-                }
-                Err(NoneException) => String::new(),
+            if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
+                trace!(
+                    "run_bundle_string bundle.run returned for {}",
+                    function_name
+                );
+                let result = bundle.to_string_py(result_obj);
+                bundle.dispose_object(result_obj);
+                debug!(
+                    "run_bundle_string completed {} - result len={}",
+                    function_name,
+                    result.len()
+                );
+                result
+            } else {
+                debug!(
+                    "run_bundle_string completed {} - returned None",
+                    function_name
+                );
+                String::new()
             }
         }
     }
@@ -159,44 +190,52 @@ impl BundleManager {
         details: &Value,
         job_data: &str,
     ) -> u64 {
-        info!(
-            "run_bundle_uint64 entering {} for bundle {}",
-            function_name, bundle_hash
+        debug!(
+            "run_bundle_uint64 entering {} for bundle {} with details={}",
+            function_name, bundle_hash, details
         );
         let bundle = self.load_bundle(bundle_hash);
-        info!(
+        debug!(
             "run_bundle_uint64 loaded bundle {} for {}",
             bundle_hash, function_name
         );
 
+        let mutex_start = std::time::Instant::now();
         let _guard = PYTHON_MUTEX.lock();
-        info!(
-            "run_bundle_uint64 acquired python mutex for {}",
-            function_name
+        let mutex_time = mutex_start.elapsed();
+        trace!(
+            "run_bundle_uint64: acquired PYTHON_MUTEX in {:?}",
+            mutex_time
         );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            info!(
+            trace!(
                 "run_bundle_uint64 creating thread scope for {}",
                 function_name
             );
             let _scope = bundle.thread_scope();
-            info!(
+            trace!(
                 "run_bundle_uint64 created thread scope for {}",
                 function_name
             );
-            match bundle.run(function_name, details, job_data) {
-                Ok(result_obj) => {
-                    info!(
-                        "run_bundle_uint64 bundle.run returned for {}",
-                        function_name
-                    );
-                    let result = bundle.to_uint64(result_obj);
-                    bundle.dispose_object(result_obj);
-                    info!("run_bundle_uint64 completed {}", function_name);
-                    result
-                }
-                Err(NoneException) => 0,
+            if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
+                trace!(
+                    "run_bundle_uint64 bundle.run returned for {}",
+                    function_name
+                );
+                let result = bundle.to_uint64(result_obj);
+                bundle.dispose_object(result_obj);
+                debug!(
+                    "run_bundle_uint64 completed {} - result={}",
+                    function_name, result
+                );
+                result
+            } else {
+                debug!(
+                    "run_bundle_uint64 completed {} - returned 0 (None)",
+                    function_name
+                );
+                0
             }
         }
     }
@@ -210,19 +249,43 @@ impl BundleManager {
         details: &Value,
         job_data: &str,
     ) -> bool {
+        debug!(
+            "run_bundle_bool entering {} for bundle {} with details={}",
+            function_name, bundle_hash, details
+        );
         let bundle = self.load_bundle(bundle_hash);
+        debug!(
+            "run_bundle_bool loaded bundle {} for {}",
+            bundle_hash, function_name
+        );
 
+        let mutex_start = std::time::Instant::now();
         let _guard = PYTHON_MUTEX.lock();
+        let mutex_time = mutex_start.elapsed();
+        trace!("run_bundle_bool: acquired PYTHON_MUTEX in {:?}", mutex_time);
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
+            trace!(
+                "run_bundle_bool creating thread scope for {}",
+                function_name
+            );
             let _scope = bundle.thread_scope();
-            match bundle.run(function_name, details, job_data) {
-                Ok(result_obj) => {
-                    let result = bundle.to_bool(result_obj);
-                    bundle.dispose_object(result_obj);
-                    result
-                }
-                Err(NoneException) => false,
+            trace!("run_bundle_bool created thread scope for {}", function_name);
+            if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
+                trace!("run_bundle_bool bundle.run returned for {}", function_name);
+                let result = bundle.to_bool(result_obj);
+                bundle.dispose_object(result_obj);
+                debug!(
+                    "run_bundle_bool completed {} - result={}",
+                    function_name, result
+                );
+                result
+            } else {
+                debug!(
+                    "run_bundle_bool completed {} - returned false (None)",
+                    function_name
+                );
+                false
             }
         }
     }
@@ -236,19 +299,44 @@ impl BundleManager {
         details: &Value,
         job_data: &str,
     ) -> Value {
+        debug!(
+            "run_bundle_json entering {} for bundle {} with details={}",
+            function_name, bundle_hash, details
+        );
         let bundle = self.load_bundle(bundle_hash);
+        debug!(
+            "run_bundle_json loaded bundle {} for {}",
+            bundle_hash, function_name
+        );
 
+        let mutex_start = std::time::Instant::now();
         let _guard = PYTHON_MUTEX.lock();
+        let mutex_time = mutex_start.elapsed();
+        trace!("run_bundle_json: acquired PYTHON_MUTEX in {:?}", mutex_time);
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
+            trace!(
+                "run_bundle_json creating thread scope for {}",
+                function_name
+            );
             let _scope = bundle.thread_scope();
-            match bundle.run(function_name, details, job_data) {
-                Ok(result_obj) => {
-                    let json_str = bundle.json_dumps(result_obj);
-                    bundle.dispose_object(result_obj);
-                    serde_json::from_str(&json_str).unwrap_or(Value::Null)
-                }
-                Err(NoneException) => Value::Null,
+            trace!("run_bundle_json created thread scope for {}", function_name);
+            if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
+                trace!("run_bundle_json bundle.run returned for {}", function_name);
+                let json_str = bundle.json_dumps(result_obj);
+                bundle.dispose_object(result_obj);
+                let result = serde_json::from_str(&json_str).unwrap_or(Value::Null);
+                debug!(
+                    "run_bundle_json completed {} - result={}",
+                    function_name, result
+                );
+                result
+            } else {
+                debug!(
+                    "run_bundle_json completed {} - returned Null (None)",
+                    function_name
+                );
+                Value::Null
             }
         }
     }

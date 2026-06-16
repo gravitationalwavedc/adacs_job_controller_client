@@ -18,16 +18,21 @@ mod update_check;
 mod websocket;
 
 use crate::bundle_manager::BundleManager;
-use crate::config::{get_ltk_from_config, read_client_config};
+use crate::config::{
+    get_log_level, get_ltk_from_config, get_python_library_path, read_client_config,
+    validate_config,
+};
 use crate::daemon::daemonize_with_log_redirect;
-use crate::logging::init_default_logging;
+use crate::logging::init_logging_with_level;
 use crate::update_check::check_for_updates;
 use crate::websocket::{get_reconnect_notify, get_shutdown_notify, get_websocket_client};
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, trace, warn};
+
+const _GIT_HASH: &str = env!("GIT_HASH");
 
 fn get_executable_path() -> PathBuf {
     std::env::current_exe()
@@ -42,7 +47,7 @@ fn resolve_websocket_token(
 ) -> Result<(String, bool), String> {
     let config_ltk = get_ltk_from_config(config);
     let cli_token = args
-        .get(2)
+        .get(1)
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
 
@@ -60,19 +65,42 @@ fn resolve_websocket_token(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Install the rustls crypto provider before any TLS operation.
+    // Both aws-lc-rs and ring features may be enabled transitively (ureq,
+    // tokio-rustls, etc.), so auto-detection cannot decide which to use.
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install rustls aws-lc-rs crypto provider");
+
+    // Install panic hook before anything else — writes to stderr before abort
+    // so panics are visible even with panic = "abort" in release profile.
+    std::panic::set_hook(Box::new(|panic_info| {
+        let msg = match panic_info.payload().downcast_ref::<&str>() {
+            Some(s) => s.to_string(),
+            None => panic_info
+                .payload()
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string()),
+        };
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_default();
+        eprintln!("FATAL PANIC: {msg} at {location}");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+    }));
+
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <libpython_path> [websocket_token]", args[0]);
-        eprintln!("  libpython_path: Path to the Python library (required)");
+    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
+        eprintln!("Usage: adacs_job_client [websocket_token]");
         eprintln!(
             "  websocket_token: One-shot WebSocket token (optional when config.json 'ltk' is set)"
         );
         eprintln!();
         eprintln!("Configure a persistent LTK in config.json for automatic reconnect support.");
-        std::process::exit(1);
+        std::process::exit(0);
     }
-
-    let libpython_path = &args[1];
 
     check_for_updates();
 
@@ -89,13 +117,37 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     }
 
-    init_default_logging(&executable_path);
-    info!("ADACS Job Controller Client starting...");
+    let config = read_client_config();
+    let log_level = get_log_level(&config);
+    init_logging_with_level(&executable_path, &log_level);
+    info!(
+        "ADACS Job Controller Client v{} ({}) starting...",
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_HASH")
+    );
+    info!(
+        "Log level: {} (override with RUST_LOG environment variable)",
+        log_level
+    );
+    info!(
+        "Logging initialized with debug level - check logs at {}",
+        log_dir.display()
+    );
 
     // Create tokio runtime after daemonization — single-threaded process at this point
     let rt = Runtime::new()?;
     let result = rt.block_on(async {
-        let config = read_client_config();
+        info!(
+            "Using config file: {}",
+            executable_path.join("config.json").display()
+        );
+        if let Err(errors) = validate_config(&config) {
+            for e in &errors {
+                error!("Config validation error: {e}");
+            }
+            std::process::exit(1);
+        }
+        info!("Python library: {}", get_python_library_path());
         let (ws_token, reconnectable) = match resolve_websocket_token(&args, &config) {
             Ok(value) => value,
             Err(message) => {
@@ -111,7 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             info!("Using one-shot WebSocket token from command line argument");
         }
 
-        python_interface::load_python_library(libpython_path);
+        python_interface::load_python_library(&get_python_library_path());
         unsafe {
             python_interface::PyImport_AppendInittab(
                 c"_bundledb".as_ptr(),
@@ -129,9 +181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         crate::db_bridge::DbBridge::start();
 
-        let ws_endpoint = config["websocketEndpoint"]
-            .as_str()
-            .unwrap_or("ws://127.0.0.1:8001/ws/");
+        let ws_endpoint = config["websocketEndpoint"].as_str().unwrap();
         let ws_url = if ws_endpoint.ends_with('/') {
             ws_endpoint.to_string()
         } else {
@@ -143,9 +193,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ws_client = get_websocket_client();
         let shutdown_notify = get_shutdown_notify();
         let reconnect_notify = get_reconnect_notify();
+        debug!(
+            "WS: Calling start_with_token - reconnectable={}",
+            reconnectable
+        );
         ws_client
             .start_with_token(ws_url, ws_token, reconnectable)
             .await?;
+        debug!("WS: start_with_token completed");
 
         info!("Waiting for server to be ready...");
         let ready_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -177,6 +232,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         loop {
             tokio::select! {
                 _ = job_check_interval.tick() => {
+                    let connected = !ws_client.is_connection_closed();
+                    let ready = ws_client.is_server_ready();
+                    trace!("Main loop tick - connected={}, ready={}", connected, ready);
                     if ws_client.is_connection_closed() {
                         if reconnectable {
                             warn!("WebSocket connection closed, waiting for reconnect...");
@@ -186,10 +244,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         error!("WebSocket connection closed without configured LTK; shutting down");
                         break;
                     }
+                    debug!("Main loop: running job status check");
                     jobs::check_all_jobs_status().await;
                 }
                 () = reconnect_notify.notified() => {
+                    debug!("Main loop: received reconnect notification");
                     if ws_client.is_connection_closed() {
+                        debug!("Main loop: skipping status check - still disconnected");
                         continue;
                     }
                     jobs::check_all_jobs_status().await;

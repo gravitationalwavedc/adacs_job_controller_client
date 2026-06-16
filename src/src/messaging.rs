@@ -2,6 +2,7 @@
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::Cursor;
+use tracing::{debug, trace};
 
 pub const SYSTEM_SOURCE: &str = "system";
 
@@ -74,6 +75,10 @@ pub struct Message {
 
 impl Message {
     pub fn new(id: u32, priority: Priority, source: &str) -> Self {
+        debug!(
+            "Message: creating new message - id={}, priority={:?}, source={}",
+            id, priority, source
+        );
         let mut msg = Message {
             id,
             source: source.to_string(),
@@ -88,10 +93,13 @@ impl Message {
         // Push the id
         msg.push_uint(id);
 
+        debug!("Message: created message with {} bytes", msg.data.len());
         msg
     }
 
     pub fn from_data(vdata: Vec<u8>) -> Self {
+        let data_len = vdata.len();
+        trace!("Message: parsing from data (len={} bytes)", data_len);
         let mut msg = Message {
             id: 0,
             source: String::new(),
@@ -104,6 +112,12 @@ impl Message {
         msg.source = msg.pop_string();
         msg.id = msg.pop_uint();
 
+        debug!(
+            "Message: parsed - id={}, source={}, remaining bytes={}",
+            msg.id,
+            msg.source,
+            msg.data.len() - msg.index
+        );
         msg
     }
 
@@ -116,6 +130,7 @@ impl Message {
     }
 
     pub fn push_ubyte(&mut self, value: u8) {
+        trace!("Message: pushing ubyte value={}", value);
         self.data.write_u8(value).unwrap();
     }
 
@@ -126,6 +141,11 @@ impl Message {
         }
         let value = self.data[self.index];
         self.index += 1;
+        trace!(
+            "Message: popped ubyte value={} at index={}",
+            value,
+            self.index - 1
+        );
         value
     }
 
@@ -174,6 +194,7 @@ impl Message {
     }
 
     pub fn push_uint(&mut self, value: u32) {
+        trace!("Message: pushing uint value={}", value);
         self.data.write_u32::<LittleEndian>(value).unwrap();
     }
 
@@ -185,6 +206,11 @@ impl Message {
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_u32::<LittleEndian>().unwrap();
         self.index += 4;
+        trace!(
+            "Message: popped uint value={} at index={}",
+            value,
+            self.index - 4
+        );
         value
     }
 
@@ -204,6 +230,7 @@ impl Message {
     }
 
     pub fn push_ulong(&mut self, value: u64) {
+        trace!("Message: pushing ulong value={}", value);
         self.data.write_u64::<LittleEndian>(value).unwrap();
     }
 
@@ -215,6 +242,11 @@ impl Message {
         let mut rdr = Cursor::new(&self.data[self.index..]);
         let value = rdr.read_u64::<LittleEndian>().unwrap();
         self.index += 8;
+        trace!(
+            "Message: popped ulong value={} at index={}",
+            value,
+            self.index - 8
+        );
         value
     }
 
@@ -264,16 +296,24 @@ impl Message {
     }
 
     pub fn push_string(&mut self, value: &str) {
+        trace!(
+            "Message: pushing string value='{}' (len={})",
+            value,
+            value.len()
+        );
         self.push_ulong(value.len() as u64);
         self.data.extend_from_slice(value.as_bytes());
     }
 
     pub fn pop_string(&mut self) -> String {
         let bytes = self.pop_bytes();
-        String::from_utf8_lossy(&bytes).into_owned()
+        let s = String::from_utf8_lossy(&bytes).into_owned();
+        trace!("Message: popped string value='{}' (len={})", s, s.len());
+        s
     }
 
     pub fn push_bytes(&mut self, value: &[u8]) {
+        trace!("Message: pushing bytes (len={})", value.len());
         self.push_ulong(value.len() as u64);
         self.data.extend_from_slice(value);
     }
@@ -281,6 +321,7 @@ impl Message {
     pub fn pop_bytes(&mut self) -> Vec<u8> {
         let len = self.pop_ulong() as usize;
         if len == 0 {
+            trace!("Message: popped empty bytes");
             return Vec::new();
         }
         if self.index + len > self.data.len() {
@@ -289,6 +330,7 @@ impl Message {
         }
         let value = self.data[self.index..self.index + len].to_vec();
         self.index += len;
+        trace!("Message: popped bytes (len={})", len);
         value
     }
 

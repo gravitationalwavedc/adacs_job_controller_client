@@ -1,4 +1,22 @@
+fn get_git_hash() -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                String::from_utf8(output.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn main() {
+    println!("cargo:rustc-env=GIT_HASH={}", get_git_hash());
     // Use absolute path based on CARGO_MANIFEST_DIR
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let subhook_path = std::path::Path::new(&manifest_dir).join("third_party/mempatch/subhook");

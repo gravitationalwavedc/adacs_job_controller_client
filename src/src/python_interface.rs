@@ -5,6 +5,7 @@ use parking_lot::Mutex;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::{Arc, OnceLock};
+use tracing::{debug, error, info, trace};
 
 // ─── Python C-API type aliases ───────────────────────────────────────────────
 pub type PyObject = c_void;
@@ -97,25 +98,32 @@ static INIT_PYTHON: std::sync::Once = std::sync::Once::new();
 
 // ─── Library loading ─────────────────────────────────────────────────────────
 pub fn load_python_library(path: &str) {
+    info!("Python library load requested: {}", path);
     if PY_LIB.get().is_some() {
+        debug!("Python library already loaded, skipping");
         return;
     }
     // RTLD_NOW | RTLD_GLOBAL – matches the C++ dlopen flags exactly.
     let lib = unsafe {
         let flags = libc::RTLD_NOW | libc::RTLD_GLOBAL;
         let c_path = CString::new(path).expect("invalid library path");
+        debug!("dlopen {} with flags RTLD_NOW|RTLD_GLOBAL", path);
         let handle = libc::dlopen(c_path.as_ptr(), flags);
         if handle.is_null() {
             let err = std::ffi::CStr::from_ptr(libc::dlerror());
+            error!("Failed to dlopen libpython: {}", err.to_string_lossy());
             panic!("Failed to dlopen libpython: {}", err.to_string_lossy());
         }
+        debug!("dlopen successful, wrapping via libloading");
         // Now wrap via libloading so py_wrap! can use it.
         Library::new(path).expect("Failed to load libpython via libloading")
     };
     let _ = PY_LIB.set(Arc::new(lib));
+    info!("Python library loaded successfully");
 }
 
 pub fn get_python_lib() -> Arc<Library> {
+    trace!("get_python_lib called");
     PY_LIB
         .get()
         .expect("Python library not loaded – call load_python_library() first")
@@ -123,6 +131,7 @@ pub fn get_python_lib() -> Arc<Library> {
 }
 
 pub fn get_main_ts() -> *mut PyThreadState {
+    trace!("get_main_ts called");
     MAIN_TS.get().expect("Python not initialized").0
 }
 
@@ -215,32 +224,53 @@ include!(concat!(env!("OUT_DIR"), "/subhook_bindings.rs"));
 /// Install subhook-based patches on `PyGILState_Ensure` and `PyGILState_Release`.
 /// Mirrors the C++ `PythonInterface::initPython()` hook installation exactly.
 unsafe fn install_gil_hooks() {
+    debug!("Installing GIL hooks via subhook");
     let lib = get_python_lib();
 
+    debug!("Looking up PyGILState_Ensure symbol");
     let p_ensure: Symbol<*mut c_void> = lib.get(b"PyGILState_Ensure").unwrap();
+    debug!("Looking up PyGILState_Release symbol");
     let p_release: Symbol<*mut c_void> = lib.get(b"PyGILState_Release").unwrap();
 
+    debug!("Creating subhook for PyGILState_Ensure");
     let hook_ensure = subhook_new(
         *p_ensure,
         myPyGILState_Ensure as *mut c_void,
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
+    let result = subhook_install(hook_ensure);
+    if result < 0 {
+        error!(
+            "PyGILState_Ensure redirection failed to install (result={})",
+            result
+        );
+    }
     assert!(
-        subhook_install(hook_ensure) >= 0,
+        result >= 0,
         "PyGILState_Ensure redirection failed to install"
     );
+    debug!("PyGILState_Ensure hook installed");
 
+    debug!("Creating subhook for PyGILState_Release");
     let hook_release = subhook_new(
         *p_release,
         myPyGILState_Release as *mut c_void,
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
+    let result = subhook_install(hook_release);
+    if result < 0 {
+        error!(
+            "PyGILState_Release redirection failed to install (result={})",
+            result
+        );
+    }
     assert!(
-        subhook_install(hook_release) >= 0,
+        result >= 0,
         "myPyGILState_Release redirection failed to install"
     );
+    debug!("PyGILState_Release hook installed");
 
-    tracing::info!("GIL hooks installed successfully");
+    info!("GIL hooks installed successfully");
 }
 
 // ─── Python initialisation ───────────────────────────────────────────────────
@@ -255,19 +285,28 @@ unsafe fn install_gil_hooks() {
 // NOTE: PyImport_AppendInittab calls must happen BEFORE this function is called,
 // and the library must already be loaded.
 pub fn init_python() {
+    info!("Initializing Python interpreter");
     INIT_PYTHON.call_once(|| {
         unsafe {
             // Install GIL hooks (subhook patches)
+            debug!("Installing GIL hooks");
             install_gil_hooks();
 
             // Initialise the interpreter
+            debug!("Calling Py_Initialize");
             Py_Initialize();
+            debug!("Py_Initialize complete");
+
+            debug!("Calling PyEval_InitThreads");
             PyEval_InitThreads();
+            debug!("PyEval_InitThreads complete");
 
             // Save the main thread state and release the GIL so worker threads can
             // restore it before creating sub-interpreters.
+            debug!("Saving main thread state and releasing GIL");
             let ts = PyEval_SaveThread();
             let _ = MAIN_TS.set(ThreadStatePtr(ts));
+            info!("Python interpreter initialized successfully");
         }
     });
 }
@@ -294,13 +333,24 @@ impl SubInterpreter {
     /// Creates a new sub-interpreter. MUST be called with the GIL held
     /// (i.e., with a valid current thread state).
     pub unsafe fn new() -> Self {
+        debug!("SubInterpreter::new - creating new sub-interpreter");
         // RestoreThreadStateScope – save current ts, restore on drop
         let saved_ts = PyThreadState_Get();
+        trace!(
+            "SubInterpreter::new - saved current thread state: {:?}",
+            saved_ts
+        );
 
+        debug!("SubInterpreter::new - calling Py_NewInterpreter");
         let ts = Py_NewInterpreter();
+        if ts.is_null() {
+            error!("SubInterpreter::new - Py_NewInterpreter failed");
+        }
         assert!(!ts.is_null(), "Py_NewInterpreter failed");
+        debug!("SubInterpreter::new - sub-interpreter created: {:?}", ts);
 
         // Restore the original thread state (like C++ RestoreThreadStateScope destructor)
+        trace!("SubInterpreter::new - restoring original thread state");
         PyThreadState_Swap(saved_ts);
 
         SubInterpreter { ts }
@@ -316,10 +366,17 @@ impl Drop for SubInterpreter {
     fn drop(&mut self) {
         unsafe {
             if !self.ts.is_null() {
+                trace!(
+                    "SubInterpreter::drop - destroying sub-interpreter: {:?}",
+                    self.ts
+                );
                 // SwapThreadStateScope – swap to sub-interp, end it, swap back
                 let old_ts = PyThreadState_Swap(self.ts);
+                trace!("SubInterpreter::drop - calling Py_EndInterpreter");
                 Py_EndInterpreter(self.ts);
+                trace!("SubInterpreter::drop - Py_EndInterpreter complete");
                 PyThreadState_Swap(old_ts);
+                trace!("SubInterpreter::drop - restored original thread state");
             }
         }
     }
@@ -338,8 +395,19 @@ impl ThreadScope {
     /// Create a new `ThreadScope` for the given interpreter.
     /// This is the equivalent of C++ `SubInterpreter::ThreadScope`.
     pub unsafe fn new(interp: *mut PyInterpreterState) -> Self {
+        trace!("ThreadScope::new - creating for interpreter: {:?}", interp);
         let ts = PyThreadState_New(interp);
+        if ts.is_null() {
+            error!("ThreadScope::new - PyThreadState_New failed");
+        }
+        trace!("ThreadScope::new - created thread state: {:?}", ts);
+        let gil_start = std::time::Instant::now();
+        trace!("ThreadScope::new - calling PyEval_RestoreThread");
         PyEval_RestoreThread(ts);
+        trace!(
+            "ThreadScope::new - GIL acquired in {:?}",
+            gil_start.elapsed()
+        );
         ThreadScope { ts }
     }
 }
@@ -347,8 +415,14 @@ impl ThreadScope {
 impl Drop for ThreadScope {
     fn drop(&mut self) {
         unsafe {
+            trace!(
+                "ThreadScope::drop - releasing GIL for thread state: {:?}",
+                self.ts
+            );
             PyThreadState_Clear(self.ts);
+            trace!("ThreadScope::drop - thread state cleared");
             PyThreadState_DeleteCurrent();
+            trace!("ThreadScope::drop - thread state deleted");
         }
     }
 }

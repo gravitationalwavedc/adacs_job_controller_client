@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
+use tracing::{debug, info, trace};
 
 /// Wrapper around `*mut PyObject` that implements `Send` (needed for `Mutex` storage).
 /// Safety: all access to the stored pointer is serialized through the mutex and `PYTHON_MUTEX`.
@@ -73,11 +74,15 @@ fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyO
 }
 
 fn send_and_wait(msg: Message) -> Result<Message, String> {
+    let msg_id = msg.id;
+    debug!("bundle_db: send_and_wait - msg_id={}", msg_id);
     // Use the persistent DbBridge if available (production path),
     // otherwise fall back to thread-per-call (test paths without DbBridge).
     if let Some(bridge) = crate::db_bridge::DbBridge::try_get() {
+        trace!("bundle_db: using DbBridge for request");
         return bridge.send(msg);
     }
+    trace!("bundle_db: using fallback thread-per-call for request");
     let ws = get_websocket_client();
     let fut = ws.send_db_request(msg);
     std::thread::spawn(move || {
@@ -177,10 +182,13 @@ unsafe extern "C" fn create_or_update_job(
         &serde_json::to_string(&job_data_clean).unwrap_or_default(),
     );
 
-    tracing::info!(
+    info!(
         "DB: create_or_update_job req - bundle hash: {}, jobId: {}",
-        bundle_hash,
-        job_id
+        bundle_hash, job_id
+    );
+    debug!(
+        "DB: create_or_update_job - job_data_clean: {}",
+        serde_json::to_string(&job_data_clean).unwrap_or_default()
     );
 
     let error_obj = get_bundle_db_error(&bundle_hash);
@@ -189,6 +197,12 @@ unsafe extern "C" fn create_or_update_job(
             let new_job_id = match parse_create_or_update_response(&response) {
                 Ok(id) => id,
                 Err(message) => {
+                    tracing::error!(
+                        "DB: create_or_update_job parse error for bundle hash: {}, jobId: {}: {}",
+                        bundle_hash,
+                        job_id,
+                        message
+                    );
                     let err_msg = CString::new(message).unwrap();
                     PyErr_SetString(error_obj, err_msg.as_ptr());
                     return ptr::null_mut();
@@ -208,6 +222,12 @@ unsafe extern "C" fn create_or_update_job(
             result
         }
         Err(e) => {
+            tracing::error!(
+                "DB: create_or_update_job error for bundle hash: {}, jobId: {}: {}",
+                bundle_hash,
+                job_id,
+                e
+            );
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
             PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
@@ -225,10 +245,9 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 
     let msg = build_bundle_get_by_id_message(job_id);
 
-    tracing::info!(
+    info!(
         "DB: get_job_by_id req - bundle hash: {}, jobId: {}",
-        bundle_hash,
-        job_id
+        bundle_hash, job_id
     );
 
     let error_obj = get_bundle_db_error(&bundle_hash);
@@ -237,6 +256,12 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
             let job_data_json = match parse_get_job_by_id_response(&response, job_id) {
                 Ok(json) => json,
                 Err(message) => {
+                    tracing::error!(
+                        "DB: get_job_by_id parse error for bundle hash: {}, jobId: {}: {}",
+                        bundle_hash,
+                        job_id,
+                        message
+                    );
                     let err_msg = CString::new(message).unwrap();
                     PyErr_SetString(error_obj, err_msg.as_ptr());
                     return ptr::null_mut();
@@ -257,6 +282,12 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
             dict
         }
         Err(e) => {
+            tracing::error!(
+                "DB: get_job_by_id error for bundle hash: {}, jobId: {}: {}",
+                bundle_hash,
+                job_id,
+                e
+            );
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
             PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
@@ -281,6 +312,10 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
         .unwrap_or(0);
 
     if job_id == 0 {
+        tracing::error!(
+            "DB: delete_job error - no job_id provided for bundle hash: {}",
+            bundle_hash
+        );
         let error_obj = get_bundle_db_error(&bundle_hash);
         PyErr_SetString(error_obj, c"Job ID must be provided.".as_ptr());
         return ptr::null_mut();
@@ -288,10 +323,9 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
 
     let msg = build_bundle_delete_message(job_id);
 
-    tracing::info!(
+    info!(
         "DB: delete_job req - bundle hash: {}, jobId: {}",
-        bundle_hash,
-        job_id
+        bundle_hash, job_id
     );
 
     match send_and_wait(msg) {
@@ -303,77 +337,17 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
             result
         }
         Err(e) => {
+            tracing::error!(
+                "DB: delete_job error for bundle hash: {}, jobId: {}: {}",
+                bundle_hash,
+                job_id,
+                e
+            );
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
             let error_obj = get_bundle_db_error(&bundle_hash);
             PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::messaging::DB_RESPONSE;
-
-    #[test]
-    fn build_bundle_create_or_update_message_matches_server_order() {
-        let mut msg = Message::from_data(
-            build_bundle_create_or_update_message("hash-1", 42, "{\"a\":1}")
-                .get_data()
-                .clone(),
-        );
-
-        assert_eq!(msg.id, DB_BUNDLE_CREATE_OR_UPDATE_JOB);
-        assert_eq!(msg.pop_ulong(), 42);
-        assert_eq!(msg.pop_string(), "{\"a\":1}");
-        assert_eq!(msg.pop_string(), "hash-1");
-    }
-
-    #[test]
-    fn build_bundle_get_by_id_message_sends_only_job_id() {
-        let mut msg = Message::from_data(build_bundle_get_by_id_message(9).get_data().clone());
-
-        assert_eq!(msg.id, DB_BUNDLE_GET_JOB_BY_ID);
-        assert_eq!(msg.pop_ulong(), 9);
-    }
-
-    #[test]
-    fn parse_get_job_by_id_response_reads_count_then_payload() {
-        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        response.push_uint(1);
-        response.push_ulong(9);
-        response.push_string("{\"job_id\":9}");
-
-        let payload = parse_get_job_by_id_response(&response, 9).unwrap();
-        assert_eq!(payload, "{\"job_id\":9}");
-    }
-
-    #[test]
-    fn parse_create_or_update_response_after_request_id_consumed() {
-        let mut wire_response = Message::new(DB_RESPONSE, Priority::Highest, "system");
-        wire_response.push_uint(42);
-        wire_response.push_ulong(1234);
-
-        let mut delivered = Message::from_data(wire_response.get_data().clone());
-        assert_eq!(delivered.pop_uint(), 42);
-
-        assert_eq!(parse_create_or_update_response(&delivered).unwrap(), 1234);
-    }
-
-    #[test]
-    fn parse_get_job_by_id_response_after_request_id_consumed() {
-        let mut wire_response = Message::new(DB_RESPONSE, Priority::Highest, "system");
-        wire_response.push_uint(42);
-        wire_response.push_uint(1);
-        wire_response.push_ulong(9);
-        wire_response.push_string("{\"job_id\":9}");
-
-        let mut delivered = Message::from_data(wire_response.get_data().clone());
-        assert_eq!(delivered.pop_uint(), 42);
-
-        let payload = parse_get_job_by_id_response(&delivered, 9).unwrap();
-        assert_eq!(payload, "{\"job_id\":9}");
     }
 }
 
@@ -456,4 +430,70 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
     }
 
     module
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::messaging::DB_RESPONSE;
+
+    #[test]
+    fn build_bundle_create_or_update_message_matches_server_order() {
+        let mut msg = Message::from_data(
+            build_bundle_create_or_update_message("hash-1", 42, "{\"a\":1}")
+                .get_data()
+                .clone(),
+        );
+
+        assert_eq!(msg.id, DB_BUNDLE_CREATE_OR_UPDATE_JOB);
+        assert_eq!(msg.pop_ulong(), 42);
+        assert_eq!(msg.pop_string(), "{\"a\":1}");
+        assert_eq!(msg.pop_string(), "hash-1");
+    }
+
+    #[test]
+    fn build_bundle_get_by_id_message_sends_only_job_id() {
+        let mut msg = Message::from_data(build_bundle_get_by_id_message(9).get_data().clone());
+
+        assert_eq!(msg.id, DB_BUNDLE_GET_JOB_BY_ID);
+        assert_eq!(msg.pop_ulong(), 9);
+    }
+
+    #[test]
+    fn parse_get_job_by_id_response_reads_count_then_payload() {
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_uint(1);
+        response.push_ulong(9);
+        response.push_string("{\"job_id\":9}");
+
+        let payload = parse_get_job_by_id_response(&response, 9).unwrap();
+        assert_eq!(payload, "{\"job_id\":9}");
+    }
+
+    #[test]
+    fn parse_create_or_update_response_after_request_id_consumed() {
+        let mut wire_response = Message::new(DB_RESPONSE, Priority::Highest, "system");
+        wire_response.push_uint(42);
+        wire_response.push_ulong(1234);
+
+        let mut delivered = Message::from_data(wire_response.get_data().clone());
+        assert_eq!(delivered.pop_uint(), 42);
+
+        assert_eq!(parse_create_or_update_response(&delivered).unwrap(), 1234);
+    }
+
+    #[test]
+    fn parse_get_job_by_id_response_after_request_id_consumed() {
+        let mut wire_response = Message::new(DB_RESPONSE, Priority::Highest, "system");
+        wire_response.push_uint(42);
+        wire_response.push_uint(1);
+        wire_response.push_ulong(9);
+        wire_response.push_string("{\"job_id\":9}");
+
+        let mut delivered = Message::from_data(wire_response.get_data().clone());
+        assert_eq!(delivered.pop_uint(), 42);
+
+        let payload = parse_get_job_by_id_response(&delivered, 9).unwrap();
+        assert_eq!(payload, "{\"job_id\":9}");
+    }
 }

@@ -23,11 +23,12 @@ static LOG_INIT: Once = Once::new();
 /// * `log_dir` - Directory where log files will be stored
 /// * `log_prefix` - Prefix for log filenames (e.g., "`adacs_job_client`")
 /// * `max_log_files` - Number of log files to retain (default: 7)
+/// * `log_level` - Default log level if `RUST_LOG` is not set (e.g., "info", "debug")
 ///
 /// # Panics
 /// Panics if the log directory cannot be created or if tracing subscriber
 /// cannot be initialized.
-pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize) {
+pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize, log_level: &str) {
     // Create log directory if it doesn't exist
     std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
 
@@ -64,8 +65,8 @@ pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize) {
     // Build the tracing subscriber with both layers
     let subscriber = tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            // Default log level: info, but allow override via RUST_LOG
-            "info".into()
+            // Default log level from config, but allow override via RUST_LOG
+            log_level.into()
         }))
         .with(file_layer)
         .with(stderr_layer);
@@ -89,9 +90,20 @@ pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize) {
 ///
 /// Uses the log directory relative to the executable path,
 /// prefix "`adacs_job_client`", and retains 7 days of logs.
+/// Uses "info" as default log level.
 pub fn init_default_logging(executable_path: &Path) {
     let log_dir = executable_path.join("logs");
-    init_logging(&log_dir, "adacs_job_client", 7);
+    init_logging(&log_dir, "adacs_job_client", 7, "info");
+}
+
+/// Initialize logging with settings from config.
+///
+/// Uses the log directory relative to the executable path,
+/// prefix "`adacs_job_client`", retains 7 days of logs,
+/// and uses the specified log level.
+pub fn init_logging_with_level(executable_path: &Path, log_level: &str) {
+    let log_dir = executable_path.join("logs");
+    init_logging(&log_dir, "adacs_job_client", 7, log_level);
 }
 
 #[cfg(test)]
@@ -115,7 +127,7 @@ mod tests {
         let log_dir = temp_dir.path().join("test_logs");
 
         assert!(!log_dir.exists());
-        init_logging(&log_dir, "test", 3);
+        init_logging(&log_dir, "test", 3, "info");
 
         assert!(log_dir.is_dir());
     }
@@ -125,7 +137,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let log_dir = temp_dir.path().join("test_logs");
 
-        init_logging(&log_dir, "test", 3);
+        init_logging(&log_dir, "test", 3, "info");
 
         tracing::info!("Test log message");
         thread::sleep(Duration::from_millis(50));
