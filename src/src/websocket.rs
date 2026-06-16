@@ -137,14 +137,28 @@ impl TungsteniteWebsocketClient {
 
     fn clear_queued_messages(&self) -> usize {
         let mut total_cleared = 0;
+        let mut skipped = 0;
         for (p, priority) in self.queue.iter().enumerate() {
-            let mut map = priority.lock();
+            // try_lock avoids blocking an async caller (e.g. handle_disconnect
+            // running from the read loop) when another task still holds the
+            // priority mutex mid-cycle. Contended priorities hold stale data
+            // that the next connection cycle will clear naturally.
+            let Some(mut map) = priority.try_lock() else {
+                skipped += 1;
+                continue;
+            };
             let count: usize = map.values().map(std::collections::VecDeque::len).sum();
             total_cleared += count;
             if count > 0 {
                 debug!("WS: Clearing {} messages from priority {}", count, p);
             }
             map.clear();
+        }
+        if skipped > 0 {
+            debug!(
+                "WS: Skipped {} contended priority queue(s) during disconnect clear (stale data will be cleared on reconnect)",
+                skipped
+            );
         }
         debug!("WS: Cleared {} total queued messages", total_cleared);
         total_cleared
@@ -1400,6 +1414,83 @@ mod tests {
         for p in 0..20 {
             let map = client.queue[p].lock();
             assert_eq!(map.len(), 0, "Priority {p} should have no queues");
+        }
+    }
+
+    #[test]
+    fn test_clear_queued_messages_skips_contended_priorities() {
+        let client = TungsteniteWebsocketClient::new();
+
+        client.queue_message("p0".to_string(), vec![1], Priority::Highest);
+        client.queue_message("p19".to_string(), vec![1], Priority::Lowest);
+
+        // Manually populate priorities 1, 2, 5 (no named Priority variant).
+        {
+            let mut map = client.queue[1].lock();
+            map.insert(
+                "p1".to_string(),
+                VecDeque::from(vec![
+                    SDataItem { data: vec![1] },
+                    SDataItem { data: vec![2] },
+                ]),
+            );
+        }
+        {
+            let mut map = client.queue[2].lock();
+            map.insert(
+                "p2".to_string(),
+                VecDeque::from(vec![SDataItem { data: vec![1] }]),
+            );
+        }
+        let p5_count: usize = 3;
+        {
+            let mut map = client.queue[5].lock();
+            map.insert(
+                "p5".to_string(),
+                VecDeque::from(vec![
+                    SDataItem { data: vec![1] },
+                    SDataItem { data: vec![2] },
+                    SDataItem { data: vec![3] },
+                ]),
+            );
+        }
+
+        // Hold a guard on priority 5 to simulate contention.
+        let held_guard = client.queue[5].lock();
+
+        let cleared = client.clear_queued_messages();
+        // p0 (1) + p1 (2) + p2 (1) + p19 (1) = 5; p5 is contended and skipped.
+        assert_eq!(cleared, 5, "should clear all non-contended priorities");
+
+        // Release the guard so we can inspect priority 5's preserved state.
+        drop(held_guard);
+
+        for p in [0usize, 1, 2, 19] {
+            let map = client.queue[p].lock();
+            let count: usize = map.values().map(VecDeque::len).sum();
+            assert_eq!(count, 0, "Priority {p} should be cleared");
+            assert!(map.is_empty(), "Priority {p} queue map should be empty");
+        }
+
+        {
+            let map = client.queue[5].lock();
+            let count: usize = map.values().map(VecDeque::len).sum();
+            assert_eq!(
+                count, p5_count,
+                "Priority 5 should retain its data (skipped during clear)"
+            );
+        }
+
+        let cleared_again = client.clear_queued_messages();
+        assert_eq!(
+            cleared_again, p5_count,
+            "should clear priority 5 on second pass"
+        );
+
+        for p in 0..20 {
+            let map = client.queue[p].lock();
+            let count: usize = map.values().map(VecDeque::len).sum();
+            assert_eq!(count, 0, "Priority {p} should be cleared after second pass");
         }
     }
 
