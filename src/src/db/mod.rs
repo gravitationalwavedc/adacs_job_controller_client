@@ -7,6 +7,7 @@ use crate::messaging::{
     DB_JOB_GET_BY_JOB_ID, DB_JOB_GET_RUNNING_JOBS, DB_JOB_SAVE,
 };
 use crate::websocket::get_websocket_client;
+use tracing::{debug, error, trace};
 
 fn parse_response(resp: &Message) -> Message {
     resp.clone_for_payload_reading()
@@ -51,58 +52,106 @@ fn parse_status(resp: &mut Message) -> jobstatus::Model {
 }
 
 pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
+    debug!("DB: get_running_jobs - sending request");
     let msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Medium, "database");
+    let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("DB: get_running_jobs - request failed: {}", e);
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
     let count = resp.pop_uint() as usize;
+    debug!(
+        "DB: get_running_jobs - received {} jobs in {:?}",
+        count, elapsed
+    );
     let mut jobs = Vec::with_capacity(count);
     for _ in 0..count {
         jobs.push(parse_job(&mut resp));
     }
+    trace!("DB: get_running_jobs - parsed {} job models", jobs.len());
     Ok(jobs)
 }
 
 pub async fn get_job_by_id(id: i64) -> Result<Option<job::Model>, String> {
+    debug!("DB: get_job_by_id - requesting job id={}", id);
     let mut msg = Message::new(DB_JOB_GET_BY_ID, Priority::Medium, "database");
     msg.push_ulong(id as u64);
+    let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("DB: get_job_by_id - request failed for id={}: {}", id, e);
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
     let count = resp.pop_uint();
     if count == 0 {
+        debug!("DB: get_job_by_id - job id={} not found", id);
         return Ok(None);
     }
-    Ok(Some(parse_job(&mut resp)))
+    let job = parse_job(&mut resp);
+    debug!(
+        "DB: get_job_by_id - received job id={} in {:?}",
+        id, elapsed
+    );
+    Ok(Some(job))
 }
 
 pub async fn get_job_by_job_id(job_id_val: i64) -> Result<Option<job::Model>, String> {
+    debug!(
+        "DB: get_job_by_job_id - requesting job_id_val={}",
+        job_id_val
+    );
     let mut msg = Message::new(DB_JOB_GET_BY_JOB_ID, Priority::Medium, "database");
     msg.push_ulong(job_id_val as u64);
+    let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!(
+                "DB: get_job_by_job_id - request failed for job_id_val={}: {}",
+                job_id_val, e
+            );
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
     let count = resp.pop_uint();
     if count == 0 {
+        debug!(
+            "DB: get_job_by_job_id - job_id_val={} not found",
+            job_id_val
+        );
         return Ok(None);
     }
-    Ok(Some(parse_job(&mut resp)))
+    let job = parse_job(&mut resp);
+    debug!("DB: get_job_by_job_id - received job in {:?}", elapsed);
+    Ok(Some(job))
 }
 
 pub async fn delete_job(id: i64) -> Result<(), String> {
+    debug!("DB: delete_job - deleting job id={}", id);
     let mut msg = Message::new(DB_JOB_DELETE, Priority::Medium, "database");
     msg.push_ulong(id as u64);
+    let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("DB: delete_job - request failed for id={}: {}", id, e);
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
     let _resp = parse_response(&raw);
+    debug!("DB: delete_job - completed in {:?}", elapsed);
     Ok(())
 }
 
@@ -128,6 +177,10 @@ pub async fn get_job_status_by_job_id_and_what(
     job_id: i64,
     what: &str,
 ) -> Result<Vec<jobstatus::Model>, String> {
+    debug!(
+        "DB: get_job_status_by_job_id_and_what - job_id={}, what={}",
+        job_id, what
+    );
     let mut msg = Message::new(
         DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT,
         Priority::Medium,
@@ -135,32 +188,62 @@ pub async fn get_job_status_by_job_id_and_what(
     );
     msg.push_ulong(job_id as u64);
     msg.push_string(what);
+    let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!(
+                "DB: get_job_status_by_job_id_and_what - request failed: {}",
+                e
+            );
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
     let count = resp.pop_uint() as usize;
+    debug!(
+        "DB: get_job_status_by_job_id_and_what - received {} statuses in {:?}",
+        count, elapsed
+    );
     let mut statuses = Vec::with_capacity(count);
     for _ in 0..count {
         statuses.push(parse_status(&mut resp));
     }
+    trace!(
+        "DB: get_job_status_by_job_id_and_what - parsed {} status models",
+        statuses.len()
+    );
     Ok(statuses)
 }
 
 pub async fn get_job_status_by_job_id(job_id: i64) -> Result<Vec<jobstatus::Model>, String> {
+    debug!("DB: get_job_status_by_job_id - job_id={}", job_id);
     let mut msg = Message::new(DB_JOBSTATUS_GET_BY_JOB_ID, Priority::Medium, "database");
     msg.push_ulong(job_id as u64);
+    let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("DB: get_job_status_by_job_id - request failed: {}", e);
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
     let count = resp.pop_uint() as usize;
+    debug!(
+        "DB: get_job_status_by_job_id - received {} statuses in {:?}",
+        count, elapsed
+    );
     let mut statuses = Vec::with_capacity(count);
     for _ in 0..count {
         statuses.push(parse_status(&mut resp));
     }
+    trace!(
+        "DB: get_job_status_by_job_id - parsed {} status models",
+        statuses.len()
+    );
     Ok(statuses)
 }
 
@@ -179,6 +262,10 @@ pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
 }
 
 pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
+    debug!(
+        "DB: save_job - saving job id={:?}, job_id={:?}",
+        job.id, job.job_id
+    );
     let mut msg = Message::new(DB_JOB_SAVE, Priority::Medium, "database");
     msg.push_ulong(job.id as u64);
     msg.push_ulong(job.job_id.unwrap_or(0) as u64);
@@ -190,15 +277,25 @@ pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
     msg.push_bool(job.running);
     msg.push_bool(job.deleting);
     msg.push_bool(job.deleted);
+    let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("DB: save_job - request failed: {}", e);
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
     let saved_id = resp.pop_ulong() as i64;
     if saved_id == 0 {
+        error!("DB: save_job - database returned saved_id=0");
         return Err("Database operation failed to save job".to_string());
     }
+    debug!(
+        "DB: save_job - saved with new id={} in {:?}",
+        saved_id, elapsed
+    );
     Ok(job::Model {
         id: saved_id,
         ..job
@@ -206,20 +303,34 @@ pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
 }
 
 pub async fn save_status(status: jobstatus::Model) -> Result<jobstatus::Model, String> {
+    debug!(
+        "DB: save_status - saving status id={}, job_id={}, what={}, state={}",
+        status.id, status.job_id, status.what, status.state
+    );
     let mut msg = Message::new(DB_JOBSTATUS_SAVE, Priority::Medium, "database");
     msg.push_ulong(status.id as u64);
     msg.push_ulong(status.job_id as u64);
     msg.push_string(&status.what);
     msg.push_uint(status.state as u32);
+    let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("DB: save_status - request failed: {}", e);
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
     let saved_id = resp.pop_ulong() as i64;
     if saved_id == 0 {
+        error!("DB: save_status - database returned saved_id=0");
         return Err("Database operation failed to save job status".to_string());
     }
+    debug!(
+        "DB: save_status - saved with new id={} in {:?}",
+        saved_id, elapsed
+    );
     Ok(jobstatus::Model {
         id: saved_id,
         ..status

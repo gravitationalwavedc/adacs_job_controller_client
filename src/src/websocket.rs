@@ -8,14 +8,17 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex, Notify};
-use tokio::time::{interval, Duration};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
-use tracing::{error, info, warn};
+use tokio::sync::{mpsc, oneshot, Notify};
+use tokio::time::{interval, timeout, Duration};
+use tokio_tungstenite::{
+    connect_async, tungstenite::client::IntoClientRequest,
+    tungstenite::protocol::Message as WsMessage,
+};
+use tracing::{debug, error, info, trace, warn};
 
 // C++ constants
 const PING_INTERVAL_SECONDS: u64 = 30;
+const WRITER_FLUSH_INTERVAL_SECONDS: u64 = 5;
 const QUEUE_SOURCE_PRUNE_SECONDS: u64 = 60;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -52,7 +55,7 @@ pub(crate) struct SDataItem {
     data: Vec<u8>,
 }
 
-type PriorityQueue = Vec<Mutex<HashMap<String, VecDeque<SDataItem>>>>;
+type PriorityQueue = Vec<Arc<Mutex<HashMap<String, VecDeque<SDataItem>>>>>;
 
 #[derive(Clone)]
 struct ConnectionConfig {
@@ -63,7 +66,7 @@ struct ConnectionConfig {
 pub struct TungsteniteWebsocketClient {
     server_ready: AtomicBool,
     db_request_counter: AtomicU32,
-    db_request_promises: RwLock<HashMap<u32, oneshot::Sender<Message>>>,
+    db_request_promises: Arc<RwLock<HashMap<u32, oneshot::Sender<Message>>>>,
     pub(crate) queue: PriorityQueue,
     data_ready: Arc<Notify>,
     ping_timestamp: AtomicI64,
@@ -71,33 +74,20 @@ pub struct TungsteniteWebsocketClient {
     connection_closed: AtomicBool,
     reconnectable: AtomicBool,
     supervisor_started: AtomicBool,
-    connection_config: RwLock<Option<ConnectionConfig>>,
-}
-
-impl Clone for TungsteniteWebsocketClient {
-    fn clone(&self) -> Self {
-        let mut c = Self::new_internal();
-        c.server_ready = AtomicBool::new(self.server_ready.load(Ordering::SeqCst));
-        c.db_request_counter = AtomicU32::new(self.db_request_counter.load(Ordering::SeqCst));
-        c.ping_timestamp = AtomicI64::new(self.ping_timestamp.load(Ordering::SeqCst));
-        c.pong_timestamp = AtomicI64::new(self.pong_timestamp.load(Ordering::SeqCst));
-        c.connection_closed = AtomicBool::new(self.connection_closed.load(Ordering::SeqCst));
-        c.reconnectable = AtomicBool::new(self.reconnectable.load(Ordering::SeqCst));
-        c
-    }
+    connection_config: Arc<RwLock<Option<ConnectionConfig>>>,
 }
 
 impl TungsteniteWebsocketClient {
     fn new_internal() -> Self {
         let mut queue = Vec::with_capacity(20);
         for _ in 0..20 {
-            queue.push(Mutex::new(HashMap::new()));
+            queue.push(Arc::new(Mutex::new(HashMap::new())));
         }
 
         Self {
             server_ready: AtomicBool::new(false),
             db_request_counter: AtomicU32::new(0),
-            db_request_promises: RwLock::new(HashMap::new()),
+            db_request_promises: Arc::new(RwLock::new(HashMap::new())),
             queue,
             data_ready: Arc::new(Notify::new()),
             ping_timestamp: AtomicI64::new(0),
@@ -105,7 +95,7 @@ impl TungsteniteWebsocketClient {
             connection_closed: AtomicBool::new(false),
             reconnectable: AtomicBool::new(false),
             supervisor_started: AtomicBool::new(false),
-            connection_config: RwLock::new(None),
+            connection_config: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -121,35 +111,16 @@ impl TungsteniteWebsocketClient {
 
     fn handle_pong(&self) {
         let now = Self::get_epoch_millis();
+        let ping_ts = self.ping_timestamp.load(Ordering::SeqCst);
+        let latency = if ping_ts != 0 { now - ping_ts } else { -1 };
         self.pong_timestamp.store(now, Ordering::SeqCst);
-        info!("WS: Received pong at {}", now);
+        info!("WS: Received pong at {} (latency: {}ms)", now, latency);
     }
 
     fn handle_ping() {
         // When we receive a ping from the server, we should respond with a pong
         // tungstenite handles this automatically, but we track it
         info!("WS: Received ping from server");
-    }
-
-    async fn send_ping(
-        &self,
-        ws_sender: &mut futures_util::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-            >,
-            WsMessage,
-        >,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Reset pong timestamp to zero before sending (matches C++ checkPings)
-        self.pong_timestamp.store(0, Ordering::SeqCst);
-
-        let now = Self::get_epoch_millis();
-        self.ping_timestamp.store(now, Ordering::SeqCst);
-        info!("WS: Sending ping at {}", now);
-
-        // Send a WebSocket ping frame (opcode 137 per RFC 6455)
-        ws_sender.send(WsMessage::Ping(Bytes::new())).await?;
-        Ok(())
     }
 
     fn does_higher_priority_data_exist(&self, max_priority: usize) -> bool {
@@ -164,10 +135,19 @@ impl TungsteniteWebsocketClient {
         false
     }
 
-    fn clear_queued_messages(&self) {
-        for priority in &self.queue {
-            priority.lock().clear();
+    fn clear_queued_messages(&self) -> usize {
+        let mut total_cleared = 0;
+        for (p, priority) in self.queue.iter().enumerate() {
+            let mut map = priority.lock();
+            let count: usize = map.values().map(std::collections::VecDeque::len).sum();
+            total_cleared += count;
+            if count > 0 {
+                debug!("WS: Clearing {} messages from priority {}", count, p);
+            }
+            map.clear();
         }
+        debug!("WS: Cleared {} total queued messages", total_cleared);
+        total_cleared
     }
 
     /// Prune empty queue sources (matches C++ pruneSources)
@@ -197,14 +177,25 @@ impl TungsteniteWebsocketClient {
     fn handle_disconnect(&self, disconnect_notify: &Arc<Notify>) {
         let was_closed = self.connection_closed.swap(true, Ordering::SeqCst);
         self.server_ready.store(false, Ordering::SeqCst);
-        self.clear_queued_messages();
+        let cleared_count = self.clear_queued_messages();
+        debug!(
+            "WS: Disconnect handling - was_closed={}, cleared {} queued messages",
+            was_closed, cleared_count
+        );
 
         let promises = std::mem::take(&mut *self.db_request_promises.write());
+        let pending_requests = promises.len();
+        debug!(
+            "WS: Disconnect - dropping {} pending DB request promises",
+            pending_requests
+        );
         drop(promises);
 
         if !was_closed {
+            debug!("WS: Notifying disconnect waiters");
             disconnect_notify.notify_waiters();
             if !self.reconnectable.load(Ordering::SeqCst) {
+                debug!("WS: Notifying shutdown (not reconnectable)");
                 get_shutdown_notify().notify_waiters();
             }
         }
@@ -240,7 +231,13 @@ impl TungsteniteWebsocketClient {
                 .map_err(|_| "Invalid token")?,
         );
 
-        let (ws_stream, _) = connect_async(request).await?;
+        let (ws_stream, response) =
+            match timeout(Duration::from_secs(10), connect_async(request)).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => return Err(format!("WS connection error: {e}").into()),
+                Err(_) => return Err("WS connection timed out after 10s".into()),
+            };
+        info!("WS: Connected (status={})", response.status());
         info!("WS: Client connected");
 
         self.connection_closed.store(false, Ordering::SeqCst);
@@ -250,25 +247,43 @@ impl TungsteniteWebsocketClient {
 
         let disconnect_notify = Arc::new(Notify::new());
         let (ws_sender, ws_receiver) = ws_stream.split();
-        let ws_sender = Arc::new(TokioMutex::new(ws_sender));
 
         let data_ready = self.data_ready.clone();
-        let (tx_out, mut rx_out) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (writer_tx, mut writer_rx) = mpsc::unbounded_channel::<WsMessage>();
 
         let self_arc_reader = self.clone();
-        let ws_sender_for_read = ws_sender.clone();
         let disconnect_for_read = disconnect_notify.clone();
         tokio::spawn(async move {
             let mut ws_receiver = ws_receiver;
+            let mut recv_count = 0u64;
             while let Some(msg) = ws_receiver.next().await {
                 let client = self_arc_reader.clone();
+                recv_count += 1;
                 match msg {
                     Ok(WsMessage::Binary(data)) => {
+                        let data_len = data.len();
+                        info!(
+                            "WS: Received binary message (size: {} bytes, total received: {})",
+                            data_len, recv_count
+                        );
                         let message = Message::from_data(data.to_vec());
+                        info!(
+                            "WS: Parsed message - id: {}, source: {}, priority: {:?}",
+                            message.id, message.source, message.priority
+                        );
                         client.handle_message(message);
                     }
                     Ok(WsMessage::Text(text)) => {
+                        let text_len = text.len();
+                        info!(
+                            "WS: Received text message (size: {} bytes, total received: {})",
+                            text_len, recv_count
+                        );
                         let message = Message::from_data(text.as_bytes().to_vec());
+                        info!(
+                            "WS: Parsed message - id: {}, source: {}, priority: {:?}",
+                            message.id, message.source, message.priority
+                        );
                         client.handle_message(message);
                     }
                     Ok(WsMessage::Ping(_)) => {
@@ -287,40 +302,81 @@ impl TungsteniteWebsocketClient {
                         client.handle_disconnect(&disconnect_for_read);
                         break;
                     }
-                    _ => {}
+                    _ => {
+                        trace!("WS: Received other message type");
+                    }
                 }
             }
             self_arc_reader.handle_disconnect(&disconnect_for_read);
-            drop(ws_sender_for_read);
         });
 
-        let ws_sender_for_data = ws_sender.clone();
-        let self_arc_data = self.clone();
-        let disconnect_for_data = disconnect_notify.clone();
+        // Writer task — owns the SplitSink, drains the writer channel, flushes periodically
+        let self_arc_writer = self.clone();
+        let disconnect_for_writer = disconnect_notify.clone();
         tokio::spawn(async move {
-            while let Some(data) = rx_out.recv().await {
-                let mut sender = ws_sender_for_data.lock().await;
-                if let Err(e) = sender.send(WsMessage::Binary(data.into())).await {
-                    error!("WS: Error sending: {}", e);
-                    self_arc_data.handle_disconnect(&disconnect_for_data);
-                    break;
+            let mut writer = ws_sender;
+            let mut flush_interval =
+                tokio::time::interval(Duration::from_secs(WRITER_FLUSH_INTERVAL_SECONDS));
+            let mut send_count = 0u64;
+            loop {
+                if self_arc_writer.connection_closed.load(Ordering::SeqCst) {
+                    debug!("WS: Writer - connection closed, exiting");
+                    return;
+                }
+                tokio::select! {
+                    msg = writer_rx.recv() => {
+                        let Some(msg) = msg else {
+                            info!("WS: Writer channel closed");
+                            break;
+                        };
+                        let msg_size = match &msg {
+                            WsMessage::Binary(data) => data.len(),
+                            WsMessage::Text(text) => text.len(),
+                            _ => 0,
+                        };
+                        debug!("WS: Writer sending message (size: {} bytes, total sent: {})", msg_size, send_count);
+                        send_count += 1;
+                        let send_start = std::time::Instant::now();
+                        trace!("WS: Writer - about to send message (size: {} bytes)", msg_size);
+                        if let Err(e) = writer.send(msg).await {
+                            error!("WS: Writer send error after {:?}: {}", send_start.elapsed(), e);
+                            self_arc_writer.handle_disconnect(&disconnect_for_writer);
+                            break;
+                        }
+                        trace!("WS: Writer - send completed in {:?}", send_start.elapsed());
+                    }
+                    _ = flush_interval.tick() => {
+                        trace!("WS: Writer - periodic flush (send count: {})", send_count);
+                        let flush_start = std::time::Instant::now();
+                        if let Err(e) = writer.flush().await {
+                            error!("WS: Writer flush error after {:?}: {}", flush_start.elapsed(), e);
+                            self_arc_writer.handle_disconnect(&disconnect_for_writer);
+                            break;
+                        }
+                        trace!("WS: Writer - flush completed in {:?}", flush_start.elapsed());
+                    }
                 }
             }
         });
 
         let self_arc_scheduler = self.clone();
-        let tx_out_for_scheduler = tx_out.clone();
+        let writer_tx_for_scheduler = writer_tx.clone();
         tokio::spawn(async move {
             loop {
                 data_ready.notified().await;
 
                 let client = self_arc_scheduler.clone();
                 if !client.is_server_ready() {
+                    trace!("WS: Scheduler - server not ready, skipping");
                     continue;
                 }
                 if client.connection_closed.load(Ordering::SeqCst) {
+                    debug!("WS: Scheduler - connection closed, exiting");
                     return;
                 }
+
+                let cycle_start = std::time::Instant::now();
+                trace!("WS: Scheduler - starting priority scan cycle");
 
                 'reset: loop {
                     let mut had_any_data = false;
@@ -328,32 +384,45 @@ impl TungsteniteWebsocketClient {
                         let mut consecutive_count = 0u32;
                         loop {
                             if consecutive_count >= 16 {
+                                trace!(
+                                    "WS: Scheduler - reached consecutive cap (16) at priority {}",
+                                    p
+                                );
                                 break;
                             }
 
                             let item_to_send = {
                                 let mut map = client.queue[p].lock();
                                 let mut found = None;
-                                for q in map.values_mut() {
+                                for (source, q) in map.iter_mut() {
                                     if let Some(item) = q.pop_front() {
-                                        found = Some(item);
+                                        found = Some((item, source.clone()));
                                         break;
                                     }
                                 }
                                 found
                             };
 
-                            if let Some(item) = item_to_send {
+                            if let Some((item, source)) = item_to_send {
                                 had_any_data = true;
                                 consecutive_count += 1;
-                                if tx_out_for_scheduler.send(item.data).is_err() {
+                                let data_len = item.data.len();
+                                trace!("WS: Scheduler - processing item from source '{}' at priority {} - size: {} bytes, consecutive: {}", source, p, data_len, consecutive_count);
+                                debug!("WS: Scheduler sending message at priority {} - size: {} bytes, consecutive: {}", p, data_len, consecutive_count);
+                                if writer_tx_for_scheduler
+                                    .send(WsMessage::Binary(item.data.into()))
+                                    .is_err()
+                                {
+                                    error!("WS: Scheduler - failed to send to writer channel");
                                     return;
                                 }
+                                trace!("WS: Scheduler - message sent to writer channel");
                             } else {
                                 break;
                             }
 
                             if client.does_higher_priority_data_exist(p) {
+                                trace!("WS: Scheduler - higher priority data exists, resetting to priority 0");
                                 continue 'reset;
                             }
                         }
@@ -363,11 +432,15 @@ impl TungsteniteWebsocketClient {
                         break 'reset;
                     }
                 }
+                trace!(
+                    "WS: Scheduler - completed priority scan cycle in {:?}",
+                    cycle_start.elapsed()
+                );
             }
         });
 
         let self_arc_ping = self.clone();
-        let ws_sender_for_ping = ws_sender.clone();
+        let writer_tx_for_ping = writer_tx.clone();
         let disconnect_for_ping = disconnect_notify.clone();
         tokio::spawn(async move {
             let mut ping_interval = interval(Duration::from_secs(PING_INTERVAL_SECONDS));
@@ -386,9 +459,16 @@ impl TungsteniteWebsocketClient {
                     return;
                 }
 
-                let mut sender = ws_sender_for_ping.lock().await;
-                if let Err(e) = client.send_ping(&mut sender).await {
-                    error!("WS: Failed to send ping: {}", e);
+                // Reset pong timestamp before sending (matches C++ checkPings)
+                client.pong_timestamp.store(0, Ordering::SeqCst);
+                let now = TungsteniteWebsocketClient::get_epoch_millis();
+                client.ping_timestamp.store(now, Ordering::SeqCst);
+                info!("WS: Sending ping at {}", now);
+                if writer_tx_for_ping
+                    .send(WsMessage::Ping(Bytes::new()))
+                    .is_err()
+                {
+                    error!("WS: Failed to send ping - writer channel closed");
                     client.handle_disconnect(&disconnect_for_ping);
                     return;
                 }
@@ -465,6 +545,10 @@ impl TungsteniteWebsocketClient {
         use crate::messaging::{
             CANCEL_JOB, DELETE_JOB, FILE_DOWNLOAD, FILE_LIST, SUBMIT_JOB, UPLOAD_FILE,
         };
+        debug!(
+            "WS: Handling message - id: {}, source: {}",
+            message.id, message.source
+        );
         match message.id {
             SERVER_READY => {
                 info!("WS: Server ready");
@@ -474,13 +558,20 @@ impl TungsteniteWebsocketClient {
             }
             DB_RESPONSE => {
                 let db_request_id = message.pop_uint();
+                debug!("WS: DB response received - request_id: {}", db_request_id);
                 let mut promises = self.db_request_promises.write();
                 if let Some(tx) = promises.remove(&db_request_id) {
+                    debug!(
+                        "WS: Sending DB response to oneshot for ID {}",
+                        db_request_id
+                    );
                     if tx.send(message).is_err() {
                         warn!(
                             "WS: Failed to send DB response to oneshot for ID {}",
                             db_request_id
                         );
+                    } else {
+                        trace!("WS: DB response sent successfully");
                     }
                 } else {
                     warn!(
@@ -490,21 +581,27 @@ impl TungsteniteWebsocketClient {
                 }
             }
             SUBMIT_JOB => {
+                debug!("WS: Dispatching SUBMIT_JOB message");
                 crate::jobs::handle_job_submit(message);
             }
             CANCEL_JOB => {
+                debug!("WS: Dispatching CANCEL_JOB message");
                 crate::jobs::handle_job_cancel(message);
             }
             DELETE_JOB => {
+                debug!("WS: Dispatching DELETE_JOB message");
                 crate::jobs::handle_job_delete(message);
             }
             FILE_DOWNLOAD => {
+                debug!("WS: Dispatching FILE_DOWNLOAD message");
                 crate::files::handle_file_download(message);
             }
             UPLOAD_FILE => {
+                debug!("WS: Dispatching UPLOAD_FILE message");
                 crate::files::handle_file_upload(message);
             }
             FILE_LIST => {
+                debug!("WS: Dispatching FILE_LIST message");
                 crate::files::handle_file_list(message);
             }
             _ => {
@@ -550,6 +647,10 @@ impl WebsocketClient for TungsteniteWebsocketClient {
 
     fn queue_message(&self, source: String, data: Vec<u8>, priority: Priority) {
         if self.connection_closed.load(Ordering::SeqCst) {
+            debug!(
+                "WS: Dropping message to source '{}' - connection closed",
+                source
+            );
             return;
         }
 
@@ -561,8 +662,11 @@ impl WebsocketClient for TungsteniteWebsocketClient {
 
         {
             let mut map = self.queue[p].lock();
-            let q = map.entry(source).or_default();
+            let q = map.entry(source.clone()).or_default();
+            let data_len = data.len();
             q.push_back(SDataItem { data });
+            let queue_len = q.len();
+            debug!("WS: Queued message to source '{}' at priority {} - data size: {} bytes, queue depth: {}", source, p, data_len, queue_len);
         }
 
         self.data_ready.notify_one();
@@ -575,31 +679,71 @@ impl WebsocketClient for TungsteniteWebsocketClient {
         if self.connection_closed.load(Ordering::SeqCst)
             || !self.server_ready.load(Ordering::SeqCst)
         {
+            warn!(
+                "send_db_request: WebSocket is disconnected - connection_closed={}, server_ready={}",
+                self.connection_closed.load(Ordering::SeqCst),
+                self.server_ready.load(Ordering::SeqCst)
+            );
             return Box::pin(async { Err("WebSocket is disconnected".into()) });
         }
 
         let request_id = self.db_request_counter.fetch_add(1, Ordering::SeqCst);
+        debug!(
+            "send_db_request: created request_id={}, msg_id={}, source={}",
+            request_id, message.id, message.source
+        );
 
         let (tx, rx) = oneshot::channel();
         {
             let mut promises = self.db_request_promises.write();
             promises.insert(request_id, tx);
+            trace!(
+                "send_db_request: inserted promise for request_id={}",
+                request_id
+            );
         }
 
         let mut wrapped = Message::new(message.id, message.priority, &message.source);
         wrapped.push_uint(request_id);
-        wrapped.append_raw_bytes(&message.clone_payload_bytes());
+        let payload_bytes = message.clone_payload_bytes();
+        debug!(
+            "send_db_request: wrapping message - payload size: {} bytes",
+            payload_bytes.len()
+        );
+        wrapped.append_raw_bytes(&payload_bytes);
 
+        let data_len = wrapped.get_data().len();
+        debug!(
+            "send_db_request: queueing wrapped message ({} bytes) to 'db' source",
+            data_len
+        );
         self.queue_message(
             "db".to_string(),
             wrapped.get_data().clone(),
             Priority::Highest,
         );
+        debug!("send_db_request: message queued, waiting for response...");
 
         Box::pin(async move {
-            let response = rx
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+            trace!(
+                "send_db_request: awaiting response for request_id={}",
+                request_id
+            );
+            let wait_start = std::time::Instant::now();
+            let response = rx.await.map_err(|e| {
+                error!(
+                    "send_db_request: oneshot channel error after {:?} for request_id={}: {}",
+                    wait_start.elapsed(),
+                    request_id,
+                    e
+                );
+                Box::new(e) as Box<dyn Error + Send + Sync>
+            })?;
+            debug!(
+                "send_db_request: received response after {:?} for request_id={}",
+                wait_start.elapsed(),
+                request_id
+            );
             Ok(response)
         })
     }
@@ -661,6 +805,7 @@ pub(crate) fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
 
     let c = TungsteniteWebsocketClient::new();
     *client = Some(c.clone());
+    drop(client);
     c
 }
 
@@ -844,6 +989,98 @@ mod tests {
         assert_eq!(returned.pop_uint(), 1);
 
         server.stop().await;
+    }
+
+    // ============================================================================
+    // WebSocket Arc Sharing Tests
+    // ============================================================================
+
+    #[test]
+    fn test_arc_shares_queue_with_original() {
+        let client = TungsteniteWebsocketClient::new();
+        let test_data = vec![1u8, 2, 3, 4];
+        client.queue_message(
+            "test_source".to_string(),
+            test_data.clone(),
+            Priority::Highest,
+        );
+
+        let queue = client.queue[Priority::Highest as usize].lock();
+        let queued = queue.get("test_source");
+
+        assert!(
+            queued.is_some(),
+            "Arc should share the same queue as original"
+        );
+        let q = queued.unwrap();
+        assert_eq!(q.len(), 1);
+        assert_eq!(q.front().unwrap().data, test_data);
+    }
+
+    #[test]
+    fn test_arc_shares_data_ready_notify() {
+        let client = TungsteniteWebsocketClient::new();
+
+        let notify_addr = Arc::as_ptr(&client.data_ready);
+
+        assert_eq!(
+            notify_addr,
+            Arc::as_ptr(&client.data_ready),
+            "Arc should share the same data_ready Notify instance"
+        );
+    }
+
+    #[test]
+    fn test_arc_shares_db_request_promises() {
+        let client = TungsteniteWebsocketClient::new();
+
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        {
+            let mut promises = client.db_request_promises.write();
+            promises.insert(42, tx);
+        }
+
+        let promises = client.db_request_promises.read();
+        assert!(
+            promises.contains_key(&42),
+            "Arc should share the same db_request_promises map"
+        );
+    }
+
+    #[test]
+    fn test_arc_scheduler_can_process_queued_messages() {
+        let client = TungsteniteWebsocketClient::new();
+        let test_data = vec![10u8, 20, 30, 40, 50];
+        client.queue_message("db".to_string(), test_data.clone(), Priority::Highest);
+
+        let mut queue = client.queue[Priority::Highest as usize].lock();
+        let queued_item = queue
+            .get_mut("db")
+            .and_then(std::collections::VecDeque::pop_front);
+
+        assert!(
+            queued_item.is_some(),
+            "Arc scheduler should be able to access messages queued by main thread"
+        );
+        assert_eq!(queued_item.unwrap().data, test_data);
+    }
+
+    #[test]
+    fn test_arc_shares_connection_config() {
+        let client = TungsteniteWebsocketClient::new();
+
+        {
+            let mut config = client.connection_config.write();
+            *config = Some(ConnectionConfig {
+                url: "ws://test:8080".to_string(),
+                token: "test-token".to_string(),
+            });
+        }
+
+        let config = client.connection_config.read();
+
+        assert!(config.is_some(), "Arc should share connection_config");
+        assert_eq!(config.as_ref().unwrap().url, "ws://test:8080");
     }
 
     #[test]

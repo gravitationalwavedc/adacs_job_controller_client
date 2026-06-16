@@ -11,7 +11,7 @@ use flate2::Compression;
 use serde_json::{json, Value};
 use std::path::Path;
 use tar::Builder;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use tokio::sync::Mutex as TokioMutex;
 
@@ -31,7 +31,26 @@ pub fn handle_job_submit(mut msg: Message) {
     let bundle_hash = msg.pop_string();
     let params = msg.pop_string();
 
+    debug!(
+        "handle_job_submit: job_id={}, bundle_hash={}, params_len={}",
+        job_id,
+        bundle_hash,
+        params.len()
+    );
+
     tokio::spawn(async move {
+        let ws = get_websocket_client();
+        if ws.is_connection_closed() || !ws.is_server_ready() {
+            info!(
+                "Delaying job submit for job {} until server is ready (connected={}, ready={})",
+                job_id,
+                !ws.is_connection_closed(),
+                ws.is_server_ready()
+            );
+            return;
+        }
+        debug!("handle_job_submit: WebSocket ready for job {}", job_id);
+
         let mut job_model;
 
         let mut details = get_default_job_details();
@@ -83,14 +102,35 @@ pub fn handle_job_submit(mut msg: Message) {
             }
         }
 
-        let bm = BundleManager::singleton();
         info!(
-            "Resolving working directory for ui job id {} via bundle {}",
+            "handle_job_submit: submitting job_id={} with bundle_hash={}",
             job_id, bundle_hash
         );
-        let working_dir = bm.run_bundle_string("working_directory", &bundle_hash, &details, "");
+        debug!(
+            "handle_job_submit: resolving working directory for ui job id {} via bundle {}",
+            job_id, bundle_hash
+        );
+        let bundle_hash_clone = bundle_hash.clone();
+        let details_clone = details.clone();
+        let working_dir = tokio::task::spawn_blocking(move || {
+            BundleManager::singleton().run_bundle_string(
+                "working_directory",
+                &bundle_hash_clone,
+                &details_clone,
+                "",
+            )
+        })
+        .await
+        .map_err(|e| {
+            error!("handle_job_submit: Python FFI task panicked: {}", e);
+            format!("Python FFI task failed: {e}")
+        })
+        .unwrap_or_else(|e| {
+            error!("handle_job_submit: spawn_blocking error: {}", e);
+            String::new()
+        });
         info!(
-            "Resolved working directory for ui job id {}: {}",
+            "handle_job_submit: resolved working directory for ui job id {}: {}",
             job_id, working_dir
         );
         job_model.working_directory = working_dir;
@@ -102,13 +142,32 @@ pub fn handle_job_submit(mut msg: Message) {
             }
         }
 
-        info!(
-            "Submitting ui job id {} through bundle {}",
+        debug!(
+            "handle_job_submit: calling bundle submit for ui job id {} through bundle {}",
             job_id, bundle_hash
         );
-        let scheduler_id = bm.run_bundle_uint64("submit", &bundle_hash, &details, &params);
+        let bundle_hash_clone = bundle_hash.clone();
+        let details_clone = details.clone();
+        let params_clone = params.clone();
+        let scheduler_id = tokio::task::spawn_blocking(move || {
+            BundleManager::singleton().run_bundle_uint64(
+                "submit",
+                &bundle_hash_clone,
+                &details_clone,
+                &params_clone,
+            )
+        })
+        .await
+        .map_err(|e| {
+            error!("handle_job_submit: Python FFI task panicked: {}", e);
+            format!("Python FFI task failed: {e}")
+        })
+        .unwrap_or_else(|e| {
+            error!("handle_job_submit: spawn_blocking error: {}", e);
+            0u64
+        });
         info!(
-            "Bundle submit returned scheduler id {} for ui job id {}",
+            "handle_job_submit: bundle submit returned scheduler id {} for ui job id {}",
             scheduler_id, job_id
         );
 
@@ -124,11 +183,17 @@ pub fn handle_job_submit(mut msg: Message) {
             result.push_string(SYSTEM_SOURCE);
             result.push_uint(ERROR);
             result.push_string("Unable to submit job. Please check the logs as to why.");
+            debug!(
+                "handle_job_submit: queueing ERROR message for job_id={} ({} bytes)",
+                job_id,
+                result.get_data().len()
+            );
             ws.queue_message(
                 job_id.to_string(),
                 result.get_data().clone(),
                 Priority::Medium,
             );
+            debug!("handle_job_submit: ERROR message queued");
 
             let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
             result.push_uint(job_id as u32);
@@ -156,21 +221,32 @@ pub fn handle_job_submit(mut msg: Message) {
             result.push_string(SYSTEM_SOURCE);
             result.push_uint(SUBMITTED);
             result.push_string("Job submitted successfully");
+            debug!(
+                "handle_job_submit: queueing SUBMITTED message for job_id={} ({} bytes)",
+                job_id,
+                result.get_data().len()
+            );
             ws.queue_message(
                 job_id.to_string(),
                 result.get_data().clone(),
                 Priority::Medium,
             );
+            debug!("handle_job_submit: SUBMITTED message queued");
         }
     });
 }
 
 pub async fn check_job_status(job: job::Model, force_notification: bool) {
+    let job_id = job.job_id.unwrap_or(0);
+    debug!(
+        "check_job_status: starting for job_id={}, force={}",
+        job_id, force_notification
+    );
     let ws = get_websocket_client();
     if ws.is_connection_closed() || !ws.is_server_ready() {
         info!(
             "Skipping status check for job {} while WebSocket is disconnected",
-            job.job_id.unwrap_or(0)
+            job_id
         );
         return;
     }
@@ -179,10 +255,30 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
     details["job_id"] = json!(job.job_id);
     details["scheduler_id"] = json!(job.scheduler_id);
 
-    info!("A. Status");
-    let bm = BundleManager::singleton();
-    let status_json = bm.run_bundle_json("status", &job.bundle_hash, &details, "");
-    info!("A. Status Done");
+    debug!(
+        "check_job_status: calling bundle status for job_id={}",
+        job_id
+    );
+    let status_start = std::time::Instant::now();
+    let bundle_hash_clone = job.bundle_hash.clone();
+    let details_clone = details.clone();
+    let status_json = tokio::task::spawn_blocking(move || {
+        BundleManager::singleton().run_bundle_json("status", &bundle_hash_clone, &details_clone, "")
+    })
+    .await
+    .map_err(|e| {
+        error!("check_job_status: Python FFI task panicked: {}", e);
+        serde_json::Value::Null
+    })
+    .unwrap_or_else(|e| {
+        error!("check_job_status: spawn_blocking error: {}", e);
+        serde_json::Value::Null
+    });
+    debug!(
+        "check_job_status: bundle status call completed in {:?} for job_id={}",
+        status_start.elapsed(),
+        job_id
+    );
 
     if let Some(statuses) = status_json["status"].as_array() {
         for stat in statuses {
@@ -207,7 +303,10 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
             }
 
             if force_notification || v_status.is_empty() || status != v_status[0].state as u32 {
-                info!("A. Doing update");
+                debug!(
+                    "check_job_status: updating status for job_id={}, what={}, status={}",
+                    job_id, what, status
+                );
                 let mut state_item = if v_status.is_empty() {
                     jobstatus::Model {
                         id: 0,
@@ -221,24 +320,25 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
 
                 state_item.what = what.to_string();
                 state_item.state = status as i32;
+                debug!("check_job_status: saving status to DB");
                 let _ = db::save_status(state_item).await;
 
                 let ws = get_websocket_client();
-                let mut result = Message::new(
-                    UPDATE_JOB,
-                    Priority::Medium,
-                    &job.job_id.unwrap_or(0).to_string(),
-                );
-                result.push_uint(job.job_id.unwrap_or(0) as u32);
+                let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
+                result.push_uint(job_id as u32);
                 result.push_string(what);
                 result.push_uint(status);
                 result.push_string(info);
+                debug!(
+                    "check_job_status: queueing UPDATE_JOB message ({} bytes)",
+                    result.get_data().len()
+                );
                 ws.queue_message(
-                    job.job_id.unwrap_or(0).to_string(),
+                    job_id.to_string(),
                     result.get_data().clone(),
                     Priority::Medium,
                 );
-                info!("A. update message on ws done");
+                debug!("check_job_status: update message queued on ws");
             }
         }
     }
@@ -298,6 +398,7 @@ pub async fn check_all_jobs_status() {
     }
 
     info!("Checking status of running jobs...");
+    let get_running_start = std::time::Instant::now();
     let jobs = match db::get_running_jobs().await {
         Ok(j) => j,
         Err(e) => {
@@ -305,16 +406,40 @@ pub async fn check_all_jobs_status() {
             return;
         }
     };
-    info!("There are {} running jobs.", jobs.len());
+    info!(
+        "There are {} running jobs (get_running_jobs took {:?}).",
+        jobs.len(),
+        get_running_start.elapsed()
+    );
 
     let mut handles = vec![];
     for job in jobs {
+        let job_id = job.job_id.unwrap_or(0);
+        debug!(
+            "check_all_jobs_status: spawning status check for job_id={}",
+            job_id
+        );
         handles.push(tokio::spawn(check_job_status(job, false)));
     }
 
-    for handle in handles {
+    let wait_start = std::time::Instant::now();
+    debug!(
+        "check_all_jobs_status: waiting for {} status checks to complete",
+        handles.len()
+    );
+    for (idx, handle) in handles.into_iter().enumerate() {
         let _ = handle.await;
+        debug!(
+            "check_all_jobs_status: status check {}/{} completed after {:?}",
+            idx + 1,
+            idx + 1,
+            wait_start.elapsed()
+        );
     }
+    debug!(
+        "check_all_jobs_status: all status checks completed in {:?}",
+        wait_start.elapsed()
+    );
 }
 
 pub async fn archive_job(job: &job::Model) -> Result<(), String> {
@@ -448,8 +573,25 @@ pub fn handle_job_cancel(mut msg: Message) {
         details["job_id"] = json!(job_model.job_id);
         details["scheduler_id"] = json!(job_model.scheduler_id);
 
-        let bm = BundleManager::singleton();
-        let cancelled = bm.run_bundle_bool("cancel", &job_model.bundle_hash, &details, "");
+        let bundle_hash_clone = job_model.bundle_hash.clone();
+        let details_clone = details.clone();
+        let cancelled = tokio::task::spawn_blocking(move || {
+            BundleManager::singleton().run_bundle_bool(
+                "cancel",
+                &bundle_hash_clone,
+                &details_clone,
+                "",
+            )
+        })
+        .await
+        .map_err(|e| {
+            error!("handle_job_cancel: Python FFI task panicked: {}", e);
+            false
+        })
+        .unwrap_or_else(|e| {
+            error!("handle_job_cancel: spawn_blocking error: {}", e);
+            false
+        });
 
         if !cancelled {
             warn!("Job {} could not be cancelled by the bundle.", job_id);
@@ -544,8 +686,25 @@ pub fn handle_job_delete(mut msg: Message) {
         details["job_id"] = json!(job_model.job_id);
         details["scheduler_id"] = json!(job_model.scheduler_id);
 
-        let bm = BundleManager::singleton();
-        let deleted = bm.run_bundle_bool("delete", &job_model.bundle_hash, &details, "");
+        let bundle_hash_clone = job_model.bundle_hash.clone();
+        let details_clone = details.clone();
+        let deleted = tokio::task::spawn_blocking(move || {
+            BundleManager::singleton().run_bundle_bool(
+                "delete",
+                &bundle_hash_clone,
+                &details_clone,
+                "",
+            )
+        })
+        .await
+        .map_err(|e| {
+            error!("handle_job_delete: Python FFI task panicked: {}", e);
+            false
+        })
+        .unwrap_or_else(|e| {
+            error!("handle_job_delete: spawn_blocking error: {}", e);
+            false
+        });
 
         if !deleted {
             job_model.deleting = false;

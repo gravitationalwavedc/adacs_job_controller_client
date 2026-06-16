@@ -115,7 +115,7 @@ pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
 ///
 /// This is the full daemonization that matches C++ exactly, including:
 /// - Double-fork pattern
-/// - Session creation  
+/// - Session creation
 /// - File descriptor redirection
 /// - stdout/stderr to specific log files
 ///

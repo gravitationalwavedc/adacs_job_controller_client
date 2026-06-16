@@ -23,6 +23,26 @@ static INIT_PYTHON: std::sync::Once = std::sync::Once::new();
 #[cfg(test)]
 fn init_python_global() {
     INIT_PYTHON.call_once(|| {
+        // Default TEST_CONFIG for all tests. Individual tests may override
+        // fields (e.g. file_tests::set_test_config sets a real
+        // websocketEndpoint port). This must be set in every test process,
+        // including test-fork children, because `test-fork-core` re-execs
+        // the test binary which starts with an empty TEST_CONFIG and would
+        // otherwise fall through to reading a non-existent config.json from
+        // next to the test executable. Seed the bare minimum first, then
+        // upgrade with the resolved python library path below.
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(serde_json::json!({
+            "cluster": "test_cluster",
+            "websocketEndpoint": "ws://127.0.0.1:0/ws/",
+            "ltk": "test_token",
+        }));
+        let python_library = crate::config::get_python_library_path();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(serde_json::json!({
+            "cluster": "test_cluster",
+            "pythonLibrary": python_library,
+            "websocketEndpoint": "ws://127.0.0.1:0/ws/",
+            "ltk": "test_token",
+        }));
         crate::python_interface::load_python_library(&crate::config::get_python_library_path());
         unsafe {
             crate::python_interface::PyImport_AppendInittab(

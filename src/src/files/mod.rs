@@ -22,7 +22,7 @@ use tokio_tungstenite::{
         protocol::Message as WsMessage,
     },
 };
-use tracing::error;
+use tracing::{debug, error};
 
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(4)));
@@ -31,12 +31,17 @@ static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
 pub fn handle_file_list(mut msg: Message) {
     let sem = FILE_LIST_SEMAPHORE.clone();
     tokio::spawn(async move {
+        debug!("handle_file_list: received request");
         let _permit = sem.acquire_owned().await.expect("semaphore closed");
         let job_id = i64::from(msg.pop_uint());
         let uuid = msg.pop_string();
         let bundle_hash = msg.pop_string();
         let dir_path = msg.pop_string();
         let is_recursive = msg.pop_bool();
+        debug!(
+            "handle_file_list: job_id={}, uuid={}, bundle_hash={}, dir_path={}, recursive={}",
+            job_id, uuid, bundle_hash, dir_path, is_recursive
+        );
 
         let working_directory = if job_id != 0 {
             if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
@@ -50,13 +55,25 @@ pub fn handle_file_list(mut msg: Message) {
                 return;
             }
         } else {
-            let bm = BundleManager::singleton();
-            bm.run_bundle_string(
-                "working_directory",
-                &bundle_hash,
-                &json!(dir_path),
-                "file_list",
-            )
+            let bundle_hash_clone = bundle_hash.clone();
+            let dir_path_clone = dir_path.clone();
+            tokio::task::spawn_blocking(move || {
+                BundleManager::singleton().run_bundle_string(
+                    "working_directory",
+                    &bundle_hash_clone,
+                    &json!(dir_path_clone),
+                    "file_list",
+                )
+            })
+            .await
+            .map_err(|e| {
+                error!("handle_file_list: Python FFI task panicked: {}", e);
+                format!("Python FFI task failed: {e}")
+            })
+            .unwrap_or_else(|e| {
+                error!("handle_file_list: spawn_blocking error: {}", e);
+                String::new()
+            })
         };
 
         let full_path = Path::new(&working_directory).join(&dir_path);
@@ -123,13 +140,24 @@ pub fn handle_file_list(mut msg: Message) {
 
         let mut result = Message::new(FILE_LIST, Priority::Highest, &uuid);
         result.push_string(&uuid);
-        result.push_uint(u32::try_from(file_list.len()).unwrap_or(u32::MAX));
+        let file_count = u32::try_from(file_list.len()).unwrap_or(u32::MAX);
+        result.push_uint(file_count);
+        debug!(
+            "handle_file_list: sending FILE_LIST response with {} files",
+            file_count
+        );
         for (path, is_dir, size) in file_list {
             result.push_string(&path);
             result.push_bool(is_dir);
             result.push_ulong(size);
         }
+        let data_len = result.get_data().len();
+        debug!(
+            "handle_file_list: queuing FILE_LIST message ({} bytes)",
+            data_len
+        );
         get_websocket_client().queue_message(uuid, result.get_data().clone(), Priority::Highest);
+        debug!("handle_file_list: FILE_LIST message queued");
     });
 }
 
@@ -151,6 +179,15 @@ pub fn handle_file_download(mut msg: Message) {
     let mut file_path = msg.pop_string();
 
     tokio::spawn(async move {
+        error!(
+            "handle_file_download: SPAWNED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
+            job_id, uuid, bundle_hash, file_path
+        );
+        error!(
+            "handle_file_download: STARTED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
+            job_id, uuid, bundle_hash, file_path
+        );
+
         let config = crate::config::read_client_config();
         let ws_endpoint = config["websocketEndpoint"]
             .as_str()
@@ -158,7 +195,10 @@ pub fn handle_file_download(mut msg: Message) {
         let request = match build_file_ws_request(ws_endpoint, &uuid) {
             Ok(request) => request,
             Err(e) => {
-                error!("Failed to build file download request: {}", e);
+                error!(
+                    "handle_file_download: Failed to build file download request: {}",
+                    e
+                );
                 return;
             }
         };
@@ -166,7 +206,10 @@ pub fn handle_file_download(mut msg: Message) {
         let (ws_stream, _) = match connect_async(request).await {
             Ok(s) => s,
             Err(e) => {
-                error!("Failed to connect for file download: {}", e);
+                error!(
+                    "handle_file_download: Failed to connect for file download: {}",
+                    e
+                );
                 return;
             }
         };
@@ -174,44 +217,94 @@ pub fn handle_file_download(mut msg: Message) {
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
         if wait_for_server_ready(&mut ws_receiver).await.is_none() {
+            error!("handle_file_download: Failed to receive SERVER_READY");
             return;
         }
 
+        error!("handle_file_download: SERVER_READY received, resolving working directory for job_id={}", job_id);
         let working_directory = if job_id != 0 {
-            if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
-                if job.submitting {
-                    send_download_error(&mut ws_sender, &uuid, "Job is not submitted").await;
+            error!(
+                "handle_file_download: Looking up job {} in database",
+                job_id
+            );
+            match db::get_job_by_job_id(job_id).await {
+                Ok(Some(job)) => {
+                    error!(
+                        "handle_file_download: Job found, submitting={}",
+                        job.submitting
+                    );
+                    if job.submitting {
+                        error!("handle_file_download: Job is not submitted, sending error");
+                        send_download_error(&mut ws_sender, &uuid, "Job is not submitted").await;
+                        return;
+                    }
+                    job.working_directory
+                }
+                Ok(None) => {
+                    error!("handle_file_download: Job {} not found in database", job_id);
+                    send_download_error(&mut ws_sender, &uuid, "Job does not exist").await;
                     return;
                 }
-                job.working_directory
-            } else {
-                send_download_error(&mut ws_sender, &uuid, "Job does not exist").await;
-                return;
+                Err(e) => {
+                    error!(
+                        "handle_file_download: Database error for job {}: {}",
+                        job_id, e
+                    );
+                    send_download_error(&mut ws_sender, &uuid, &format!("Database error: {e}"))
+                        .await;
+                    return;
+                }
             }
         } else {
-            let bm = BundleManager::singleton();
-            bm.run_bundle_string(
-                "working_directory",
-                &bundle_hash,
-                &json!(file_path),
-                "file_download",
-            )
+            error!("handle_file_download: Using bundle manager for working_directory");
+            let bundle_hash_clone = bundle_hash.clone();
+            let file_path_clone = file_path.clone();
+            tokio::task::spawn_blocking(move || {
+                BundleManager::singleton().run_bundle_string(
+                    "working_directory",
+                    &bundle_hash_clone,
+                    &json!(file_path_clone),
+                    "file_download",
+                )
+            })
+            .await
+            .map_err(|e| {
+                error!("handle_file_download: Python FFI task panicked: {}", e);
+                format!("Python FFI task failed: {e}")
+            })
+            .unwrap_or_else(|e| {
+                error!("handle_file_download: spawn_blocking error: {}", e);
+                String::new()
+            })
         };
 
+        error!(
+            "handle_file_download: working_directory={}, file_path={}",
+            working_directory, file_path
+        );
         file_path = file_path.trim_start_matches('/').to_string();
 
         let full_path = Path::new(&working_directory).join(&file_path);
-        let Ok(abs_path) = fs::canonicalize(&full_path).await else {
-            send_download_error(
-                &mut ws_sender,
-                &uuid,
-                "Path to file download does not exist",
-            )
-            .await;
-            return;
+        error!("handle_file_download: full_path={:?}", full_path);
+        let abs_path = match fs::canonicalize(&full_path).await {
+            Ok(path) => {
+                error!("handle_file_download: canonicalized path={:?}", path);
+                path
+            }
+            Err(e) => {
+                error!("handle_file_download: Failed to canonicalize path: {}", e);
+                send_download_error(
+                    &mut ws_sender,
+                    &uuid,
+                    "Path to file download does not exist",
+                )
+                .await;
+                return;
+            }
         };
 
         if !validate_path_is_within(&abs_path, &working_directory).await {
+            error!("handle_file_download: Path validation failed - outside working directory");
             send_download_error(
                 &mut ws_sender,
                 &uuid,
@@ -221,24 +314,58 @@ pub fn handle_file_download(mut msg: Message) {
             return;
         }
 
+        error!("handle_file_download: Getting file metadata");
         let file_meta = match fs::metadata(&abs_path).await {
-            Ok(m) if m.is_file() => m,
-            _ => {
+            Ok(m) if m.is_file() => {
+                error!("handle_file_download: File found, size={} bytes", m.len());
+                m
+            }
+            Ok(m) => {
+                error!(
+                    "handle_file_download: Path is not a file (is_directory={})",
+                    m.is_dir()
+                );
                 send_download_error(&mut ws_sender, &uuid, "Path to file download is not a file")
                     .await;
+                return;
+            }
+            Err(e) => {
+                error!("handle_file_download: Failed to get file metadata: {}", e);
+                send_download_error(
+                    &mut ws_sender,
+                    &uuid,
+                    &format!("Failed to get file metadata: {e}"),
+                )
+                .await;
                 return;
             }
         };
 
         let file_size = file_meta.len();
+        error!(
+            "handle_file_download: Sending FILE_DOWNLOAD_DETAILS (file_size={} bytes)",
+            file_size
+        );
         let mut details_msg = Message::new(FILE_DOWNLOAD_DETAILS, Priority::Highest, &uuid);
         details_msg.push_ulong(file_size);
-        let _ = ws_sender
+        if let Err(e) = ws_sender
             .send(WsMessage::Binary(details_msg.get_data().clone().into()))
-            .await;
+            .await
+        {
+            error!(
+                "handle_file_download: Failed to send FILE_DOWNLOAD_DETAILS: {}",
+                e
+            );
+            return;
+        }
+        error!("handle_file_download: FILE_DOWNLOAD_DETAILS sent successfully");
 
+        error!("handle_file_download: Opening file for reading");
         let mut file = match File::open(&abs_path).await {
-            Ok(f) => f,
+            Ok(f) => {
+                error!("handle_file_download: File opened successfully");
+                f
+            }
             Err(e) => {
                 error!("Failed to open file for download: {}", e);
                 send_download_error(&mut ws_sender, &uuid, "Failed to open file for download")
@@ -247,6 +374,8 @@ pub fn handle_file_download(mut msg: Message) {
             }
         };
         let mut buffer = vec![0u8; 64 * 1024];
+        let download_start = std::time::Instant::now();
+        let mut total_bytes = 0;
 
         let paused = Arc::new(Notify::new());
         let is_paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -273,8 +402,14 @@ pub fn handle_file_download(mut msg: Message) {
             }
 
             let n = match file.read(&mut buffer).await {
-                Ok(0) => break,
-                Ok(n) => n,
+                Ok(0) => {
+                    error!("handle_file_download: End of file reached");
+                    break;
+                }
+                Ok(n) => {
+                    error!("handle_file_download: Read {} bytes from file", n);
+                    n
+                }
                 Err(e) => {
                     error!("Error reading file: {}", e);
                     let mut err_msg = Message::new(FILE_DOWNLOAD_ERROR, Priority::Highest, &uuid);
@@ -286,18 +421,32 @@ pub fn handle_file_download(mut msg: Message) {
                 }
             };
 
+            total_bytes += n;
+            error!(
+                "handle_file_download: Sending chunk {} (total: {} bytes)",
+                total_bytes, n
+            );
+
             let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, &uuid);
             chunk_msg.push_bytes(&buffer[..n]);
-            if ws_sender
+            match ws_sender
                 .send(WsMessage::Binary(chunk_msg.get_data().clone().into()))
                 .await
-                .is_err()
             {
-                break;
+                Ok(()) => error!("handle_file_download: Chunk sent successfully"),
+                Err(e) => {
+                    error!("handle_file_download: Failed to send chunk: {}", e);
+                    break;
+                }
             }
             // Yield to allow pause/resume messages to be processed
             tokio::task::yield_now().await;
         }
+        error!(
+            "handle_file_download: COMPLETED - downloaded {} bytes in {:?}",
+            total_bytes,
+            download_start.elapsed()
+        );
     });
 }
 
@@ -406,13 +555,29 @@ fn handle_file_upload_internal(
                 return;
             }
         } else {
-            let bm = BundleManager::singleton();
-            bm.run_bundle_string(
-                "working_directory",
-                &bundle_hash,
-                &json!(target_path),
-                "file_upload",
-            )
+            let bundle_hash_clone = bundle_hash.clone();
+            let target_path_clone = target_path.clone();
+            let working_dir_result = tokio::task::spawn_blocking(move || {
+                BundleManager::singleton().run_bundle_string(
+                    "working_directory",
+                    &bundle_hash_clone,
+                    &json!(target_path_clone),
+                    "file_upload",
+                )
+            })
+            .await
+            .map_err(|e| {
+                error!(
+                    "handle_file_upload_internal: Python FFI task panicked: {}",
+                    e
+                );
+                format!("Python FFI task failed: {e}")
+            })
+            .unwrap_or_else(|e| {
+                error!("handle_file_upload_internal: spawn_blocking error: {}", e);
+                String::new()
+            });
+            working_dir_result
         };
 
         target_path = target_path.trim_start_matches('/').to_string();
@@ -449,6 +614,7 @@ fn handle_file_upload_internal(
         };
 
         let mut received_size = 0u64;
+        let upload_start = std::time::Instant::now();
         while let Some(Ok(ws_msg)) = ws_receiver.next().await {
             if let WsMessage::Binary(data) = ws_msg {
                 let mut m = Message::from_data(data.to_vec());
@@ -502,6 +668,11 @@ fn handle_file_upload_internal(
                     let _ = ws_sender
                         .send(WsMessage::Binary(complete_msg.get_data().clone().into()))
                         .await;
+                    debug!(
+                        "handle_file_upload: uploaded {} bytes in {:?}",
+                        received_size,
+                        upload_start.elapsed()
+                    );
                     return;
                 }
             }
@@ -599,6 +770,23 @@ async fn validate_path_is_within(target_path: &Path, working_directory: &str) ->
     }
 
     true
+}
+
+async fn send_upload_error(
+    ws_sender: &mut futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        WsMessage,
+    >,
+    uuid: &str,
+    error_msg: &str,
+) {
+    let mut result = Message::new(FILE_UPLOAD_ERROR, Priority::Highest, uuid);
+    result.push_string(error_msg);
+    let _ = ws_sender
+        .send(WsMessage::Binary(result.get_data().clone().into()))
+        .await;
 }
 
 #[cfg(test)]
@@ -730,21 +918,4 @@ mod tests {
         let err = build_file_ws_request("not a websocket url", "test-token").unwrap_err();
         assert!(err.contains("invalid websocket endpoint"));
     }
-}
-
-async fn send_upload_error(
-    ws_sender: &mut futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        WsMessage,
-    >,
-    uuid: &str,
-    error_msg: &str,
-) {
-    let mut result = Message::new(FILE_UPLOAD_ERROR, Priority::Highest, uuid);
-    result.push_string(error_msg);
-    let _ = ws_sender
-        .send(WsMessage::Binary(result.get_data().clone().into()))
-        .await;
 }
