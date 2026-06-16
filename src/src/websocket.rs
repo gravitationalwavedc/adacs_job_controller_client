@@ -123,9 +123,17 @@ impl TungsteniteWebsocketClient {
         info!("WS: Received ping from server");
     }
 
+    /// Returns true if any priority queue below `max_priority` holds data, or if
+    /// any such priority lock is currently held by another thread. Uses
+    /// `try_lock` so the async scheduler never blocks on a `parking_lot` mutex:
+    /// contention is treated as "data exists" (pessimistic), which preserves
+    /// the existing reset-to-priority-0 fairness behaviour at the cost of at
+    /// most one extra empty priority scan.
     fn does_higher_priority_data_exist(&self, max_priority: usize) -> bool {
         for p in 0..max_priority {
-            let map = self.queue[p].lock();
+            let Some(map) = self.queue[p].try_lock() else {
+                return true;
+            };
             for q in map.values() {
                 if !q.is_empty() {
                     return true;
@@ -1497,6 +1505,75 @@ mod tests {
         assert!(
             client.does_higher_priority_data_exist(19),
             "data exists at 0, higher than 19"
+        );
+    }
+
+    #[test]
+    fn test_does_higher_priority_data_exist_skips_contended_priorities() {
+        let client = TungsteniteWebsocketClient::new();
+
+        client.queue_message("p0".to_string(), vec![1], Priority::Highest);
+        {
+            let mut map = client.queue[5].lock();
+            map.insert(
+                "p5".to_string(),
+                VecDeque::from(vec![SDataItem { data: vec![5] }]),
+            );
+        }
+        client.queue_message("p10".to_string(), vec![10], Priority::Medium);
+        client.queue_message("p19".to_string(), vec![19], Priority::Lowest);
+
+        let held_p5 = client.queue[5].lock();
+
+        assert!(
+            client.does_higher_priority_data_exist(19),
+            "pessimistic: contended priority treated as data-exists"
+        );
+        assert!(
+            client.does_higher_priority_data_exist(6),
+            "p0 has data, higher than 6"
+        );
+        assert!(
+            !client.does_higher_priority_data_exist(0),
+            "max_priority=0 scans no priorities"
+        );
+
+        let contended_client = TungsteniteWebsocketClient::new();
+        {
+            let mut map = contended_client.queue[5].lock();
+            map.insert(
+                "p5".to_string(),
+                VecDeque::from(vec![SDataItem { data: vec![5] }]),
+            );
+        }
+        let held = contended_client.queue[5].lock();
+        assert!(
+            contended_client.does_higher_priority_data_exist(6),
+            "only candidate is contended — must return true pessimistically"
+        );
+        assert!(
+            !contended_client.does_higher_priority_data_exist(5),
+            "max_priority=5 excludes p5, no contention reached"
+        );
+
+        drop(held);
+        drop(held_p5);
+
+        assert!(
+            client.does_higher_priority_data_exist(19),
+            "data at p0/p5/p10/p19, higher than 19"
+        );
+        assert!(
+            client.does_higher_priority_data_exist(11),
+            "data at p0/p5/p10, higher than 11"
+        );
+        assert!(
+            contended_client.does_higher_priority_data_exist(6),
+            "guard dropped: p5 data visible, higher than 6"
+        );
+        assert!(
+            !contended_client.does_higher_priority_data_exist(5),
+            "guard dropped: p5 excluded from 0..5, no data"
         );
     }
 }
