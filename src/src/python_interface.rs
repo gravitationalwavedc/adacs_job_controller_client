@@ -167,6 +167,7 @@ py_wrap!(PyUnicode_AsUTF8, (obj: *mut PyObject) -> *const c_char);
 py_wrap!(PyUnicode_FromString, (obj: *const c_char) -> *mut PyObject);
 py_wrap!(PyErr_Occurred, () -> *mut PyObject);
 py_wrap!(PyErr_Fetch, (extype: *mut *mut PyObject, value: *mut *mut PyObject, traceback: *mut *mut PyObject) -> ());
+py_wrap!(PyErr_Clear, () -> ());
 py_wrap!(PyErr_Print, () -> ());
 py_wrap!(PyCallable_Check, (callable: *mut PyObject) -> c_int);
 py_wrap!(PyObject_IsTrue, (obj: *mut PyObject) -> c_int);
