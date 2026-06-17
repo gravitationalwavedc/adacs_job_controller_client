@@ -2,6 +2,7 @@ pub mod fixtures;
 // Integration tests that require cross-module coordination or complex fixtures
 // These tests use shared global state (BundleManager, WebSocket mocks, DB) and must run sequentially
 pub mod bundle_db_tests;
+pub mod bundle_interface_tests;
 mod bundle_logging_tests;
 pub mod file_tests;
 pub mod job_cancel_tests;
