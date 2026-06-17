@@ -45,6 +45,7 @@ uuid = { version = "1.23.0", features = ["v4"] }
 mockall = "0.14.0"
 tar = "0.4"
 flate2 = "1"
+walkdir = "2"
 
 [dev-dependencies]
 tempfile = "3.10.0"
