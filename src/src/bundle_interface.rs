@@ -6,13 +6,13 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_true_struct, MyPy_IsNone, PyCallable_Check, PyDict_New,
-    PyDict_SetItemString, PyErr_Fetch, PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins,
-    PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule, PyIter_Next, PyList_Append,
-    PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject, PyObject_GetAttrString,
-    PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject, PyThreadState,
-    PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef,
-    Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, MyPy_IsNone, PyCallable_Check, PyDict_New,
+    PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print,
+    PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule,
+    PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject,
+    PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject,
+    PyThreadState, PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef,
+    Py_IncRef, Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::{
     clear_current_thread_bundle, set_current_thread_bundle, ThreadBundleGuard,
@@ -350,6 +350,30 @@ impl BundleInterface {
     }
 
     /// Print the last Python exception. Mirrors C++ `BundleInterface::printLastPythonException()`.
+    ///
+    /// Robust against two failure modes that the original single-call
+    /// `traceback.format_exception(etype, value, tb)` could not handle:
+    ///
+    /// 1. `value` is a raw `str` (not an exception instance). This happens
+    ///    when a `_bundledb.error` raised via `PyErr_SetString` falls through
+    ///    under Python 3.12's per-interpreter GIL (PEP 684) — the type
+    ///    object from one sub-interpreter may not be valid in another, so
+    ///    `error_obj(msg)` fails silently and the raw message is stored as
+    ///    `value` instead. On modern Python, both `format_exception` and
+    ///    `format_exception_only` then fail because they expect an exception
+    ///    instance and touch attributes like `__suppress_context__` that a
+    ///    raw `str` does not have.
+    /// 2. `traceback` is NULL. `format_exception` requires a non-NULL
+    ///    `traceback`; `format_tb` returns `[]` for None/NULL.
+    ///
+    /// We split the work into two independent calls — `format_tb(tb)` and
+    /// `format_exception_only(etype, value)`. The traceback-frame call is
+    /// the important part for preserving debugging value: even if formatting
+    /// the final exception line still fails, we keep the frame list and then
+    /// synthesize a final `type: value` line from the already-extracted Rust
+    /// strings. We also defensively skip `format_tb` entirely when `tb` is
+    /// NULL, and pass `my_py_none_struct()` to `format_exception_only` when
+    /// `value` is NULL.
     pub unsafe fn print_last_python_exception(&self) {
         let mut extype: *mut PyObject = std::ptr::null_mut();
         let mut value: *mut PyObject = std::ptr::null_mut();
@@ -361,103 +385,103 @@ impl BundleInterface {
             return;
         }
 
-        // Log the raw exception type name as fallback before trying format_exception
-        let type_name = {
-            let type_str = PyObject_GetAttrString(extype, c"__name__".as_ptr());
-            if type_str.is_null() {
-                // Clear any error from __name__ lookup
-                let mut tmp_ex: *mut PyObject = std::ptr::null_mut();
-                let mut tmp_val: *mut PyObject = std::ptr::null_mut();
-                let mut tmp_tb: *mut PyObject = std::ptr::null_mut();
-                PyErr_Fetch(&raw mut tmp_ex, &raw mut tmp_val, &raw mut tmp_tb);
-                Py_XDECREF(tmp_ex);
-                Py_XDECREF(tmp_val);
-                Py_XDECREF(tmp_tb);
-                "unknown".to_string()
-            } else {
-                let c_str = PyUnicode_AsUTF8(type_str);
-                let name = if c_str.is_null() {
-                    "unknown".to_string()
-                } else {
-                    CStr::from_ptr(c_str).to_string_lossy().into_owned()
-                };
-                Py_DecRef(type_str);
-                name
-            }
-        };
-
-        // Try to get the exception value as a string
-        let value_str = if value.is_null() {
-            String::new()
-        } else {
-            let str_obj = PyObject_Repr(value);
-            if str_obj.is_null() {
-                // Clear error from PyObject_Repr
-                let mut tmp_ex: *mut PyObject = std::ptr::null_mut();
-                let mut tmp_val: *mut PyObject = std::ptr::null_mut();
-                let mut tmp_tb: *mut PyObject = std::ptr::null_mut();
-                PyErr_Fetch(&raw mut tmp_ex, &raw mut tmp_val, &raw mut tmp_tb);
-                Py_XDECREF(tmp_ex);
-                Py_XDECREF(tmp_val);
-                Py_XDECREF(tmp_tb);
-                String::new()
-            } else {
-                let c_str = PyUnicode_AsUTF8(str_obj);
-                let s = if c_str.is_null() {
-                    String::new()
-                } else {
-                    CStr::from_ptr(c_str).to_string_lossy().into_owned()
-                };
-                Py_DecRef(str_obj);
-                s
-            }
-        };
-
+        // Always log the raw type and value first so that even if every
+        // traceback formatting call below fails we still have a record.
+        let type_name = extract_type_name(extype);
+        let value_str = extract_value_repr(value);
+        let value_display = extract_value_display(value);
         tracing::info!(
             "Python exception: type={} value=\"{}\"",
             type_name,
             value_str
         );
 
-        let p_func =
-            PyObject_GetAttrString(self.inner.traceback_module, c"format_exception".as_ptr());
-
-        let p_args = PyTuple_New(3);
-        PyTuple_SetItem(p_args, 0, extype);
-        PyTuple_SetItem(p_args, 1, value);
-        PyTuple_SetItem(p_args, 2, traceback);
-
-        let p_lines = PyObject_CallObject(p_func, p_args);
-        if !PyErr_Occurred().is_null() {
-            error!("Error printing active python exception with traceback.format_exception (type was {})", type_name);
-            Py_DecRef(p_args);
-            Py_XDECREF(p_func);
-            return;
-        }
-
-        // Iterate over the lines
-        if !p_lines.is_null() {
-            let iter = PyObject_GetIter(p_lines);
-            if !iter.is_null() {
-                loop {
-                    let item = PyIter_Next(iter);
-                    if item.is_null() {
-                        break;
+        // Step 2: format the traceback frames, if any. NULL `traceback` is
+        // valid (means "no frames"); we just skip the call entirely.
+        if !traceback.is_null() {
+            let tb_func =
+                PyObject_GetAttrString(self.inner.traceback_module, c"format_tb".as_ptr());
+            if tb_func.is_null() {
+                swallow_python_error();
+            } else {
+                let tb_args = PyTuple_New(1);
+                PyTuple_SetItem(tb_args, 0, traceback); // steals the ref
+                let tb_lines = PyObject_CallObject(tb_func, tb_args);
+                let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
+                if tb_ok {
+                    tracing::info!("Traceback (most recent call last):");
+                    log_python_lines(tb_lines);
+                    Py_DecRef(tb_lines);
+                } else {
+                    error!(
+                        "Error formatting python traceback frames (type was {})",
+                        type_name
+                    );
+                    if !tb_lines.is_null() {
+                        Py_DecRef(tb_lines);
                     }
-                    let c_str = PyUnicode_AsUTF8(item);
-                    if !c_str.is_null() {
-                        let s = CStr::from_ptr(c_str).to_string_lossy();
-                        tracing::info!("{}", s);
-                    }
-                    Py_DecRef(item);
+                    swallow_python_error();
                 }
-                Py_DecRef(iter);
+                // tb_args stole the `traceback` ref; releasing the tuple
+                // decrefs traceback too. Safe in both success and failure.
+                Py_DecRef(tb_args);
+                Py_XDECREF(tb_func);
             }
-            Py_DecRef(p_lines);
         }
 
-        Py_DecRef(p_args);
-        Py_XDECREF(p_func);
+        // Step 3: format the exception header (type + value).
+        let eo_func = PyObject_GetAttrString(
+            self.inner.traceback_module,
+            c"format_exception_only".as_ptr(),
+        );
+        if eo_func.is_null() {
+            swallow_python_error();
+            // Final fallback so the user is never left with no info.
+            tracing::info!(
+                "{}: {}",
+                type_name,
+                fallback_value_text(&value_display, &value_str)
+            );
+        } else {
+            let eo_args = PyTuple_New(2);
+            PyTuple_SetItem(eo_args, 0, extype); // steals the ref
+                                                 // `format_exception_only` still expects an exception-like object
+                                                 // on modern Python, so raw-string values may make it fail. We
+                                                 // keep a manual fallback below. Pass `Py_None` only when the
+                                                 // fetched value is literally NULL.
+            if value.is_null() {
+                let none = my_py_none_struct();
+                Py_IncRef(none);
+                PyTuple_SetItem(eo_args, 1, none);
+            } else {
+                PyTuple_SetItem(eo_args, 1, value); // steals the ref
+            }
+            let eo_lines = PyObject_CallObject(eo_func, eo_args);
+            let eo_ok = !eo_lines.is_null() && PyErr_Occurred().is_null();
+            if eo_ok {
+                log_python_lines(eo_lines);
+                Py_DecRef(eo_lines);
+            } else {
+                // Final fallback so the user is never left with no info.
+                tracing::info!(
+                    "{}: {}",
+                    type_name,
+                    fallback_value_text(&value_display, &value_str)
+                );
+                debug!(
+                    "Falling back to synthesized python exception header (type was {})",
+                    type_name
+                );
+                if !eo_lines.is_null() {
+                    Py_DecRef(eo_lines);
+                }
+                swallow_python_error();
+            }
+            // eo_args stole both extype and value refs; releasing the tuple
+            // decrefs both. Safe in both success and failure paths.
+            Py_DecRef(eo_args);
+            Py_XDECREF(eo_func);
+        }
     }
 
     /// Dispose a `PyObject`. Mirrors C++ `BundleInterface::disposeObject()`.
@@ -467,6 +491,122 @@ impl BundleInterface {
             Py_DecRef(obj);
         }
     }
+}
+
+// ─── Free-standing helpers (used by `print_last_python_exception`) ───────────
+
+/// Extract the `__name__` attribute of a Python type as a Rust `String`.
+/// Returns `"unknown"` if the attribute lookup itself fails. Any Python
+/// error raised by the lookup is fetched and discarded so the caller's
+/// error state is not corrupted.
+unsafe fn extract_type_name(extype: *mut PyObject) -> String {
+    let type_str = PyObject_GetAttrString(extype, c"__name__".as_ptr());
+    if type_str.is_null() {
+        swallow_python_error();
+        return "unknown".to_string();
+    }
+    let c_str = PyUnicode_AsUTF8(type_str);
+    let name = if c_str.is_null() {
+        "unknown".to_string()
+    } else {
+        CStr::from_ptr(c_str).to_string_lossy().into_owned()
+    };
+    Py_DecRef(type_str);
+    name
+}
+
+/// Extract the `repr()` of a Python object as a Rust `String`. Returns
+/// `""` if `value` is NULL or `repr()` fails. Any Python error raised by
+/// the conversion is fetched and discarded.
+unsafe fn extract_value_repr(value: *mut PyObject) -> String {
+    if value.is_null() {
+        return String::new();
+    }
+    let str_obj = PyObject_Repr(value);
+    if str_obj.is_null() {
+        swallow_python_error();
+        return String::new();
+    }
+    let c_str = PyUnicode_AsUTF8(str_obj);
+    let s = if c_str.is_null() {
+        String::new()
+    } else {
+        CStr::from_ptr(c_str).to_string_lossy().into_owned()
+    };
+    Py_DecRef(str_obj);
+    s
+}
+
+/// Extract the `str()` of a Python object as a Rust `String`. Returns `""`
+/// if `value` is NULL or `str()` fails. Any Python error raised by the
+/// conversion is fetched and discarded.
+unsafe fn extract_value_display(value: *mut PyObject) -> String {
+    if value.is_null() {
+        return String::new();
+    }
+    let str_obj = crate::python_interface::PyObject_Str(value);
+    if str_obj.is_null() {
+        swallow_python_error();
+        return String::new();
+    }
+    let c_str = PyUnicode_AsUTF8(str_obj);
+    let s = if c_str.is_null() {
+        String::new()
+    } else {
+        CStr::from_ptr(c_str).to_string_lossy().into_owned()
+    };
+    Py_DecRef(str_obj);
+    s
+}
+
+fn fallback_value_text<'a>(display: &'a str, repr: &'a str) -> &'a str {
+    if display.is_empty() {
+        repr
+    } else {
+        display
+    }
+}
+
+/// Iterate a Python iterable of strings and log each line via
+/// `tracing::info!`. Returns silently on NULL or non-iterable input.
+unsafe fn log_python_lines(lines: *mut PyObject) {
+    if lines.is_null() {
+        return;
+    }
+    let iter = PyObject_GetIter(lines);
+    if iter.is_null() {
+        return;
+    }
+    loop {
+        let item = PyIter_Next(iter);
+        if item.is_null() {
+            break;
+        }
+        let c_str = PyUnicode_AsUTF8(item);
+        if !c_str.is_null() {
+            let s = CStr::from_ptr(c_str).to_string_lossy();
+            tracing::info!("{}", s);
+        }
+        Py_DecRef(item);
+    }
+    Py_DecRef(iter);
+}
+
+/// Fetch and discard any active Python error, also clearing the
+/// thread's error indicator. Used by `print_last_python_exception`
+/// to recover from a failed fallback call without poisoning the next
+/// Python C-API call on this thread.
+unsafe fn swallow_python_error() {
+    let mut ex: *mut PyObject = std::ptr::null_mut();
+    let mut val: *mut PyObject = std::ptr::null_mut();
+    let mut tb: *mut PyObject = std::ptr::null_mut();
+    PyErr_Fetch(&raw mut ex, &raw mut val, &raw mut tb);
+    Py_XDECREF(ex);
+    Py_XDECREF(val);
+    Py_XDECREF(tb);
+    // Defensive: clear the indicator in case PyErr_Fetch did not (e.g.
+    // a sub-interpreter-local error state was already cleared).
+    PyErr_Clear();
 }
 
 impl Drop for BundleInterfaceInner {
