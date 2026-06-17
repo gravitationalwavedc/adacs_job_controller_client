@@ -102,20 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::process::exit(0);
     }
 
-    check_for_updates();
-
     let executable_path = get_executable_path();
     let log_dir = executable_path.join("logs");
-
-    // Daemonize BEFORE creating the tokio runtime — fork() in a multi-threaded
-    // process is undefined behaviour (worker threads are silently destroyed).
-    match daemonize_with_log_redirect(&log_dir) {
-        Ok(true) => {}
-        Ok(false) => return Ok(()),
-        Err(e) => {
-            error!("Failed to daemonize: {}. Running in foreground mode.", e);
-        }
-    }
 
     let config = read_client_config();
     let log_level = get_log_level(&config);
@@ -133,6 +121,18 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "Logging initialized with debug level - check logs at {}",
         log_dir.display()
     );
+
+    check_for_updates();
+
+    // Daemonize BEFORE creating the tokio runtime — fork() in a multi-threaded
+    // process is undefined behaviour (worker threads are silently destroyed).
+    match daemonize_with_log_redirect(&log_dir) {
+        Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(e) => {
+            error!("Failed to daemonize: {}. Running in foreground mode.", e);
+        }
+    }
 
     // Create tokio runtime after daemonization — single-threaded process at this point
     let rt = Runtime::new()?;
