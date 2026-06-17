@@ -15,6 +15,10 @@ use std::time::Duration;
 use tokio::time::sleep;
 use uuid::Uuid;
 
+use flate2::read::GzDecoder;
+use std::io::Read;
+use tar::Archive;
+
 use std::collections::HashMap;
 
 /// Shared state for the mock WS client's in-memory DB.
@@ -759,6 +763,9 @@ fn test_archive_success() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let working_dir = temp_dir.path().to_str().unwrap().to_string();
         fs::write(temp_dir.path().join("test.txt"), "content").unwrap();
+        let results_dir = temp_dir.path().join("results");
+        fs::create_dir_all(&results_dir).unwrap();
+        fs::write(results_dir.join("deep.txt"), "deep content").unwrap();
 
         // Set up mock WS with DB support
         let (mock_ws, state) = setup_mock_ws();
@@ -779,16 +786,31 @@ fn test_archive_success() {
         };
         state.lock().unwrap().jobs.insert(1, job.clone());
 
-        let result = crate::jobs::archive_dir(
-            std::path::Path::new(&working_dir),
-            std::path::Path::new(&working_dir)
-                .join("archive.tar.gz")
-                .as_path(),
-        );
+        let archive_path = std::path::Path::new(&working_dir).join("archive.tar.gz");
+        let result = crate::jobs::archive_dir(std::path::Path::new(&working_dir), &archive_path);
         assert!(result.is_ok());
-        assert!(std::path::Path::new(&working_dir)
-            .join("archive.tar.gz")
-            .exists());
+        assert!(archive_path.exists());
+
+        let archive_file = std::fs::File::open(&archive_path).unwrap();
+        let decoder = GzDecoder::new(archive_file);
+        let mut archive = Archive::new(decoder);
+        let mut entries: Vec<String> = Vec::new();
+        let mut deep_content: Option<Vec<u8>> = None;
+        for entry_result in archive.entries().unwrap() {
+            let mut entry = entry_result.unwrap();
+            let path = entry.path().unwrap().to_string_lossy().to_string();
+            entries.push(path.clone());
+            if path == "results/deep.txt" {
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf).unwrap();
+                deep_content = Some(buf);
+            }
+        }
+        assert!(entries.iter().any(|p| p == "test.txt"));
+        assert!(entries.iter().any(|p| p == "results"));
+        assert!(entries.iter().any(|p| p == "results/deep.txt"));
+        assert_eq!(deep_content.as_deref(), Some(b"deep content".as_ref()));
+        assert!(!entries.iter().any(|p| p == "archive.tar.gz"));
     }
     inner();
 }

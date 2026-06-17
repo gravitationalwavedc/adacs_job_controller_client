@@ -14,6 +14,7 @@ use tar::Builder;
 use tracing::{debug, error, info, warn};
 
 use tokio::sync::Mutex as TokioMutex;
+use walkdir::WalkDir;
 
 static SUBMIT_MUTEX: std::sync::LazyLock<TokioMutex<()>> =
     std::sync::LazyLock::new(|| TokioMutex::new(()));
@@ -478,20 +479,24 @@ pub fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String> {
     let encoder = GzEncoder::new(file, Compression::default());
     let mut builder = Builder::new(encoder);
 
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
-
-    for entry in entries {
+    for entry in WalkDir::new(dir)
+        .into_iter()
+        .filter_entry(|e| e.file_name() != "archive.tar.gz")
+        .skip(1)
+    {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
         let path = entry.path();
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if file_name == "archive.tar.gz" {
-            continue;
+        let rel = path.strip_prefix(dir).unwrap_or(path);
+        let file_type = entry.file_type();
+        if file_type.is_dir() {
+            builder
+                .append_dir(rel, path)
+                .map_err(|e| format!("Failed to append dir {}: {}", path.display(), e))?;
+        } else {
+            builder
+                .append_path_with_name(path, rel)
+                .map_err(|e| format!("Failed to append path {}: {}", path.display(), e))?;
         }
-
-        builder
-            .append_path_with_name(&path, path.strip_prefix(dir).unwrap_or(&path))
-            .map_err(|e| format!("Failed to append path {}: {}", path.display(), e))?;
     }
 
     builder
