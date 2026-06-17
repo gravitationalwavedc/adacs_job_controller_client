@@ -75,6 +75,7 @@ pub struct TungsteniteWebsocketClient {
     reconnectable: AtomicBool,
     supervisor_started: AtomicBool,
     connection_config: Arc<RwLock<Option<ConnectionConfig>>>,
+    last_update_check: AtomicI64,
 }
 
 impl TungsteniteWebsocketClient {
@@ -96,6 +97,7 @@ impl TungsteniteWebsocketClient {
             reconnectable: AtomicBool::new(false),
             supervisor_started: AtomicBool::new(false),
             connection_config: Arc::new(RwLock::new(None)),
+            last_update_check: AtomicI64::new(0),
         }
     }
 
@@ -514,6 +516,20 @@ impl TungsteniteWebsocketClient {
         Ok(())
     }
 
+    async fn check_for_updates_on_reconnect(self: &Arc<Self>) {
+        if self.reconnectable.load(Ordering::SeqCst) {
+            let now = Self::get_epoch_millis();
+            let last = self.last_update_check.load(Ordering::SeqCst);
+            if now.saturating_sub(last) >= 300_000 {
+                self.last_update_check.store(now, Ordering::SeqCst);
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::update_check::check_for_updates();
+                })
+                .await;
+            }
+        }
+    }
+
     async fn supervise_connections(self: Arc<Self>) {
         let mut attempt = 0u32;
 
@@ -539,6 +555,7 @@ impl TungsteniteWebsocketClient {
                     let delay = Self::reconnect_delay(attempt);
                     warn!("WS: Reconnecting after {:?}", delay);
                     attempt = attempt.saturating_add(1);
+                    self.check_for_updates_on_reconnect().await;
                     tokio::time::sleep(delay).await;
                 }
                 Err(e) => {
@@ -557,6 +574,7 @@ impl TungsteniteWebsocketClient {
                         e, delay
                     );
                     attempt = attempt.saturating_add(1);
+                    self.check_for_updates_on_reconnect().await;
                     tokio::time::sleep(delay).await;
                 }
             }
@@ -1665,6 +1683,36 @@ mod tests {
         assert!(
             !contended_client.does_higher_priority_data_exist(5),
             "guard dropped: p5 excluded from 0..5, no data"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_check_on_reconnect_rate_limits() {
+        let client = TungsteniteWebsocketClient::new();
+        // last_update_check is initialized to 0
+        assert_eq!(client.last_update_check.load(Ordering::SeqCst), 0);
+
+        // Set reconnectable to true so it passes the reconnectable check
+        client.reconnectable.store(true, Ordering::SeqCst);
+
+        let client_arc = Arc::new(client);
+
+        // Running check_for_updates_on_reconnect when reconnectable is true
+        // updates last_update_check to a non-zero value and executes.
+        client_arc.check_for_updates_on_reconnect().await;
+
+        let first_ts = client_arc.last_update_check.load(Ordering::SeqCst);
+        assert!(
+            first_ts > 0,
+            "last_update_check should be updated to a non-zero value"
+        );
+
+        // Running it again immediately doesn't update the timestamp (rate limits)
+        client_arc.check_for_updates_on_reconnect().await;
+        let second_ts = client_arc.last_update_check.load(Ordering::SeqCst);
+        assert_eq!(
+            first_ts, second_ts,
+            "timestamp should not be updated on subsequent immediate check"
         );
     }
 }
