@@ -166,11 +166,9 @@ fn perform_update(download_url: &str) -> Result<(), Box<dyn std::error::Error>> 
 
     info!("Update complete, restarting...");
 
-    let args: Vec<String> = std::env::args().collect();
-    process::Command::new(&executable_path)
-        .args(&args[1..])
-        .spawn()?;
+    crate::restart_app();
 
+    // In case restart_app returns (which it shouldn't on Unix unless exec fails)
     process::exit(0);
 }
 

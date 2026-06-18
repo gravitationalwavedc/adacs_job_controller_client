@@ -49,7 +49,7 @@ fn is_production() -> bool {
     }
 }
 
-fn restart_app() {
+pub fn restart_app() {
     let args: Vec<String> = env::args().collect();
     let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("./adacs_job_client"));
 

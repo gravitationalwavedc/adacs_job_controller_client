@@ -61,6 +61,9 @@ pub struct BundleInterface {
 pub struct NoneException;
 
 impl BundleInterface {
+    /// Create a new `BundleInterface` for the given bundle hash.
+    /// This exactly mirrors the C++ `BundleInterface` constructor.
+    ///
     /// IMPORTANT: The `PYTHON_MUTEX` must NOT be held by the caller, and the
     /// main thread state must have been saved (GIL released) before calling this.
     #[allow(clippy::items_after_statements)]
