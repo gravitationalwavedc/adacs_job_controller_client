@@ -268,18 +268,25 @@ mod tests {
         // Create a temporary directory for log files
         let temp_dir = TempDir::new().unwrap();
         let log_dir = temp_dir.path().to_path_buf();
+        std::mem::forget(temp_dir); // Prevent deletion of the directory during fork lifetime
 
         let result = daemonize_with_log_redirect(&log_dir);
         assert!(result.is_ok(), "daemonize_with_log_redirect should succeed");
 
-        // Give daemon process time to create files
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        // Verify log files were created
+        // Give daemon process time to create files (retry loop to avoid test flakiness under CPU load)
         let stdout_path = log_dir.join("stdout.log");
         let stderr_path = log_dir.join("stderr.log");
-
-        assert!(stdout_path.exists(), "stdout.log should be created");
-        assert!(stderr_path.exists(), "stderr.log should be created");
+        let mut created = false;
+        for _ in 0..200 {
+            if stdout_path.exists() && stderr_path.exists() {
+                created = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            created,
+            "stdout.log and stderr.log should be created by daemon"
+        );
     }
 }

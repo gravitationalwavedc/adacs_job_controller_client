@@ -28,11 +28,52 @@ use crate::update_check::check_for_updates;
 use crate::websocket::{get_reconnect_notify, get_shutdown_notify, get_websocket_client};
 use std::env;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace, warn};
 
 const _GIT_HASH: &str = env!("GIT_HASH");
+
+static IS_LTK: AtomicBool = AtomicBool::new(false);
+static READY_FOR_RESTART: AtomicBool = AtomicBool::new(false);
+
+fn is_production() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        false
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        true
+    }
+}
+
+pub fn restart_app() {
+    let args: Vec<String> = env::args().collect();
+    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("./adacs_job_client"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(&args[1..]);
+        // exec() replaces the current process. If it returns, it failed.
+        let err = cmd.exec();
+        eprintln!("Failed to restart app via exec: {err}");
+    }
+
+    #[cfg(not(unix))]
+    {
+        if std::process::Command::new(exe)
+            .args(&args[1..])
+            .spawn()
+            .is_ok()
+        {
+            std::process::exit(1);
+        }
+    }
+}
 
 fn get_executable_path() -> PathBuf {
     std::env::current_exe()
@@ -89,6 +130,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .unwrap_or_default();
         eprintln!("FATAL PANIC: {msg} at {location}");
         let _ = std::io::Write::flush(&mut std::io::stderr());
+
+        if is_production()
+            && IS_LTK.load(Ordering::SeqCst)
+            && READY_FOR_RESTART.load(Ordering::SeqCst)
+        {
+            eprintln!("Restarting application due to fatal panic in production with LTK...");
+            restart_app();
+        }
     }));
 
     let args: Vec<String> = env::args().collect();
@@ -149,7 +198,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         info!("Python library: {}", get_python_library_path());
         let (ws_token, reconnectable) = match resolve_websocket_token(&args, &config) {
-            Ok(value) => value,
+            Ok((token, is_ltk)) => {
+                IS_LTK.store(is_ltk, Ordering::SeqCst);
+                (token, is_ltk)
+            }
             Err(message) => {
                 error!("{message}");
                 eprintln!("{message}");
@@ -163,7 +215,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             info!("Using one-shot WebSocket token from command line argument");
         }
 
-        python_interface::load_python_library(&get_python_library_path());
+        if let Err(e) = python_interface::load_python_library(&get_python_library_path()) {
+            error!("Failed to load Python library: {e}");
+            std::process::exit(1);
+        }
         unsafe {
             python_interface::PyImport_AppendInittab(
                 c"_bundledb".as_ptr(),
@@ -220,6 +275,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
 
         info!("Server ready, starting job status check loop");
+        READY_FOR_RESTART.store(true, Ordering::SeqCst);
 
         let mut term_signal =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())

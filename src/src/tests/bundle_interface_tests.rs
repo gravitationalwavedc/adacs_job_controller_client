@@ -370,3 +370,37 @@ def submit(details, job_data):
     }
     inner();
 }
+
+#[test]
+fn test_bundle_load_failure_no_panic() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let bundle_hash = "non_existent_bundle_hash_12345";
+
+        // Initialize BundleManager with a dummy path
+        BundleManager::initialize("/tmp/non_existent_path_67890".to_string());
+
+        // Calling run_bundle_json should return Value::Null and NOT panic
+        let result_json = BundleManager::singleton().run_bundle_json(
+            "submit",
+            bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+        assert_eq!(result_json, serde_json::Value::Null);
+
+        // Calling run_bundle_string should return a serialized json error and NOT panic
+        let result_str = BundleManager::singleton().run_bundle_string(
+            "submit",
+            bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+        assert!(
+            result_str.contains("Failed to load bundle"),
+            "result_str: {result_str}"
+        );
+    }
+    inner();
+}

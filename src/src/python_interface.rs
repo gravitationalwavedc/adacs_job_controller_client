@@ -97,29 +97,31 @@ static MAIN_TS: OnceLock<ThreadStatePtr> = OnceLock::new();
 static INIT_PYTHON: std::sync::Once = std::sync::Once::new();
 
 // ─── Library loading ─────────────────────────────────────────────────────────
-pub fn load_python_library(path: &str) {
+pub fn load_python_library(path: &str) -> Result<(), String> {
     info!("Python library load requested: {}", path);
     if PY_LIB.get().is_some() {
         debug!("Python library already loaded, skipping");
-        return;
+        return Ok(());
     }
     // RTLD_NOW | RTLD_GLOBAL – matches the C++ dlopen flags exactly.
     let lib = unsafe {
         let flags = libc::RTLD_NOW | libc::RTLD_GLOBAL;
-        let c_path = CString::new(path).expect("invalid library path");
+        let c_path = CString::new(path).map_err(|_| "invalid library path".to_string())?;
         debug!("dlopen {} with flags RTLD_NOW|RTLD_GLOBAL", path);
         let handle = libc::dlopen(c_path.as_ptr(), flags);
         if handle.is_null() {
             let err = std::ffi::CStr::from_ptr(libc::dlerror());
-            error!("Failed to dlopen libpython: {}", err.to_string_lossy());
-            panic!("Failed to dlopen libpython: {}", err.to_string_lossy());
+            let err_msg = format!("Failed to dlopen libpython: {}", err.to_string_lossy());
+            error!("{}", err_msg);
+            return Err(err_msg);
         }
         debug!("dlopen successful, wrapping via libloading");
         // Now wrap via libloading so py_wrap! can use it.
-        Library::new(path).expect("Failed to load libpython via libloading")
+        Library::new(path).map_err(|e| format!("Failed to load libpython via libloading: {e}"))?
     };
     let _ = PY_LIB.set(Arc::new(lib));
     info!("Python library loaded successfully");
+    Ok(())
 }
 
 pub fn get_python_lib() -> Arc<Library> {
@@ -333,7 +335,7 @@ unsafe impl Sync for SubInterpreter {}
 impl SubInterpreter {
     /// Creates a new sub-interpreter. MUST be called with the GIL held
     /// (i.e., with a valid current thread state).
-    pub unsafe fn new() -> Self {
+    pub unsafe fn new() -> Result<Self, String> {
         debug!("SubInterpreter::new - creating new sub-interpreter");
         // RestoreThreadStateScope – save current ts, restore on drop
         let saved_ts = PyThreadState_Get();
@@ -346,15 +348,15 @@ impl SubInterpreter {
         let ts = Py_NewInterpreter();
         if ts.is_null() {
             error!("SubInterpreter::new - Py_NewInterpreter failed");
+            return Err("Py_NewInterpreter failed".to_string());
         }
-        assert!(!ts.is_null(), "Py_NewInterpreter failed");
         debug!("SubInterpreter::new - sub-interpreter created: {:?}", ts);
 
         // Restore the original thread state (like C++ RestoreThreadStateScope destructor)
         trace!("SubInterpreter::new - restoring original thread state");
         PyThreadState_Swap(saved_ts);
 
-        SubInterpreter { ts }
+        Ok(SubInterpreter { ts })
     }
 
     /// Get the interpreter state pointer (for creating `ThreadScopes`)
@@ -395,11 +397,12 @@ pub struct ThreadScope {
 impl ThreadScope {
     /// Create a new `ThreadScope` for the given interpreter.
     /// This is the equivalent of C++ `SubInterpreter::ThreadScope`.
-    pub unsafe fn new(interp: *mut PyInterpreterState) -> Self {
+    pub unsafe fn new(interp: *mut PyInterpreterState) -> Result<Self, String> {
         trace!("ThreadScope::new - creating for interpreter: {:?}", interp);
         let ts = PyThreadState_New(interp);
         if ts.is_null() {
             error!("ThreadScope::new - PyThreadState_New failed");
+            return Err("PyThreadState_New failed".to_string());
         }
         trace!("ThreadScope::new - created thread state: {:?}", ts);
         let gil_start = std::time::Instant::now();
@@ -409,7 +412,7 @@ impl ThreadScope {
             "ThreadScope::new - GIL acquired in {:?}",
             gil_start.elapsed()
         );
-        ThreadScope { ts }
+        Ok(ThreadScope { ts })
     }
 }
 

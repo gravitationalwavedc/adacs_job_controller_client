@@ -205,6 +205,7 @@ mod tests {
     // --- read_client_config tests ---
 
     #[test]
+    #[serial_test::serial]
     fn read_client_config_returns_test_config() {
         let expected =
             json!({"pythonLibrary": "/test/libpython.so", "websocketEndpoint": "ws://test/ws/"});
