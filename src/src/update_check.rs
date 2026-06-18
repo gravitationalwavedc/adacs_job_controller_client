@@ -133,7 +133,7 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             Ok(resp) => {
                 let mut data = Vec::new();
                 resp.into_reader().read_to_end(&mut data)?;
-                info!("Download complete: {} bytes", data.len());
+                debug!("Download complete: {} bytes", data.len());
                 return Ok(data);
             }
             Err(e) if attempt < MAX_DOWNLOAD_RETRIES => {

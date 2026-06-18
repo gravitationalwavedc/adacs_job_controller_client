@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 // The exact Python script used in C++ for stdout/stderr redirection.
 const STDOUT_REDIRECTION: &str = r"
@@ -113,7 +113,7 @@ impl BundleInterface {
         debug!("BundleInterface::new created thread scope");
 
         let bundle_path = Path::new(bundle_path_root).join(bundle_hash);
-        info!("BundleInterface::new bundle path {:?}", bundle_path);
+        debug!("BundleInterface::new bundle path {:?}", bundle_path);
 
         // Create a new globals dict and enable the python builtins
         let p_global = PyDict_New();
@@ -381,7 +381,7 @@ impl BundleInterface {
 
         PyErr_Fetch(&raw mut extype, &raw mut value, &raw mut traceback);
         if extype.is_null() {
-            tracing::info!("No active python exception to print");
+            trace!("No active python exception to print");
             return;
         }
 
@@ -390,10 +390,9 @@ impl BundleInterface {
         let type_name = extract_type_name(extype);
         let value_str = extract_value_repr(value);
         let value_display = extract_value_display(value);
-        tracing::info!(
+        error!(
             "Python exception: type={} value=\"{}\"",
-            type_name,
-            value_str
+            type_name, value_str
         );
 
         // Step 2: format the traceback frames, if any. NULL `traceback` is
@@ -409,7 +408,7 @@ impl BundleInterface {
                 let tb_lines = PyObject_CallObject(tb_func, tb_args);
                 let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
                 if tb_ok {
-                    tracing::info!("Traceback (most recent call last):");
+                    error!("Traceback (most recent call last):");
                     log_python_lines(tb_lines);
                     Py_DecRef(tb_lines);
                 } else {
@@ -437,7 +436,7 @@ impl BundleInterface {
         if eo_func.is_null() {
             swallow_python_error();
             // Final fallback so the user is never left with no info.
-            tracing::info!(
+            error!(
                 "{}: {}",
                 type_name,
                 fallback_value_text(&value_display, &value_str)
@@ -463,7 +462,7 @@ impl BundleInterface {
                 Py_DecRef(eo_lines);
             } else {
                 // Final fallback so the user is never left with no info.
-                tracing::info!(
+                error!(
                     "{}: {}",
                     type_name,
                     fallback_value_text(&value_display, &value_str)
@@ -585,7 +584,7 @@ unsafe fn log_python_lines(lines: *mut PyObject) {
         let c_str = PyUnicode_AsUTF8(item);
         if !c_str.is_null() {
             let s = CStr::from_ptr(c_str).to_string_lossy();
-            tracing::info!("{}", s);
+            error!("{}", s);
         }
         Py_DecRef(item);
     }
