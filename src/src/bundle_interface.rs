@@ -14,9 +14,7 @@ use crate::python_interface::{
     PyThreadState, PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef,
     Py_IncRef, Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
-use crate::thread_bundle_map::{
-    clear_current_thread_bundle, set_current_thread_bundle, ThreadBundleGuard,
-};
+use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::path::Path;
@@ -63,18 +61,15 @@ pub struct BundleInterface {
 pub struct NoneException;
 
 impl BundleInterface {
-    /// Create a new `BundleInterface` for the given bundle hash.
-    /// This exactly mirrors the C++ `BundleInterface` constructor.
-    ///
     /// IMPORTANT: The `PYTHON_MUTEX` must NOT be held by the caller, and the
     /// main thread state must have been saved (GIL released) before calling this.
     #[allow(clippy::items_after_statements)]
-    pub unsafe fn new(bundle_hash: &str, bundle_path_root: &str) -> Self {
+    pub unsafe fn new(bundle_hash: &str, bundle_path_root: &str) -> Result<Self, String> {
         let _guard = PYTHON_MUTEX.lock();
         debug!("BundleInterface::new start for {}", bundle_hash);
 
         // Set up the thread bundle hash map (needed for logging during load)
-        set_current_thread_bundle(bundle_hash.to_string());
+        let _bundle_guard = ThreadBundleGuard::new(bundle_hash.to_string());
 
         // C++ static local: save/restore the main thread state across
         // sub-interpreter creations.
@@ -95,7 +90,7 @@ impl BundleInterface {
         }
 
         debug!("BundleInterface::new creating sub-interpreter");
-        let python_interpreter = SubInterpreter::new();
+        let python_interpreter = SubInterpreter::new()?;
         debug!("BundleInterface::new created sub-interpreter");
 
         {
@@ -109,7 +104,7 @@ impl BundleInterface {
         // Activate the new interpreter via ThreadScope
         let interp = python_interpreter.interp();
         debug!("BundleInterface::new creating thread scope");
-        let _scope = ThreadScope::new(interp);
+        let _scope = ThreadScope::new(interp)?;
         debug!("BundleInterface::new created thread scope");
 
         let bundle_path = Path::new(bundle_path_root).join(bundle_hash);
@@ -131,30 +126,44 @@ impl BundleInterface {
             std::ptr::null_mut(),
         );
         // Like C++: PyUnicode_AsUTF8(PyObject_Repr(PyRun_String(...)))
-        if !result.is_null() {
-            let repr = PyObject_Repr(result);
-            if !repr.is_null() {
-                PyUnicode_AsUTF8(repr);
-                Py_DecRef(repr);
-            }
-            Py_DecRef(result);
+        if result.is_null() {
+            error!("Error installing stdout/stderr redirection");
+            PyErr_Print();
+            return Err("Failed to install stdout/stderr redirection".to_string());
         }
+
+        let repr = PyObject_Repr(result);
+        if !repr.is_null() {
+            PyUnicode_AsUTF8(repr);
+            Py_DecRef(repr);
+        }
+        Py_DecRef(result);
         Py_DecRef(p_local);
 
         // Ensure the json module is loaded in the global scope
         debug!("BundleInterface::new importing json");
         let json_module = PyImport_ImportModule(c"json".as_ptr());
+        if json_module.is_null() {
+            error!("Error importing json module");
+            PyErr_Print();
+            return Err("Failed to import json module".to_string());
+        }
         PyDict_SetItemString(p_global, c"json".as_ptr(), json_module);
 
         // Load the traceback module
         debug!("BundleInterface::new importing traceback");
         let traceback_module = PyImport_ImportModule(c"traceback".as_ptr());
+        if traceback_module.is_null() {
+            error!("Error importing traceback module");
+            PyErr_Print();
+            return Err("Failed to import traceback module".to_string());
+        }
 
         // Add the bundle path to the system path
         info!("BundleInterface::new appending bundle path to sys.path");
         let p_path = PySys_GetObject(c"path".as_ptr());
         let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
-            .expect("Bundle path contains NUL byte");
+            .map_err(|_| "Bundle path contains NUL byte".to_string())?;
         let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
         PyList_Append(p_path, p_bundle_path);
         Py_DecRef(p_bundle_path);
@@ -165,15 +174,13 @@ impl BundleInterface {
         if p_bundle_module.is_null() || !PyErr_Occurred().is_null() {
             error!("Error loading python bundle at path {:?}", bundle_path);
             PyErr_Print();
-            clear_current_thread_bundle();
-            panic!("Failed to load bundle module");
+            return Err("Failed to load bundle module".to_string());
         }
 
         // Clear the thread from the thread bundle hash map
         debug!("BundleInterface::new finished for {}", bundle_hash);
-        clear_current_thread_bundle();
 
-        BundleInterface {
+        Ok(BundleInterface {
             inner: Arc::new(BundleInterfaceInner {
                 python_interpreter,
                 p_global,
@@ -182,12 +189,12 @@ impl BundleInterface {
                 traceback_module,
                 bundle_hash: bundle_hash.to_string(),
             }),
-        }
+        })
     }
 
     /// Get a `ThreadScope` for this bundle's interpreter.
     /// Equivalent to C++ `bundle->threadScope()`.
-    pub unsafe fn thread_scope(&self) -> ThreadScope {
+    pub unsafe fn thread_scope(&self) -> Result<ThreadScope, String> {
         ThreadScope::new(self.inner.python_interpreter.interp())
     }
 
@@ -201,6 +208,9 @@ impl BundleInterface {
     ) -> Result<*mut PyObject, NoneException> {
         // First create a python object from the details json
         let json_obj = self.json_loads(&serde_json::to_string(details).unwrap());
+        if json_obj.is_null() {
+            return Err(NoneException);
+        }
 
         // Get a pointer to the bundle function to call
         let s_func = CString::new(func).unwrap();
@@ -299,21 +309,26 @@ impl BundleInterface {
     }
 
     /// Call json.dumps on a `PyObject`. Mirrors C++ `BundleInterface::jsonDumps()`.
-    pub unsafe fn json_dumps(&self, obj: *mut PyObject) -> String {
+    pub unsafe fn json_dumps(&self, obj: *mut PyObject) -> Result<String, String> {
         if obj.is_null() {
-            return "null".to_string();
+            return Ok("null".to_string());
         }
 
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"dumps".as_ptr());
+        if p_func.is_null() {
+            return Err("Failed to get json.dumps function".to_string());
+        }
 
         let p_args = PyTuple_New(1);
         Py_IncRef(obj); // INCREF before SetItem (which steals a ref) – matches C++
         PyTuple_SetItem(p_args, 0, obj);
 
         let p_value = PyObject_CallObject(p_func, p_args);
-        if !PyErr_Occurred().is_null() {
+        if p_value.is_null() || !PyErr_Occurred().is_null() {
             self.print_last_python_exception();
-            panic!("Error calling json.dumps");
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return Err("Error calling json.dumps".to_string());
         }
 
         let result = self.to_string_py(p_value);
@@ -322,11 +337,9 @@ impl BundleInterface {
         Py_XDECREF(p_func);
         // Note: p_value's refcount was stolen by json.dumps, but we need to
         // decref it since CallObject returns a new reference
-        if !p_value.is_null() {
-            Py_DecRef(p_value);
-        }
+        Py_DecRef(p_value);
 
-        result
+        Ok(result)
     }
 
     /// Call json.loads on a string. Mirrors C++ `BundleInterface::jsonLoads()`.
@@ -334,13 +347,31 @@ impl BundleInterface {
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"loads".as_ptr());
 
         let p_args = PyTuple_New(1);
-        let p_value = PyUnicode_FromString(CString::new(content).unwrap().as_ptr());
+        let c_content = match CString::new(content) {
+            Ok(c) => c,
+            Err(e) => {
+                error!("json_loads: content contains NUL byte: {}", e);
+                Py_DecRef(p_args);
+                Py_XDECREF(p_func);
+                return std::ptr::null_mut();
+            }
+        };
+        let p_value = PyUnicode_FromString(c_content.as_ptr());
+        if p_value.is_null() {
+            error!("json_loads: failed to create python string");
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return std::ptr::null_mut();
+        }
         PyTuple_SetItem(p_args, 0, p_value);
 
         let result = PyObject_CallObject(p_func, p_args);
         if !PyErr_Occurred().is_null() {
             self.print_last_python_exception();
-            panic!("Error calling json.loads");
+            error!("Error calling json.loads - returning NULL");
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return std::ptr::null_mut();
         }
 
         Py_DecRef(p_args);

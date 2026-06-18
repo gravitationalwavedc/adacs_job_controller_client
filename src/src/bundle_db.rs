@@ -157,10 +157,20 @@ unsafe extern "C" fn create_or_update_job(
     let dict = PyTuple_GetItem(args, 0);
 
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
-    let bundle = BundleManager::singleton().load_bundle(&bundle_hash);
+    let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
+        Ok(b) => b,
+        Err(e) => {
+            error!(
+                "DB: Bundle {} not found in cache during FFI callback: {}",
+                bundle_hash, e
+            );
+            return std::ptr::null_mut();
+        }
+    };
 
-    // Convert first argument to a json object
-    let json_str = bundle.json_dumps(dict);
+    let Ok(json_str) = bundle.json_dumps(dict) else {
+        return std::ptr::null_mut();
+    };
     let job_data: serde_json::Value =
         serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
 
@@ -237,7 +247,16 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
     let job_id = PyLong_AsUnsignedLongLong(job_id_obj);
 
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
-    let bundle = BundleManager::singleton().load_bundle(&bundle_hash);
+    let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
+        Ok(b) => b,
+        Err(e) => {
+            error!(
+                "DB: Bundle {} not found in cache during FFI callback: {}",
+                bundle_hash, e
+            );
+            return std::ptr::null_mut();
+        }
+    };
 
     let msg = build_bundle_get_by_id_message(job_id);
 
@@ -292,9 +311,20 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
     let dict = PyTuple_GetItem(args, 0);
 
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
-    let bundle = BundleManager::singleton().load_bundle(&bundle_hash);
+    let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
+        Ok(b) => b,
+        Err(e) => {
+            error!(
+                "DB: Bundle {} not found in cache during FFI callback: {}",
+                bundle_hash, e
+            );
+            return std::ptr::null_mut();
+        }
+    };
 
-    let json_str = bundle.json_dumps(dict);
+    let Ok(json_str) = bundle.json_dumps(dict) else {
+        return std::ptr::null_mut();
+    };
     let job_data: serde_json::Value =
         serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
 

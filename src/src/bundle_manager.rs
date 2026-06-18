@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 pub struct BundleManager {
     bundle_path_root: String,
@@ -70,7 +70,7 @@ impl BundleManager {
 
     /// Load (or return cached) `BundleInterface` for a given hash.
     /// Mirrors C++ `BundleManager::loadBundle()`.
-    pub fn load_bundle(&self, bundle_hash: &str) -> BundleInterface {
+    pub fn load_bundle(&self, bundle_hash: &str) -> Result<BundleInterface, String> {
         debug!(
             "BundleManager: load_bundle() called for hash '{}'",
             bundle_hash
@@ -80,7 +80,7 @@ impl BundleManager {
             let bundles = self.bundles.read();
             if let Some(bundle) = bundles.get(bundle_hash) {
                 debug!("BundleManager: using cached bundle {}", bundle_hash);
-                return bundle.clone();
+                return Ok(bundle.clone());
             }
         }
 
@@ -101,7 +101,7 @@ impl BundleManager {
                 "BundleManager: bundle {} loaded by another thread, using cached",
                 bundle_hash
             );
-            return existing.clone();
+            return Ok(existing.clone());
         }
 
         // SAFETY: BundleInterface::new requires that Python has been initialised
@@ -110,7 +110,7 @@ impl BundleManager {
             "BundleManager: loading bundle {} from {}",
             bundle_hash, self.bundle_path_root
         );
-        let bundle = unsafe { BundleInterface::new(bundle_hash, &self.bundle_path_root) };
+        let bundle = unsafe { BundleInterface::new(bundle_hash, &self.bundle_path_root)? };
         info!(
             "BundleManager: loaded bundle {} ({} bytes)",
             bundle_hash,
@@ -118,7 +118,7 @@ impl BundleManager {
         );
         bundles.insert(bundle_hash.to_string(), bundle.clone());
         debug!("BundleManager: bundle {} inserted into cache", bundle_hash);
-        bundle
+        Ok(bundle)
     }
 
     /// Run a bundle function and return the result as a String.
@@ -134,7 +134,19 @@ impl BundleManager {
             "run_bundle_string entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = self.load_bundle(bundle_hash);
+        let bundle = match self.load_bundle(bundle_hash) {
+            Ok(b) => b,
+            Err(e) => {
+                error!(
+                    "run_bundle_string: Failed to load bundle {}: {}",
+                    bundle_hash, e
+                );
+                return serde_json::json!({
+                    "error": format!("Failed to load bundle {}: {}", bundle_hash, e)
+                })
+                .to_string();
+            }
+        };
         debug!(
             "run_bundle_string loaded bundle {} for {}",
             bundle_hash, function_name
@@ -153,7 +165,16 @@ impl BundleManager {
                 "run_bundle_string creating thread scope for {}",
                 function_name
             );
-            let _scope = bundle.thread_scope();
+            let _scope = match bundle.thread_scope() {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("{}: Failed to create thread scope: {}", function_name, e);
+                    return serde_json::json!({
+                        "error": format!("Failed to create thread scope: {}", e)
+                    })
+                    .to_string();
+                }
+            };
             trace!(
                 "run_bundle_string created thread scope for {}",
                 function_name
@@ -194,7 +215,16 @@ impl BundleManager {
             "run_bundle_uint64 entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = self.load_bundle(bundle_hash);
+        let bundle = match self.load_bundle(bundle_hash) {
+            Ok(b) => b,
+            Err(e) => {
+                error!(
+                    "run_bundle_uint64: Failed to load bundle {}: {}",
+                    bundle_hash, e
+                );
+                return 0;
+            }
+        };
         debug!(
             "run_bundle_uint64 loaded bundle {} for {}",
             bundle_hash, function_name
@@ -213,7 +243,13 @@ impl BundleManager {
                 "run_bundle_uint64 creating thread scope for {}",
                 function_name
             );
-            let _scope = bundle.thread_scope();
+            let _scope = match bundle.thread_scope() {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("{}: Failed to create thread scope: {}", function_name, e);
+                    return 0;
+                }
+            };
             trace!(
                 "run_bundle_uint64 created thread scope for {}",
                 function_name
@@ -253,7 +289,16 @@ impl BundleManager {
             "run_bundle_bool entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = self.load_bundle(bundle_hash);
+        let bundle = match self.load_bundle(bundle_hash) {
+            Ok(b) => b,
+            Err(e) => {
+                error!(
+                    "run_bundle_bool: Failed to load bundle {}: {}",
+                    bundle_hash, e
+                );
+                return false;
+            }
+        };
         debug!(
             "run_bundle_bool loaded bundle {} for {}",
             bundle_hash, function_name
@@ -269,7 +314,13 @@ impl BundleManager {
                 "run_bundle_bool creating thread scope for {}",
                 function_name
             );
-            let _scope = bundle.thread_scope();
+            let _scope = match bundle.thread_scope() {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("{}: Failed to create thread scope: {}", function_name, e);
+                    return false;
+                }
+            };
             trace!("run_bundle_bool created thread scope for {}", function_name);
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!("run_bundle_bool bundle.run returned for {}", function_name);
@@ -303,7 +354,16 @@ impl BundleManager {
             "run_bundle_json entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = self.load_bundle(bundle_hash);
+        let bundle = match self.load_bundle(bundle_hash) {
+            Ok(b) => b,
+            Err(e) => {
+                error!(
+                    "run_bundle_json: Failed to load bundle {}: {}",
+                    bundle_hash, e
+                );
+                return Value::Null;
+            }
+        };
         debug!(
             "run_bundle_json loaded bundle {} for {}",
             bundle_hash, function_name
@@ -319,11 +379,26 @@ impl BundleManager {
                 "run_bundle_json creating thread scope for {}",
                 function_name
             );
-            let _scope = bundle.thread_scope();
+            let _scope = match bundle.thread_scope() {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("{}: Failed to create thread scope: {}", function_name, e);
+                    return Value::Null;
+                }
+            };
             trace!("run_bundle_json created thread scope for {}", function_name);
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!("run_bundle_json bundle.run returned for {}", function_name);
-                let json_str = bundle.json_dumps(result_obj);
+                let json_str = match bundle.json_dumps(result_obj) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("run_bundle_json: Failed to serialize result: {}", e);
+                        serde_json::json!({
+                            "error": format!("Failed to serialize result: {}", e)
+                        })
+                        .to_string()
+                    }
+                };
                 bundle.dispose_object(result_obj);
                 let result = serde_json::from_str(&json_str).unwrap_or(Value::Null);
                 debug!(

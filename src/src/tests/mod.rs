@@ -44,7 +44,8 @@ fn init_python_global() {
             "websocketEndpoint": "ws://127.0.0.1:0/ws/",
             "ltk": "test_token",
         }));
-        crate::python_interface::load_python_library(&crate::config::get_python_library_path());
+        let _ =
+            crate::python_interface::load_python_library(&crate::config::get_python_library_path());
         unsafe {
             crate::python_interface::PyImport_AppendInittab(
                 c"_bundledb".as_ptr(),

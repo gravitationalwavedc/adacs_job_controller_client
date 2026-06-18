@@ -964,9 +964,6 @@ mod tests {
     use super::*;
     use crate::messaging::DB_JOB_GET_RUNNING_JOBS;
     use crate::tests::fixtures::websocket_server_fixture::WebsocketServerFixture;
-    use std::sync::Mutex;
-
-    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     // ============================================================================
     // WebSocket Authentication Tests - ported from websocket_auth_tests.rs
@@ -992,8 +989,8 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_start_with_token() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
 
@@ -1013,8 +1010,8 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_start_with_token_marks_reconnectable_flag() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
 
@@ -1034,8 +1031,8 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_send_db_request_prefixes_u32_request_id_before_payload() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
         client.connection_closed.store(false, Ordering::SeqCst);
@@ -1056,8 +1053,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_handle_db_response_uses_u32_request_id() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
         let mut server = WebsocketServerFixture::new().await;
@@ -1219,8 +1216,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
     async fn test_reconnects_after_server_restart_when_reconnectable() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
         let mut server = WebsocketServerFixture::new().await;
@@ -1260,8 +1257,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
     async fn test_notifies_shutdown_when_disconnected_without_ltk() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
         let mut server = WebsocketServerFixture::new().await;
@@ -1788,8 +1785,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_reconnect_race_condition_protection() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
 
