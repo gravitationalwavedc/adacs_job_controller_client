@@ -210,13 +210,13 @@ pub unsafe fn MyPy_IsNone(obj: *mut PyObject) -> bool {
 // at runtime via binary patching, exactly as the C++ code does.
 #[unsafe(no_mangle)]
 pub extern "C" fn myPyGILState_Ensure() -> PyGILState_STATE {
-    tracing::info!("myPyGILState_Ensure called");
+    tracing::trace!("myPyGILState_Ensure called");
     PY_GILSTATE_LOCKED
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn myPyGILState_Release(_state: PyGILState_STATE) {
-    tracing::info!("myPyGILState_Release called");
+    tracing::trace!("myPyGILState_Release called");
 }
 
 // ─── subhook FFI bindings ────────────────────────────────────────────────────

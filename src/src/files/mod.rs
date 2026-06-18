@@ -22,7 +22,7 @@ use tokio_tungstenite::{
         protocol::Message as WsMessage,
     },
 };
-use tracing::{debug, error};
+use tracing::{debug, error, trace, warn};
 
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(4)));
@@ -179,11 +179,11 @@ pub fn handle_file_download(mut msg: Message) {
     let mut file_path = msg.pop_string();
 
     tokio::spawn(async move {
-        error!(
+        debug!(
             "handle_file_download: SPAWNED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
             job_id, uuid, bundle_hash, file_path
         );
-        error!(
+        debug!(
             "handle_file_download: STARTED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
             job_id, uuid, bundle_hash, file_path
         );
@@ -195,7 +195,7 @@ pub fn handle_file_download(mut msg: Message) {
         let request = match build_file_ws_request(ws_endpoint, &uuid) {
             Ok(request) => request,
             Err(e) => {
-                error!(
+                warn!(
                     "handle_file_download: Failed to build file download request: {}",
                     e
                 );
@@ -206,7 +206,7 @@ pub fn handle_file_download(mut msg: Message) {
         let (ws_stream, _) = match connect_async(request).await {
             Ok(s) => s,
             Err(e) => {
-                error!(
+                warn!(
                     "handle_file_download: Failed to connect for file download: {}",
                     e
                 );
@@ -217,36 +217,36 @@ pub fn handle_file_download(mut msg: Message) {
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
         if wait_for_server_ready(&mut ws_receiver).await.is_none() {
-            error!("handle_file_download: Failed to receive SERVER_READY");
+            warn!("handle_file_download: Failed to receive SERVER_READY");
             return;
         }
 
-        error!("handle_file_download: SERVER_READY received, resolving working directory for job_id={}", job_id);
+        debug!("handle_file_download: SERVER_READY received, resolving working directory for job_id={}", job_id);
         let working_directory = if job_id != 0 {
-            error!(
+            debug!(
                 "handle_file_download: Looking up job {} in database",
                 job_id
             );
             match db::get_job_by_job_id(job_id).await {
                 Ok(Some(job)) => {
-                    error!(
+                    debug!(
                         "handle_file_download: Job found, submitting={}",
                         job.submitting
                     );
                     if job.submitting {
-                        error!("handle_file_download: Job is not submitted, sending error");
+                        warn!("handle_file_download: Job is not submitted, sending error");
                         send_download_error(&mut ws_sender, &uuid, "Job is not submitted").await;
                         return;
                     }
                     job.working_directory
                 }
                 Ok(None) => {
-                    error!("handle_file_download: Job {} not found in database", job_id);
+                    warn!("handle_file_download: Job {} not found in database", job_id);
                     send_download_error(&mut ws_sender, &uuid, "Job does not exist").await;
                     return;
                 }
                 Err(e) => {
-                    error!(
+                    warn!(
                         "handle_file_download: Database error for job {}: {}",
                         job_id, e
                     );
@@ -256,7 +256,7 @@ pub fn handle_file_download(mut msg: Message) {
                 }
             }
         } else {
-            error!("handle_file_download: Using bundle manager for working_directory");
+            debug!("handle_file_download: Using bundle manager for working_directory");
             let bundle_hash_clone = bundle_hash.clone();
             let file_path_clone = file_path.clone();
             tokio::task::spawn_blocking(move || {
@@ -278,21 +278,21 @@ pub fn handle_file_download(mut msg: Message) {
             })
         };
 
-        error!(
+        debug!(
             "handle_file_download: working_directory={}, file_path={}",
             working_directory, file_path
         );
         file_path = file_path.trim_start_matches('/').to_string();
 
         let full_path = Path::new(&working_directory).join(&file_path);
-        error!("handle_file_download: full_path={:?}", full_path);
+        debug!("handle_file_download: full_path={:?}", full_path);
         let abs_path = match fs::canonicalize(&full_path).await {
             Ok(path) => {
-                error!("handle_file_download: canonicalized path={:?}", path);
+                debug!("handle_file_download: canonicalized path={:?}", path);
                 path
             }
             Err(e) => {
-                error!("handle_file_download: Failed to canonicalize path: {}", e);
+                warn!("handle_file_download: Failed to canonicalize path: {}", e);
                 send_download_error(
                     &mut ws_sender,
                     &uuid,
@@ -304,7 +304,7 @@ pub fn handle_file_download(mut msg: Message) {
         };
 
         if !validate_path_is_within(&abs_path, &working_directory).await {
-            error!("handle_file_download: Path validation failed - outside working directory");
+            warn!("handle_file_download: Path validation failed - outside working directory");
             send_download_error(
                 &mut ws_sender,
                 &uuid,
@@ -314,14 +314,14 @@ pub fn handle_file_download(mut msg: Message) {
             return;
         }
 
-        error!("handle_file_download: Getting file metadata");
+        debug!("handle_file_download: Getting file metadata");
         let file_meta = match fs::metadata(&abs_path).await {
             Ok(m) if m.is_file() => {
-                error!("handle_file_download: File found, size={} bytes", m.len());
+                debug!("handle_file_download: File found, size={} bytes", m.len());
                 m
             }
             Ok(m) => {
-                error!(
+                warn!(
                     "handle_file_download: Path is not a file (is_directory={})",
                     m.is_dir()
                 );
@@ -330,7 +330,7 @@ pub fn handle_file_download(mut msg: Message) {
                 return;
             }
             Err(e) => {
-                error!("handle_file_download: Failed to get file metadata: {}", e);
+                warn!("handle_file_download: Failed to get file metadata: {}", e);
                 send_download_error(
                     &mut ws_sender,
                     &uuid,
@@ -342,7 +342,7 @@ pub fn handle_file_download(mut msg: Message) {
         };
 
         let file_size = file_meta.len();
-        error!(
+        debug!(
             "handle_file_download: Sending FILE_DOWNLOAD_DETAILS (file_size={} bytes)",
             file_size
         );
@@ -352,22 +352,22 @@ pub fn handle_file_download(mut msg: Message) {
             .send(WsMessage::Binary(details_msg.get_data().clone().into()))
             .await
         {
-            error!(
+            warn!(
                 "handle_file_download: Failed to send FILE_DOWNLOAD_DETAILS: {}",
                 e
             );
             return;
         }
-        error!("handle_file_download: FILE_DOWNLOAD_DETAILS sent successfully");
+        debug!("handle_file_download: FILE_DOWNLOAD_DETAILS sent successfully");
 
-        error!("handle_file_download: Opening file for reading");
+        debug!("handle_file_download: Opening file for reading");
         let mut file = match File::open(&abs_path).await {
             Ok(f) => {
-                error!("handle_file_download: File opened successfully");
+                debug!("handle_file_download: File opened successfully");
                 f
             }
             Err(e) => {
-                error!("Failed to open file for download: {}", e);
+                warn!("Failed to open file for download: {}", e);
                 send_download_error(&mut ws_sender, &uuid, "Failed to open file for download")
                     .await;
                 return;
@@ -403,15 +403,15 @@ pub fn handle_file_download(mut msg: Message) {
 
             let n = match file.read(&mut buffer).await {
                 Ok(0) => {
-                    error!("handle_file_download: End of file reached");
+                    trace!("handle_file_download: End of file reached");
                     break;
                 }
                 Ok(n) => {
-                    error!("handle_file_download: Read {} bytes from file", n);
+                    trace!("handle_file_download: Read {} bytes from file", n);
                     n
                 }
                 Err(e) => {
-                    error!("Error reading file: {}", e);
+                    warn!("Error reading file: {}", e);
                     let mut err_msg = Message::new(FILE_DOWNLOAD_ERROR, Priority::Highest, &uuid);
                     err_msg.push_string("Exception reading file");
                     let _ = ws_sender
@@ -422,9 +422,10 @@ pub fn handle_file_download(mut msg: Message) {
             };
 
             total_bytes += n;
-            error!(
+            trace!(
                 "handle_file_download: Sending chunk {} (total: {} bytes)",
-                total_bytes, n
+                total_bytes,
+                n
             );
 
             let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, &uuid);
@@ -433,16 +434,16 @@ pub fn handle_file_download(mut msg: Message) {
                 .send(WsMessage::Binary(chunk_msg.get_data().clone().into()))
                 .await
             {
-                Ok(()) => error!("handle_file_download: Chunk sent successfully"),
+                Ok(()) => trace!("handle_file_download: Chunk sent successfully"),
                 Err(e) => {
-                    error!("handle_file_download: Failed to send chunk: {}", e);
+                    warn!("handle_file_download: Failed to send chunk: {}", e);
                     break;
                 }
             }
             // Yield to allow pause/resume messages to be processed
             tokio::task::yield_now().await;
         }
-        error!(
+        debug!(
             "handle_file_download: COMPLETED - downloaded {} bytes in {:?}",
             total_bytes,
             download_start.elapsed()
@@ -519,7 +520,7 @@ fn handle_file_upload_internal(
         let request = match build_file_ws_request(&ws_endpoint, &uuid) {
             Ok(request) => request,
             Err(e) => {
-                error!("Failed to build file upload request: {}", e);
+                warn!("Failed to build file upload request: {}", e);
                 return;
             }
         };
@@ -527,7 +528,7 @@ fn handle_file_upload_internal(
         let (ws_stream, _) = match connect_async(request).await {
             Ok(s) => s,
             Err(e) => {
-                error!("Failed to connect for file upload: {}", e);
+                warn!("Failed to connect for file upload: {}", e);
                 return;
             }
         };
@@ -602,7 +603,7 @@ fn handle_file_upload_internal(
         let mut file = match File::create(&full_path).await {
             Ok(f) => f,
             Err(e) => {
-                error!("Failed to create file: {}", e);
+                warn!("Failed to create file: {}", e);
                 send_upload_error(
                     &mut ws_sender,
                     &uuid,
@@ -621,7 +622,7 @@ fn handle_file_upload_internal(
                 if m.id == FILE_UPLOAD_CHUNK {
                     let chunk = m.pop_bytes();
                     if let Err(e) = file.write_all(&chunk).await {
-                        error!("Failed to write chunk: {}", e);
+                        warn!("Failed to write chunk: {}", e);
                         let _ = fs::remove_file(&full_path).await;
                         send_upload_error(&mut ws_sender, &uuid, "Failed to write chunk to file")
                             .await;
@@ -642,7 +643,7 @@ fn handle_file_upload_internal(
                         return;
                     }
                     if let Err(e) = file.flush().await {
-                        error!("Failed to flush uploaded file: {}", e);
+                        warn!("Failed to flush uploaded file: {}", e);
                         let _ = fs::remove_file(&full_path).await;
                         send_upload_error(
                             &mut ws_sender,
@@ -653,7 +654,7 @@ fn handle_file_upload_internal(
                         return;
                     }
                     if let Err(e) = file.sync_all().await {
-                        error!("Failed to sync uploaded file: {}", e);
+                        warn!("Failed to sync uploaded file: {}", e);
                         let _ = fs::remove_file(&full_path).await;
                         send_upload_error(
                             &mut ws_sender,
@@ -706,25 +707,25 @@ async fn wait_for_server_ready(
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
             let msg = Message::from_data(data.to_vec());
             if msg.id != SERVER_READY {
-                error!("Expected SERVER_READY, got {}", msg.id);
+                warn!("Expected SERVER_READY, got {}", msg.id);
                 return None;
             }
             Some(msg)
         }
         Ok(Some(Ok(_))) => {
-            error!("Expected binary SERVER_READY, got unexpected frame");
+            warn!("Expected binary SERVER_READY, got unexpected frame");
             None
         }
         Ok(Some(Err(e))) => {
-            error!("Handshake error: {}", e);
+            warn!("Handshake error: {}", e);
             None
         }
         Ok(None) => {
-            error!("Server closed connection before sending SERVER_READY");
+            warn!("Server closed connection before sending SERVER_READY");
             None
         }
         Err(_) => {
-            error!("Timeout waiting for SERVER_READY");
+            warn!("Timeout waiting for SERVER_READY");
             None
         }
     }

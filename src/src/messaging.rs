@@ -2,7 +2,7 @@
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::Cursor;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 pub const SYSTEM_SOURCE: &str = "system";
 
@@ -136,7 +136,7 @@ impl Message {
 
     pub fn pop_ubyte(&mut self) -> u8 {
         if self.index + 1 > self.data.len() {
-            tracing::error!("pop_ubyte: buffer underflow at index {}", self.index);
+            warn!("pop_ubyte: buffer underflow at index {}", self.index);
             return 0;
         }
         let value = self.data[self.index];
@@ -155,7 +155,7 @@ impl Message {
 
     pub fn pop_byte(&mut self) -> i8 {
         if self.index + 1 > self.data.len() {
-            tracing::error!("pop_byte: buffer underflow at index {}", self.index);
+            warn!("pop_byte: buffer underflow at index {}", self.index);
             return 0;
         }
         let value = self.data[self.index] as i8;
@@ -169,7 +169,7 @@ impl Message {
 
     pub fn pop_ushort(&mut self) -> u16 {
         if self.index + 2 > self.data.len() {
-            tracing::error!("pop_ushort: buffer underflow at index {}", self.index);
+            warn!("pop_ushort: buffer underflow at index {}", self.index);
             return 0;
         }
         let mut rdr = Cursor::new(&self.data[self.index..]);
@@ -184,7 +184,7 @@ impl Message {
 
     pub fn pop_short(&mut self) -> i16 {
         if self.index + 2 > self.data.len() {
-            tracing::error!("pop_short: buffer underflow at index {}", self.index);
+            warn!("pop_short: buffer underflow at index {}", self.index);
             return 0;
         }
         let mut rdr = Cursor::new(&self.data[self.index..]);
@@ -200,7 +200,7 @@ impl Message {
 
     pub fn pop_uint(&mut self) -> u32 {
         if self.index + 4 > self.data.len() {
-            tracing::error!("pop_uint: buffer underflow at index {}", self.index);
+            warn!("pop_uint: buffer underflow at index {}", self.index);
             return 0;
         }
         let mut rdr = Cursor::new(&self.data[self.index..]);
@@ -220,7 +220,7 @@ impl Message {
 
     pub fn pop_int(&mut self) -> i32 {
         if self.index + 4 > self.data.len() {
-            tracing::error!("pop_int: buffer underflow at index {}", self.index);
+            warn!("pop_int: buffer underflow at index {}", self.index);
             return 0;
         }
         let mut rdr = Cursor::new(&self.data[self.index..]);
@@ -236,7 +236,7 @@ impl Message {
 
     pub fn pop_ulong(&mut self) -> u64 {
         if self.index + 8 > self.data.len() {
-            tracing::error!("pop_ulong: buffer underflow at index {}", self.index);
+            warn!("pop_ulong: buffer underflow at index {}", self.index);
             return 0;
         }
         let mut rdr = Cursor::new(&self.data[self.index..]);
@@ -256,7 +256,7 @@ impl Message {
 
     pub fn pop_long(&mut self) -> i64 {
         if self.index + 8 > self.data.len() {
-            tracing::error!("pop_long: buffer underflow at index {}", self.index);
+            warn!("pop_long: buffer underflow at index {}", self.index);
             return 0;
         }
         let mut rdr = Cursor::new(&self.data[self.index..]);
@@ -271,7 +271,7 @@ impl Message {
 
     pub fn pop_float(&mut self) -> f32 {
         if self.index + 4 > self.data.len() {
-            tracing::error!("pop_float: buffer underflow at index {}", self.index);
+            warn!("pop_float: buffer underflow at index {}", self.index);
             return 0.0;
         }
         let mut rdr = Cursor::new(&self.data[self.index..]);
@@ -286,7 +286,7 @@ impl Message {
 
     pub fn pop_double(&mut self) -> f64 {
         if self.index + 8 > self.data.len() {
-            tracing::error!("pop_double: buffer underflow at index {}", self.index);
+            warn!("pop_double: buffer underflow at index {}", self.index);
             return 0.0;
         }
         let mut rdr = Cursor::new(&self.data[self.index..]);
@@ -325,7 +325,7 @@ impl Message {
             return Vec::new();
         }
         if self.index + len > self.data.len() {
-            tracing::error!("pop_bytes: length {} exceeds remaining buffer size", len);
+            warn!("pop_bytes: length {} exceeds remaining buffer size", len);
             return Vec::new();
         }
         let value = self.data[self.index..self.index + len].to_vec();

@@ -11,7 +11,7 @@ use flate2::Compression;
 use serde_json::{json, Value};
 use std::path::Path;
 use tar::Builder;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use tokio::sync::Mutex as TokioMutex;
 use walkdir::WalkDir;
@@ -42,7 +42,7 @@ pub fn handle_job_submit(mut msg: Message) {
     tokio::spawn(async move {
         let ws = get_websocket_client();
         if ws.is_connection_closed() || !ws.is_server_ready() {
-            info!(
+            debug!(
                 "Delaying job submit for job {} until server is ready (connected={}, ready={})",
                 job_id,
                 !ws.is_connection_closed(),
@@ -72,14 +72,14 @@ pub fn handle_job_submit(mut msg: Message) {
                     job_model.submitting_count = 0;
                     job_model.job_id = Some(0);
                 } else {
-                    info!("Job with ID {} is being submitted, nothing to do", job_id);
+                    debug!("Job with ID {} is being submitted, nothing to do", job_id);
                     let _ = db::save_job(job_model).await;
                     return;
                 }
             }
 
             if job_model.job_id.unwrap_or(0) != 0 && job_model.job_id.unwrap_or(0) == job_id {
-                info!(
+                debug!(
                     "Job with ID {} has already been submitted, checking status...",
                     job_id
                 );
@@ -103,7 +103,7 @@ pub fn handle_job_submit(mut msg: Message) {
             }
         }
 
-        info!(
+        debug!(
             "handle_job_submit: submitting job_id={} with bundle_hash={}",
             job_id, bundle_hash
         );
@@ -130,7 +130,7 @@ pub fn handle_job_submit(mut msg: Message) {
             error!("handle_job_submit: spawn_blocking error: {}", e);
             String::new()
         });
-        info!(
+        debug!(
             "handle_job_submit: resolved working directory for ui job id {}: {}",
             job_id, working_dir
         );
@@ -167,7 +167,7 @@ pub fn handle_job_submit(mut msg: Message) {
             error!("handle_job_submit: spawn_blocking error: {}", e);
             0u64
         });
-        info!(
+        debug!(
             "handle_job_submit: bundle submit returned scheduler id {} for ui job id {}",
             scheduler_id, job_id
         );
@@ -175,7 +175,7 @@ pub fn handle_job_submit(mut msg: Message) {
         job_model.scheduler_id = Some(scheduler_id as i64);
 
         if scheduler_id == 0 {
-            error!("Job with UI ID {} could not be submitted", job_id);
+            warn!("Job with UI ID {} could not be submitted", job_id);
             let _ = db::delete_job(job_model.id).await;
 
             let ws = get_websocket_client();
@@ -288,7 +288,7 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
             let what = stat["what"].as_str().unwrap_or("");
 
             if json_status.is_null() {
-                info!("A. jsonStatus was null");
+                trace!("check_job_status: jsonStatus was null");
                 continue;
             }
 
@@ -362,12 +362,12 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
     }
 
     if job_error != 0 || (status_json["complete"].as_bool().unwrap_or(false) && job_complete) {
-        info!("A. Job Complete save");
+        debug!("check_job_status: job complete, saving to DB");
         let mut job_to_save = job.clone();
         job_to_save.running = false;
         let _ = db::save_job(job_to_save).await;
 
-        info!("A. Archive Job");
+        debug!("check_job_status: archiving job");
         if let Err(e) = archive_job(&job).await {
             warn!("Archive failed for job {}: {}", job.job_id.unwrap_or(0), e);
         }
@@ -387,27 +387,27 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
             result.get_data().clone(),
             Priority::Medium,
         );
-        info!("A. Send job completion message on ws done");
+        trace!("check_job_status: job completion message queued on ws");
     }
 }
 
 pub async fn check_all_jobs_status() {
     let ws = get_websocket_client();
     if ws.is_connection_closed() || !ws.is_server_ready() {
-        info!("Skipping job status check while WebSocket is disconnected");
+        debug!("Skipping job status check while WebSocket is disconnected");
         return;
     }
 
-    info!("Checking status of running jobs...");
+    trace!("Checking status of running jobs...");
     let get_running_start = std::time::Instant::now();
     let jobs = match db::get_running_jobs().await {
         Ok(j) => j,
         Err(e) => {
-            error!("Failed to get running jobs: {}", e);
+            warn!("Failed to get running jobs: {}", e);
             return;
         }
     };
-    info!(
+    debug!(
         "There are {} running jobs (get_running_jobs took {:?}).",
         jobs.len(),
         get_running_start.elapsed()
@@ -447,7 +447,7 @@ pub async fn archive_job(job: &job::Model) -> Result<(), String> {
     let working_dir = job.working_directory.clone();
     let job_id = job.job_id.unwrap_or(0);
 
-    info!("Archiving job {}", job_id);
+    debug!("Archiving job {}", job_id);
 
     let result = tokio::task::spawn_blocking(move || {
         let dir = Path::new(&working_dir);
@@ -458,7 +458,7 @@ pub async fn archive_job(job: &job::Model) -> Result<(), String> {
 
     match result {
         Ok(Ok(())) => {
-            info!("Archiving job {} completed successfully", job_id);
+            debug!("Archiving job {} completed successfully", job_id);
             Ok(())
         }
         Ok(Err(e)) => {
@@ -514,7 +514,7 @@ pub fn handle_job_cancel(mut msg: Message) {
         };
 
         if job_model.id == 0 || !job_model.running || job_model.submitting {
-            error!(
+            warn!(
                 "Job does not exist ({}), or job is in an invalid state",
                 job_id
             );
@@ -540,7 +540,7 @@ pub fn handle_job_cancel(mut msg: Message) {
             .await
             .unwrap_or_default();
         if db_status.iter().any(|s| s.state as u32 == CANCELLED) {
-            info!(
+            debug!(
                 "Job {} already has CANCELLED status, skipping cancel",
                 job_id
             );
@@ -548,7 +548,7 @@ pub fn handle_job_cancel(mut msg: Message) {
         }
 
         // Force a status check
-        info!("Cancel: About to check status for job {}", job_id);
+        debug!("Cancel: About to check status for job {}", job_id);
         check_job_status(job_model.clone(), false).await;
         match db::get_job_by_id(job_model.id).await {
             Ok(Some(j)) => job_model = j,
@@ -561,7 +561,7 @@ pub fn handle_job_cancel(mut msg: Message) {
                 return;
             }
         }
-        info!(
+        debug!(
             "Cancel: After status check, job.running = {}",
             job_model.running
         );
@@ -653,7 +653,7 @@ pub fn handle_job_delete(mut msg: Message) {
         };
 
         if job_model.id == 0 || job_model.running || job_model.submitting || job_model.deleted {
-            error!(
+            warn!(
                 "Job does not exist ({}), is currently running, or has already been deleted.",
                 job_id
             );

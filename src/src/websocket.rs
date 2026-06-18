@@ -116,13 +116,13 @@ impl TungsteniteWebsocketClient {
         let ping_ts = self.ping_timestamp.load(Ordering::SeqCst);
         let latency = if ping_ts != 0 { now - ping_ts } else { -1 };
         self.pong_timestamp.store(now, Ordering::SeqCst);
-        info!("WS: Received pong at {} (latency: {}ms)", now, latency);
+        debug!("WS: Received pong at {} (latency: {}ms)", now, latency);
     }
 
     fn handle_ping() {
         // When we receive a ping from the server, we should respond with a pong
         // tungstenite handles this automatically, but we track it
-        info!("WS: Received ping from server");
+        trace!("WS: Received ping from server");
     }
 
     /// Returns true if any priority queue below `max_priority` holds data, or if
@@ -181,7 +181,7 @@ impl TungsteniteWebsocketClient {
             let mut map = priority.lock();
             map.retain(|_, q| !q.is_empty());
         }
-        info!("WS: Pruned empty queue sources");
+        debug!("WS: Pruned empty queue sources");
     }
 
     /// Check ping/pong health (matches C++ checkPings)
@@ -286,27 +286,33 @@ impl TungsteniteWebsocketClient {
                 match msg {
                     Ok(WsMessage::Binary(data)) => {
                         let data_len = data.len();
-                        info!(
+                        trace!(
                             "WS: Received binary message (size: {} bytes, total received: {})",
-                            data_len, recv_count
+                            data_len,
+                            recv_count
                         );
                         let message = Message::from_data(data.to_vec());
-                        info!(
+                        trace!(
                             "WS: Parsed message - id: {}, source: {}, priority: {:?}",
-                            message.id, message.source, message.priority
+                            message.id,
+                            message.source,
+                            message.priority
                         );
                         client.handle_message(message);
                     }
                     Ok(WsMessage::Text(text)) => {
                         let text_len = text.len();
-                        info!(
+                        trace!(
                             "WS: Received text message (size: {} bytes, total received: {})",
-                            text_len, recv_count
+                            text_len,
+                            recv_count
                         );
                         let message = Message::from_data(text.as_bytes().to_vec());
-                        info!(
+                        trace!(
                             "WS: Parsed message - id: {}, source: {}, priority: {:?}",
-                            message.id, message.source, message.priority
+                            message.id,
+                            message.source,
+                            message.priority
                         );
                         client.handle_message(message);
                     }
@@ -317,7 +323,7 @@ impl TungsteniteWebsocketClient {
                         client.handle_pong();
                     }
                     Ok(WsMessage::Close(_)) => {
-                        info!("WS: Connection closed");
+                        debug!("WS: Connection closed");
                         client.handle_disconnect(&disconnect_for_read);
                         break;
                     }
@@ -350,7 +356,7 @@ impl TungsteniteWebsocketClient {
                 tokio::select! {
                     msg = writer_rx.recv() => {
                         let Some(msg) = msg else {
-                            info!("WS: Writer channel closed");
+                            debug!("WS: Writer channel closed");
                             break;
                         };
                         let msg_size = match &msg {
@@ -358,7 +364,7 @@ impl TungsteniteWebsocketClient {
                             WsMessage::Text(text) => text.len(),
                             _ => 0,
                         };
-                        debug!("WS: Writer sending message (size: {} bytes, total sent: {})", msg_size, send_count);
+                        trace!("WS: Writer sending message (size: {} bytes, total sent: {})", msg_size, send_count);
                         send_count += 1;
                         let send_start = std::time::Instant::now();
                         trace!("WS: Writer - about to send message (size: {} bytes)", msg_size);
@@ -432,7 +438,7 @@ impl TungsteniteWebsocketClient {
                                 consecutive_count += 1;
                                 let data_len = item.data.len();
                                 trace!("WS: Scheduler - processing item from source '{}' at priority {} - size: {} bytes, consecutive: {}", source, p, data_len, consecutive_count);
-                                debug!("WS: Scheduler sending message at priority {} - size: {} bytes, consecutive: {}", p, data_len, consecutive_count);
+                                trace!("WS: Scheduler sending message at priority {} - size: {} bytes, consecutive: {}", p, data_len, consecutive_count);
                                 if writer_tx_for_scheduler
                                     .send(WsMessage::Binary(item.data.into()))
                                     .is_err()
@@ -487,7 +493,7 @@ impl TungsteniteWebsocketClient {
                 client.pong_timestamp.store(0, Ordering::SeqCst);
                 let now = TungsteniteWebsocketClient::get_epoch_millis();
                 client.ping_timestamp.store(now, Ordering::SeqCst);
-                info!("WS: Sending ping at {}", now);
+                debug!("WS: Sending ping at {}", now);
                 if writer_tx_for_ping
                     .send(WsMessage::Ping(Bytes::new()))
                     .is_err()

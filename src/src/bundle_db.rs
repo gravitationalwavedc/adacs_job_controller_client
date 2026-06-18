@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, trace, warn};
 
 /// Wrapper around `*mut PyObject` that implements `Send` (needed for `Mutex` storage).
 /// Safety: all access to the stored pointer is serialized through the mutex and `PYTHON_MUTEX`.
@@ -182,11 +182,11 @@ unsafe extern "C" fn create_or_update_job(
         &serde_json::to_string(&job_data_clean).unwrap_or_default(),
     );
 
-    info!(
+    debug!(
         "DB: create_or_update_job req - bundle hash: {}, jobId: {}",
         bundle_hash, job_id
     );
-    debug!(
+    trace!(
         "DB: create_or_update_job - job_data_clean: {}",
         serde_json::to_string(&job_data_clean).unwrap_or_default()
     );
@@ -197,11 +197,9 @@ unsafe extern "C" fn create_or_update_job(
             let new_job_id = match parse_create_or_update_response(&response) {
                 Ok(id) => id,
                 Err(message) => {
-                    tracing::error!(
+                    error!(
                         "DB: create_or_update_job parse error for bundle hash: {}, jobId: {}: {}",
-                        bundle_hash,
-                        job_id,
-                        message
+                        bundle_hash, job_id, message
                     );
                     let err_msg = CString::new(message).unwrap();
                     PyErr_SetString(error_obj, err_msg.as_ptr());
@@ -215,18 +213,16 @@ unsafe extern "C" fn create_or_update_job(
             Py_DecRef(value);
             Py_IncRef(dict);
 
-            tracing::info!("DB: create_or_update_job res - jobId: {}", new_job_id);
+            debug!("DB: create_or_update_job res - jobId: {}", new_job_id);
 
             let result = my_py_none_struct();
             Py_IncRef(result);
             result
         }
         Err(e) => {
-            tracing::error!(
+            error!(
                 "DB: create_or_update_job error for bundle hash: {}, jobId: {}: {}",
-                bundle_hash,
-                job_id,
-                e
+                bundle_hash, job_id, e
             );
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
             PyErr_SetString(error_obj, err_msg.as_ptr());
@@ -245,7 +241,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 
     let msg = build_bundle_get_by_id_message(job_id);
 
-    info!(
+    debug!(
         "DB: get_job_by_id req - bundle hash: {}, jobId: {}",
         bundle_hash, job_id
     );
@@ -256,11 +252,9 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
             let job_data_json = match parse_get_job_by_id_response(&response, job_id) {
                 Ok(json) => json,
                 Err(message) => {
-                    tracing::error!(
+                    error!(
                         "DB: get_job_by_id parse error for bundle hash: {}, jobId: {}: {}",
-                        bundle_hash,
-                        job_id,
-                        message
+                        bundle_hash, job_id, message
                     );
                     let err_msg = CString::new(message).unwrap();
                     PyErr_SetString(error_obj, err_msg.as_ptr());
@@ -268,7 +262,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
                 }
             };
 
-            tracing::info!("DB: get_job_by_id res - data: {}", job_data_json);
+            trace!("DB: get_job_by_id res - data: {}", job_data_json);
 
             // Create a dict from the JSON response
             let dict = bundle.json_loads(&job_data_json);
@@ -282,11 +276,9 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
             dict
         }
         Err(e) => {
-            tracing::error!(
+            error!(
                 "DB: get_job_by_id error for bundle hash: {}, jobId: {}: {}",
-                bundle_hash,
-                job_id,
-                e
+                bundle_hash, job_id, e
             );
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
             PyErr_SetString(error_obj, err_msg.as_ptr());
@@ -312,7 +304,7 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
         .unwrap_or(0);
 
     if job_id == 0 {
-        tracing::error!(
+        warn!(
             "DB: delete_job error - no job_id provided for bundle hash: {}",
             bundle_hash
         );
@@ -323,25 +315,23 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
 
     let msg = build_bundle_delete_message(job_id);
 
-    info!(
+    debug!(
         "DB: delete_job req - bundle hash: {}, jobId: {}",
         bundle_hash, job_id
     );
 
     match send_and_wait(msg) {
         Ok(_) => {
-            tracing::info!("DB: delete_job res - success");
+            debug!("DB: delete_job res - success");
 
             let result = my_py_none_struct();
             Py_IncRef(result);
             result
         }
         Err(e) => {
-            tracing::error!(
+            error!(
                 "DB: delete_job error for bundle hash: {}, jobId: {}: {}",
-                bundle_hash,
-                job_id,
-                e
+                bundle_hash, job_id, e
             );
             let err_msg = CString::new(format!("DB error: {e}")).unwrap();
             let error_obj = get_bundle_db_error(&bundle_hash);

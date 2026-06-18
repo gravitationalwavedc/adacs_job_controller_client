@@ -79,7 +79,7 @@ impl BundleManager {
         {
             let bundles = self.bundles.read();
             if let Some(bundle) = bundles.get(bundle_hash) {
-                info!("BundleManager: using cached bundle {}", bundle_hash);
+                debug!("BundleManager: using cached bundle {}", bundle_hash);
                 return bundle.clone();
             }
         }
