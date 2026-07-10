@@ -18,6 +18,14 @@ fn resolve_websocket_token_uses_cli_when_no_ltk() {
 }
 
 #[test]
+fn resolve_websocket_token_trims_cli_token_whitespace() {
+    let args = vec!["client".to_string(), "  cli-token  ".to_string()];
+    let result = resolve_websocket_token(&args, &json!({})).unwrap();
+
+    assert_eq!(result, ("cli-token".to_string(), false));
+}
+
+#[test]
 fn resolve_websocket_token_rejects_both_sources() {
     let args = vec!["client".to_string(), "cli-token".to_string()];
     let err = resolve_websocket_token(&args, &json!({"ltk": "persisted-token"})).unwrap_err();
