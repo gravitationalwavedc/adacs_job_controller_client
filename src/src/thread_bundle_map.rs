@@ -60,3 +60,29 @@ impl Drop for ThreadBundleGuard {
         clear_current_thread_bundle();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_current_thread_bundle_returns_none_when_unset() {
+        clear_current_thread_bundle();
+        assert_eq!(get_current_thread_bundle(), None);
+    }
+
+    #[test]
+    fn get_current_thread_bundle_returns_set_value() {
+        clear_current_thread_bundle();
+        set_current_thread_bundle("abc123".to_string());
+        assert_eq!(get_current_thread_bundle(), Some("abc123".to_string()));
+        clear_current_thread_bundle();
+    }
+
+    #[test]
+    fn get_current_thread_bundle_returns_none_after_clear() {
+        set_current_thread_bundle("hash".to_string());
+        clear_current_thread_bundle();
+        assert_eq!(get_current_thread_bundle(), None);
+    }
+}
