@@ -49,7 +49,12 @@ struct BundleInterfaceInner {
     bundle_hash: String,
 }
 
+// SAFETY: All raw pointer fields (p_global, p_bundle_module, json_module,
+// traceback_module) are owned by the sub-interpreter and only accessed while
+// holding PYTHON_MUTEX. SubInterpreter is Send + Sync; String is Send + Sync.
 unsafe impl Send for BundleInterfaceInner {}
+// SAFETY: Same invariants as Send — raw pointer fields are owned by the
+// sub-interpreter and only accessed while holding PYTHON_MUTEX.
 unsafe impl Sync for BundleInterfaceInner {}
 
 #[derive(Clone)]
