@@ -75,13 +75,6 @@ pub fn restart_app() {
     }
 }
 
-fn get_executable_path() -> PathBuf {
-    std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("./adacs_job_client"))
-        .parent()
-        .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf)
-}
-
 fn resolve_websocket_token(
     args: &[String],
     config: &serde_json::Value,
@@ -151,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::process::exit(0);
     }
 
-    let executable_path = get_executable_path();
+    let executable_path = bundle_manager::get_executable_path();
     let log_dir = executable_path.join("logs");
 
     let config = read_client_config();
