@@ -1408,6 +1408,48 @@ mod tests {
     }
 
     #[test]
+    fn test_check_pings_initial_state_succeeds() {
+        let client = TungsteniteWebsocketClient::new();
+
+        assert_eq!(client.get_ping_timestamp(), 0);
+        assert_eq!(client.get_pong_timestamp(), 0);
+        assert!(
+            client.check_pings().is_ok(),
+            "check_pings should succeed before any ping has been sent"
+        );
+    }
+
+    #[test]
+    fn test_handle_pong_ignores_stale_connection_id() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(2, Ordering::SeqCst);
+        client.ping_timestamp.store(1000, Ordering::SeqCst);
+
+        client.handle_pong(1);
+
+        assert_eq!(
+            client.get_pong_timestamp(),
+            0,
+            "pong from a superseded connection must not update pong_timestamp"
+        );
+    }
+
+    #[test]
+    fn test_handle_pong_updates_current_connection() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(5, Ordering::SeqCst);
+        client.ping_timestamp.store(1000, Ordering::SeqCst);
+
+        client.handle_pong(5);
+
+        assert_ne!(
+            client.get_pong_timestamp(),
+            0,
+            "pong for the active connection should update pong_timestamp"
+        );
+    }
+
+    #[test]
     fn test_prune_sources_removes_empty_queues() {
         let client = TungsteniteWebsocketClient::new();
 
