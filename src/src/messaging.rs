@@ -423,6 +423,20 @@ mod tests {
     }
 
     #[test]
+    fn clone_for_payload_reading_preserves_cursor_when_partially_consumed() {
+        let mut msg = Message::new(1, Priority::Highest, "test");
+        msg.push_uint(123);
+        msg.push_ulong(456);
+
+        let mut read_msg = Message::from_data(msg.get_data().clone());
+        assert_eq!(read_msg.pop_uint(), 123);
+
+        let mut cloned = read_msg.clone_for_payload_reading();
+        assert_eq!(cloned.id, 1);
+        assert_eq!(cloned.pop_ulong(), 456);
+    }
+
+    #[test]
     fn test_primitive_ubyte() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         msg.push_ubyte(1);
