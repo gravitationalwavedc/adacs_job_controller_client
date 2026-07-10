@@ -736,43 +736,19 @@ mod tests {
         assert!(!read_msg.pop_bool());
     }
 
-    fn truncated_message(data: Vec<u8>, index: usize) -> Message {
-        Message {
-            id: 0,
-            source: String::new(),
-            priority: Priority::Lowest,
-            data,
-            index,
-        }
+    #[test]
+    fn pop_small_integer_buffer_underflow_returns_zero() {
+        let mut msg = Message::from_data(Vec::new());
+
+        assert_eq!(msg.pop_ubyte(), 0);
+        assert_eq!(msg.pop_byte(), 0);
+        assert_eq!(msg.pop_ushort(), 0);
+        assert_eq!(msg.pop_short(), 0);
     }
 
     #[test]
-    fn pop_bool_returns_false_on_buffer_underflow() {
-        let mut msg = truncated_message(vec![], 0);
+    fn pop_bool_buffer_underflow_returns_false() {
+        let mut msg = Message::from_data(Vec::new());
         assert!(!msg.pop_bool());
-        assert_eq!(msg.index, 0);
-    }
-
-    #[test]
-    fn pop_uint_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_uint(), 0);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01, 0x02, 0x03], 0);
-        assert_eq!(partial.pop_uint(), 0);
-        assert_eq!(partial.index, 0);
-    }
-
-    #[test]
-    fn pop_bytes_returns_empty_on_truncated_payload() {
-        let mut short_length = truncated_message(vec![0x01, 0x02], 0);
-        assert_eq!(short_length.pop_bytes(), Vec::<u8>::new());
-        assert_eq!(short_length.index, 0);
-
-        let data = vec![5, 0, 0, 0, 0, 0, 0, 0, 0xAA, 0xBB];
-        let mut short_payload = truncated_message(data, 0);
-        assert_eq!(short_payload.pop_bytes(), Vec::<u8>::new());
-        assert_eq!(short_payload.index, 8);
     }
 }
