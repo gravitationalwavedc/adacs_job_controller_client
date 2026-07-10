@@ -266,6 +266,12 @@ mod tests {
     }
 
     #[test]
+    fn get_log_level_whitespace_only_defaults_to_info() {
+        let config = json!({"logLevel": "   "});
+        assert_eq!(get_log_level(&config), "info");
+    }
+
+    #[test]
     fn get_log_level_defaults_to_info_when_missing() {
         let config = json!({});
         assert_eq!(get_log_level(&config), "info");
