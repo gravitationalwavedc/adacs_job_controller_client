@@ -25,6 +25,7 @@ use tracing::{error, info};
 /// - stdout/stderr to log files
 pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
     // First fork
+    // SAFETY: fork() is a POSIX call; parent gets child PID, child gets 0, -1 on error.
     match unsafe { libc::fork() } {
         -1 => {
             error!("fork #1 failed");
@@ -43,22 +44,26 @@ pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
 
     // Decouple from parent environment
     // Change working directory to root to avoid keeping any directory mounted
+    // SAFETY: c"/" is a valid null-terminated C string pointing to a valid directory.
     let ret = unsafe { libc::chdir(c"/".as_ptr()) };
     if ret != 0 {
         tracing::warn!("chdir to / failed: {}", std::io::Error::last_os_error());
     }
 
     // Create a new session and become the session leader
+    // SAFETY: setsid() has no undefined behavior; returns session ID or -1 on error.
     unsafe {
         libc::setsid();
     }
 
     // Reset umask to have full control over file permissions
+    // SAFETY: umask() always succeeds; argument 0 is a valid mode mask.
     unsafe {
         libc::umask(0);
     }
 
     // Second fork
+    // SAFETY: fork() is a POSIX call; parent gets child PID, child gets 0, -1 on error.
     match unsafe { libc::fork() } {
         -1 => {
             error!("fork #2 failed");
@@ -95,6 +100,9 @@ pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
     let _ = io::stdout().flush();
     let _ = io::stderr().flush();
 
+    // SAFETY: fd_in and fd_out are valid open file descriptors obtained from
+    // into_raw_fd(). dup2() atomically duplicates them to stdio slots.
+    // close() is called only when the fd is not already mapped onto 0/1/2.
     unsafe {
         libc::dup2(fd_in, libc::STDIN_FILENO);
         libc::dup2(fd_out, libc::STDOUT_FILENO);
@@ -130,6 +138,7 @@ pub fn daemonize_with_log_redirect(
     log_dir: &std::path::Path,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // First fork
+    // SAFETY: fork() is a POSIX call; parent gets child PID, child gets 0, -1 on error.
     match unsafe { libc::fork() } {
         -1 => {
             error!("fork #1 failed");
@@ -147,20 +156,24 @@ pub fn daemonize_with_log_redirect(
     }
 
     // Decouple from parent environment
+    // SAFETY: c"/" is a valid null-terminated C string pointing to a valid directory.
     let ret = unsafe { libc::chdir(c"/".as_ptr()) };
     if ret != 0 {
         tracing::warn!("chdir to / failed: {}", std::io::Error::last_os_error());
     }
 
+    // SAFETY: setsid() has no undefined behavior; returns session ID or -1 on error.
     unsafe {
         libc::setsid();
     }
 
+    // SAFETY: umask() always succeeds; argument 0 is a valid mode mask.
     unsafe {
         libc::umask(0);
     }
 
     // Second fork
+    // SAFETY: fork() is a POSIX call; parent gets child PID, child gets 0, -1 on error.
     match unsafe { libc::fork() } {
         -1 => {
             error!("fork #2 failed");
@@ -196,6 +209,9 @@ pub fn daemonize_with_log_redirect(
     let _ = io::stdout().flush();
     let _ = io::stderr().flush();
 
+    // SAFETY: fd_in and fd_out are valid open file descriptors obtained from
+    // into_raw_fd(). dup2() atomically duplicates them to stdio slots.
+    // close() is called only when the fd is not already mapped onto 0/1/2.
     unsafe {
         libc::dup2(fd_in, libc::STDIN_FILENO);
         libc::dup2(fd_out, libc::STDOUT_FILENO);
@@ -228,7 +244,8 @@ pub fn daemonize_with_log_redirect(
     let stdout_fd = stdout_file.as_raw_fd();
     let stderr_fd = stderr_file.as_raw_fd();
 
-    // Duplicate file descriptors to stdout/stderr
+    // SAFETY: stdout_fd and stderr_fd are valid open file descriptors obtained
+    // from as_raw_fd(). dup2() atomically duplicates them to stdio slots.
     unsafe {
         libc::dup2(stdout_fd, libc::STDOUT_FILENO);
         libc::dup2(stderr_fd, libc::STDERR_FILENO);
