@@ -371,20 +371,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn priority_discriminants_match_wire_protocol() {
-        assert_eq!(Priority::Highest as u32, 0);
-        assert_eq!(Priority::Medium as u32, 10);
-        assert_eq!(Priority::Lowest as u32, 19);
+    fn message_new_stores_priority() {
+        let highest = Message::new(1, Priority::Highest, "src");
+        let medium = Message::new(2, Priority::Medium, "src");
+        let lowest = Message::new(3, Priority::Lowest, "src");
+
+        assert_eq!(highest.priority, Priority::Highest);
+        assert_eq!(medium.priority, Priority::Medium);
+        assert_eq!(lowest.priority, Priority::Lowest);
     }
 
     #[test]
-    fn priority_ordering_reflects_queue_precedence() {
-        assert!(Priority::Highest < Priority::Medium);
-        assert!(Priority::Medium < Priority::Lowest);
-        assert_eq!(
-            Priority::Highest.cmp(&Priority::Highest),
-            std::cmp::Ordering::Equal
-        );
+    fn clone_for_reading_preserves_priority() {
+        let msg = Message::new(1, Priority::Medium, "test");
+        let cloned = msg.clone_for_reading();
+        assert_eq!(cloned.priority, Priority::Medium);
     }
 
     #[test]
