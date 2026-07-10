@@ -490,54 +490,46 @@ mod tests {
     }
 
     #[test]
-    fn parse_job_maps_zero_optional_ids_to_none() {
-        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(11);
-        msg.push_ulong(0);
-        msg.push_ulong(0);
-        msg.push_bool(false);
-        msg.push_uint(0);
-        msg.push_string("bundle-hash");
-        msg.push_string("/tmp/workdir");
-        msg.push_bool(false);
-        msg.push_bool(false);
-        msg.push_bool(false);
+    fn save_job_serializes_deleting_and_deleted_flags() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|message| {
+            let mut parsed = Message::from_data(message.get_data().clone());
+            assert_eq!(parsed.id, DB_JOB_SAVE);
+            assert_eq!(parsed.pop_ulong(), 5);
+            assert_eq!(parsed.pop_ulong(), 10);
+            assert_eq!(parsed.pop_ulong(), 0);
+            assert!(!parsed.pop_bool());
+            assert_eq!(parsed.pop_uint(), 0);
+            assert_eq!(parsed.pop_string(), "bundle-hash");
+            assert_eq!(parsed.pop_string(), "/tmp/workdir");
+            assert!(!parsed.pop_bool());
+            assert!(parsed.pop_bool(), "deleting flag should be serialized");
+            assert!(parsed.pop_bool(), "deleted flag should be serialized");
 
-        let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(99);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
 
-        assert_eq!(model.id, 11);
-        assert_eq!(model.job_id, None);
-        assert_eq!(model.scheduler_id, None);
-        assert_eq!(model.bundle_hash, "bundle-hash");
-        assert_eq!(model.working_directory, "/tmp/workdir");
-    }
+        let job = job::Model {
+            id: 5,
+            job_id: Some(10),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: "bundle-hash".to_string(),
+            working_directory: "/tmp/workdir".to_string(),
+            running: false,
+            deleting: true,
+            deleted: true,
+        };
 
-    #[test]
-    fn parse_job_reads_boolean_flags_including_deleted() {
-        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(11);
-        msg.push_ulong(22);
-        msg.push_ulong(33);
-        msg.push_bool(true);
-        msg.push_uint(4);
-        msg.push_string("bundle-hash");
-        msg.push_string("/tmp/workdir");
-        msg.push_bool(true);
-        msg.push_bool(true);
-        msg.push_bool(true);
-
-        let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
-
-        assert_eq!(model.id, 11);
-        assert_eq!(model.job_id, Some(22));
-        assert_eq!(model.scheduler_id, Some(33));
-        assert!(model.submitting);
-        assert_eq!(model.submitting_count, 4);
-        assert!(model.running);
-        assert!(model.deleting);
-        assert!(model.deleted);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let saved = rt.block_on(async { save_job(job).await }).unwrap();
+        assert_eq!(saved.id, 99);
     }
 
     #[test]
