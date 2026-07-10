@@ -22,8 +22,8 @@ const GITHUB_LATEST_URL: &str =
 const MAX_DOWNLOAD_RETRIES: u32 = 3;
 const INITIAL_RETRY_DELAY_SECS: u64 = 1;
 
-fn get_current_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+fn get_current_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
 
 /// Returns the path where the update binary should be written.
@@ -101,7 +101,7 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
         Ok(resp) => {
             let result: Value = resp.into_json()?;
             trace!("Update check: received response: {:?}", result);
-            let download_url = parse_release_response(&result, &current_version)
+            let download_url = parse_release_response(&result, current_version)
                 .map_err(|e| format!("Failed to parse release response: {e}"))?;
             if let Some(ref url) = download_url {
                 info!("Update check: update available, download URL={}", url);
@@ -272,7 +272,7 @@ mod tests {
     fn test_get_current_version() {
         let version = get_current_version();
         assert!(
-            Version::parse(&version).is_ok(),
+            Version::parse(version).is_ok(),
             "CARGO_PKG_VERSION '{version}' is not valid semver"
         );
         assert!(!version.is_empty());
