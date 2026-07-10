@@ -365,6 +365,31 @@ mod tests {
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
+    fn get_running_jobs_sends_header_only_request() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let expected_data = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Medium, "database")
+            .get_data()
+            .clone();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request()
+            .times(1)
+            .returning(move |message| {
+                assert_eq!(message.get_data(), &expected_data);
+
+                let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+                resp.push_uint(0);
+                Box::pin(async move { Ok(resp) })
+            });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let jobs = rt.block_on(async { get_running_jobs().await }).unwrap();
+
+        assert!(jobs.is_empty());
+    }
+
+    #[test]
     fn get_running_jobs_parses_server_payload_without_success_flag() {
         let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
