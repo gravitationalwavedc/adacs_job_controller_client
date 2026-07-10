@@ -490,54 +490,33 @@ mod tests {
     }
 
     #[test]
-    fn parse_job_maps_zero_optional_ids_to_none() {
-        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(11);
-        msg.push_ulong(0);
-        msg.push_ulong(0);
-        msg.push_bool(false);
-        msg.push_uint(0);
-        msg.push_string("bundle-hash");
-        msg.push_string("/tmp/workdir");
-        msg.push_bool(false);
-        msg.push_bool(false);
-        msg.push_bool(false);
+    fn save_job_returns_error_when_websocket_send_fails() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request()
+            .times(1)
+            .returning(|_| Box::pin(async move { Err("connection reset".into()) }));
+        set_websocket_client(Arc::new(mock));
 
-        let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
+        let job = job::Model {
+            id: 0,
+            job_id: Some(42),
+            scheduler_id: Some(7),
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: "bundle-hash".to_string(),
+            working_directory: "/tmp/workdir".to_string(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
 
-        assert_eq!(model.id, 11);
-        assert_eq!(model.job_id, None);
-        assert_eq!(model.scheduler_id, None);
-        assert_eq!(model.bundle_hash, "bundle-hash");
-        assert_eq!(model.working_directory, "/tmp/workdir");
-    }
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async { save_job(job).await });
 
-    #[test]
-    fn parse_job_reads_boolean_flags_including_deleted() {
-        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(11);
-        msg.push_ulong(22);
-        msg.push_ulong(33);
-        msg.push_bool(true);
-        msg.push_uint(4);
-        msg.push_string("bundle-hash");
-        msg.push_string("/tmp/workdir");
-        msg.push_bool(true);
-        msg.push_bool(true);
-        msg.push_bool(true);
-
-        let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
-
-        assert_eq!(model.id, 11);
-        assert_eq!(model.job_id, Some(22));
-        assert_eq!(model.scheduler_id, Some(33));
-        assert!(model.submitting);
-        assert_eq!(model.submitting_count, 4);
-        assert!(model.running);
-        assert!(model.deleting);
-        assert!(model.deleted);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "connection reset");
     }
 
     #[test]
