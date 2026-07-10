@@ -427,3 +427,24 @@ pub fn get_default_bundle_path() -> String {
     path.push("bundles");
     path.to_string_lossy().to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_executable_path_matches_current_exe() {
+        let expected = std::env::current_exe().expect("test binary path should be available");
+        assert_eq!(get_executable_path(), expected);
+    }
+
+    #[test]
+    fn get_executable_path_returns_absolute_existing_file() {
+        let path = get_executable_path();
+        assert!(path.is_absolute(), "path should be absolute: {path:?}");
+        assert!(
+            path.is_file(),
+            "path should point to the running binary: {path:?}"
+        );
+    }
+}
