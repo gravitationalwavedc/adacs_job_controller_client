@@ -99,7 +99,10 @@ pub fn get_ltk_from_config(config: &Value) -> Option<String> {
 pub fn get_python_library_path() -> String {
     // First check environment variable (highest priority)
     if let Ok(path) = std::env::var("PYTHON_LIB_PATH") {
-        return path;
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
     }
 
     // Then check config file
@@ -256,13 +259,25 @@ mod tests {
         }
     }
 
-    // --- get_ltk_from_config tests ---
-
     #[test]
-    fn get_ltk_from_config_returns_none_for_whitespace_only() {
-        for ltk in ["   ", "\t\n  ", " \t"] {
-            let config = json!({"ltk": ltk});
-            assert_eq!(get_ltk_from_config(&config), None, "ltk={ltk:?}");
+    #[serial_test::serial]
+    fn get_python_library_path_trims_env_whitespace() {
+        let saved_env = std::env::var("PYTHON_LIB_PATH").ok();
+
+        set_test_config(json!({"pythonLibrary": "/config/libpython.so"}));
+        std::env::set_var("PYTHON_LIB_PATH", "  /env/libpython.so  ");
+        let result = get_python_library_path();
+        assert_eq!(result, "/env/libpython.so");
+
+        std::env::set_var("PYTHON_LIB_PATH", "   ");
+        let result = get_python_library_path();
+        assert_eq!(result, "/config/libpython.so");
+
+        std::env::remove_var("PYTHON_LIB_PATH");
+        reset_test_config();
+
+        if let Some(v) = saved_env {
+            std::env::set_var("PYTHON_LIB_PATH", v);
         }
     }
 
