@@ -346,19 +346,37 @@ mod tests {
     };
     use std::sync::{Arc, Mutex};
 
-    fn make_job_response() -> Message {
-        let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        resp.push_uint(1);
-        resp.push_ulong(11);
-        resp.push_ulong(22);
-        resp.push_ulong(33);
+    fn push_job_fields(
+        resp: &mut Message,
+        id: u64,
+        job_id: u64,
+        scheduler_id: u64,
+        bundle_hash: &str,
+    ) {
+        resp.push_ulong(id);
+        resp.push_ulong(job_id);
+        resp.push_ulong(scheduler_id);
         resp.push_bool(true);
         resp.push_uint(4);
-        resp.push_string("bundle-hash");
+        resp.push_string(bundle_hash);
         resp.push_string("/tmp/workdir");
         resp.push_bool(true);
         resp.push_bool(false);
         resp.push_bool(false);
+    }
+
+    fn make_job_response() -> Message {
+        let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        resp.push_uint(1);
+        push_job_fields(&mut resp, 11, 22, 33, "bundle-hash");
+        resp
+    }
+
+    fn make_two_job_response() -> Message {
+        let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        resp.push_uint(2);
+        push_job_fields(&mut resp, 11, 22, 33, "bundle-hash-a");
+        push_job_fields(&mut resp, 101, 202, 303, "bundle-hash-b");
         resp
     }
 
@@ -447,28 +465,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_job_reads_deleted_flag() {
-        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(5);
-        msg.push_ulong(0);
-        msg.push_ulong(0);
-        msg.push_bool(false);
-        msg.push_uint(0);
-        msg.push_string("hash");
-        msg.push_string("/work");
-        msg.push_bool(false);
-        msg.push_bool(false);
-        msg.push_bool(true);
+    fn get_running_jobs_parses_multiple_jobs_from_server_payload() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let resp = make_two_job_response();
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
 
-        let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let jobs = rt.block_on(async { get_running_jobs().await }).unwrap();
 
-        assert_eq!(model.id, 5);
-        assert_eq!(model.job_id, None);
-        assert_eq!(model.scheduler_id, None);
-        assert!(!model.running);
-        assert!(!model.deleting);
-        assert!(model.deleted);
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].id, 11);
+        assert_eq!(jobs[0].job_id, Some(22));
+        assert_eq!(jobs[0].scheduler_id, Some(33));
+        assert_eq!(jobs[0].bundle_hash, "bundle-hash-a");
+        assert_eq!(jobs[1].id, 101);
+        assert_eq!(jobs[1].job_id, Some(202));
+        assert_eq!(jobs[1].scheduler_id, Some(303));
+        assert_eq!(jobs[1].bundle_hash, "bundle-hash-b");
     }
 
     #[test]
