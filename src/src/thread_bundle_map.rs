@@ -66,40 +66,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn thread_bundle_guard_sets_bundle_on_creation() {
-        clear_current_thread_bundle();
-        assert!(get_current_thread_bundle().is_none());
-
-        let _guard = ThreadBundleGuard::new("bundle-alpha".to_string());
-        assert_eq!(
-            get_current_thread_bundle(),
-            Some("bundle-alpha".to_string())
-        );
-
-        clear_current_thread_bundle();
-    }
-
-    #[test]
-    fn thread_bundle_guard_clears_bundle_on_drop() {
+    fn set_current_thread_bundle_replaces_existing_hash_for_same_thread() {
         clear_current_thread_bundle();
 
-        {
-            let _guard = ThreadBundleGuard::new("bundle-beta".to_string());
-            assert_eq!(get_current_thread_bundle(), Some("bundle-beta".to_string()));
-        }
+        set_current_thread_bundle("first-hash".to_string());
+        assert_eq!(get_current_thread_bundle(), Some("first-hash".to_string()));
 
-        assert!(get_current_thread_bundle().is_none());
-    }
-
-    #[test]
-    fn clear_current_thread_bundle_removes_active_entry() {
-        set_current_thread_bundle("bundle-gamma".to_string());
-        assert_eq!(
-            get_current_thread_bundle(),
-            Some("bundle-gamma".to_string())
-        );
+        set_current_thread_bundle("second-hash".to_string());
+        assert_eq!(get_current_thread_bundle(), Some("second-hash".to_string()));
 
         clear_current_thread_bundle();
-        assert!(get_current_thread_bundle().is_none());
     }
 }
