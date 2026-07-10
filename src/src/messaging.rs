@@ -453,6 +453,18 @@ mod tests {
     }
 
     #[test]
+    fn pop_byte_interprets_wire_octet_via_cast_signed() {
+        let mut msg = Message::new(1, Priority::Highest, "test");
+        // C++ wire format stores i8 as a single octet; pop_byte uses cast_signed.
+        msg.push_ubyte(255);
+
+        let data = msg.get_data().clone();
+        let mut read_msg = Message::from_data(data);
+
+        assert_eq!(read_msg.pop_byte(), -1);
+    }
+
+    #[test]
     fn test_primitive_ushort() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         msg.push_ushort(0);
