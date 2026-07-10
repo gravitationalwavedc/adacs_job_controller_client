@@ -496,10 +496,10 @@ mod tests {
 
     #[test]
     fn build_bundle_delete_message_sends_only_job_id() {
-        let mut msg = Message::from_data(build_bundle_delete_message(9).get_data().clone());
+        let mut msg = Message::from_data(build_bundle_delete_message(77).get_data().clone());
 
         assert_eq!(msg.id, DB_BUNDLE_DELETE_JOB);
-        assert_eq!(msg.pop_ulong(), 9);
+        assert_eq!(msg.pop_ulong(), 77);
     }
 
     #[test]
