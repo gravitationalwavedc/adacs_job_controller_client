@@ -214,6 +214,16 @@ mod tests {
     }
 
     #[test]
+    fn test_db_bridge_try_get_returns_some_after_start() {
+        reset_websocket_client_for_test();
+        DbBridge::start();
+        assert!(
+            DbBridge::try_get().is_some(),
+            "bridge should be available after start"
+        );
+    }
+
+    #[test]
     fn test_db_bridge_returns_error_while_disconnected() {
         reset_websocket_client_for_test();
         DbBridge::start();
