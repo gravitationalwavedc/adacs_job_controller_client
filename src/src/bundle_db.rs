@@ -531,4 +531,13 @@ mod tests {
         let payload = parse_get_job_by_id_response(&delivered, 9).unwrap();
         assert_eq!(payload, "{\"job_id\":9}");
     }
+
+    #[test]
+    fn parse_get_job_by_id_response_returns_error_when_count_zero() {
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_uint(0);
+
+        let err = parse_get_job_by_id_response(&response, 42).unwrap_err();
+        assert_eq!(err, "Job with ID 42 does not exist.");
+    }
 }
