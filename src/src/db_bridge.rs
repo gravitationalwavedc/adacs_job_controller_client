@@ -206,6 +206,19 @@ mod tests {
     }
 
     #[test]
+    fn test_db_bridge_global_returns_same_instance() {
+        DbBridge::start();
+
+        let first = std::ptr::from_ref(DbBridge::global());
+        let second = std::ptr::from_ref(DbBridge::global());
+
+        assert_eq!(
+            first, second,
+            "DbBridge::global() should return the same singleton instance"
+        );
+    }
+
+    #[test]
     fn test_db_bridge_try_get_returns_none_before_start() {
         assert!(
             DbBridge::try_get().is_none(),
