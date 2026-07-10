@@ -571,8 +571,18 @@ mod tests {
         assert_eq!(saved.id, 77);
     }
 
+    fn make_status_response() -> Message {
+        let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        resp.push_uint(1);
+        resp.push_ulong(55);
+        resp.push_ulong(42);
+        resp.push_string("scheduler_id");
+        resp.push_uint(500);
+        resp
+    }
+
     #[test]
-    fn get_job_status_by_job_id_and_what_empty_count_returns_empty_vec() {
+    fn get_job_status_by_job_id_and_what_sends_job_id_and_what() {
         let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let mut mock = MockWebsocketClient::new();
@@ -582,8 +592,7 @@ mod tests {
             assert_eq!(parsed.pop_ulong(), 42);
             assert_eq!(parsed.pop_string(), "scheduler_id");
 
-            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
-            resp.push_uint(0);
+            let resp = make_status_response();
             Box::pin(async move { Ok(resp) })
         });
         set_websocket_client(Arc::new(mock));
@@ -593,6 +602,42 @@ mod tests {
             .block_on(async { get_job_status_by_job_id_and_what(42, "scheduler_id").await })
             .unwrap();
 
-        assert!(statuses.is_empty());
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].id, 55);
+        assert_eq!(statuses[0].job_id, 42);
+        assert_eq!(statuses[0].what, "scheduler_id");
+        assert_eq!(statuses[0].state, 500);
+    }
+
+    #[test]
+    fn get_job_status_by_job_id_and_what_parses_response_after_request_id_consumed() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut wire_resp = Message::new(DB_RESPONSE, Priority::Highest, "system");
+            wire_resp.push_uint(7);
+            wire_resp.push_uint(1);
+            wire_resp.push_ulong(55);
+            wire_resp.push_ulong(42);
+            wire_resp.push_string("scheduler_id");
+            wire_resp.push_uint(500);
+
+            let mut delivered = Message::from_data(wire_resp.get_data().clone());
+            assert_eq!(delivered.pop_uint(), 7);
+            Box::pin(async move { Ok(delivered) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let statuses = rt
+            .block_on(async { get_job_status_by_job_id_and_what(42, "scheduler_id").await })
+            .unwrap();
+
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].id, 55);
+        assert_eq!(statuses[0].job_id, 42);
+        assert_eq!(statuses[0].what, "scheduler_id");
+        assert_eq!(statuses[0].state, 500);
     }
 }
