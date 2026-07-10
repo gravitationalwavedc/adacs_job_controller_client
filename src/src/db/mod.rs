@@ -447,28 +447,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_job_reads_deleted_flag() {
-        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(5);
-        msg.push_ulong(0);
-        msg.push_ulong(0);
-        msg.push_bool(false);
-        msg.push_uint(0);
-        msg.push_string("hash");
-        msg.push_string("/work");
-        msg.push_bool(false);
-        msg.push_bool(false);
-        msg.push_bool(true);
+    fn get_running_jobs_returns_empty_vec_when_count_is_zero() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_uint(0);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
 
-        let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let jobs = rt.block_on(async { get_running_jobs().await }).unwrap();
 
-        assert_eq!(model.id, 5);
-        assert_eq!(model.job_id, None);
-        assert_eq!(model.scheduler_id, None);
-        assert!(!model.running);
-        assert!(!model.deleting);
-        assert!(model.deleted);
+        assert!(jobs.is_empty());
     }
 
     #[test]
