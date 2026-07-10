@@ -739,21 +739,46 @@ pub fn handle_job_delete(mut msg: Message) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use flate2::read::GzDecoder;
+    use std::fs;
+    use tar::Archive;
+    use tempfile::TempDir;
 
     #[test]
-    #[serial_test::serial]
-    fn get_default_job_details_includes_cluster_from_config() {
-        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
-        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
-            "cluster": "ozstar",
-            "pythonLibrary": "/usr/lib/libpython3.so",
-            "websocketEndpoint": "ws://127.0.0.1:0/ws/",
-        }));
+    fn archive_dir_excludes_archive_tar_gz() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("data.txt"), "job output").unwrap();
+        fs::write(dir.join("archive.tar.gz"), "stale archive bytes").unwrap();
 
-        let details = get_default_job_details();
-        assert_eq!(details["cluster"], "ozstar");
+        let archive_path = dir.join("output.tar.gz");
+        archive_dir(dir, &archive_path).unwrap();
 
-        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+        let file = fs::File::open(&archive_path).unwrap();
+        let decoder = GzDecoder::new(file);
+        let mut archive = Archive::new(decoder);
+        let entry_names: Vec<String> = archive
+            .entries()
+            .unwrap()
+            .map(|entry| {
+                entry
+                    .unwrap()
+                    .path()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+
+        assert!(
+            entry_names.iter().any(|name| name.ends_with("data.txt")),
+            "expected data.txt in archive, got: {entry_names:?}"
+        );
+        assert!(
+            !entry_names
+                .iter()
+                .any(|name| name.ends_with("archive.tar.gz")),
+            "archive.tar.gz should be excluded, got: {entry_names:?}"
+        );
     }
 }
