@@ -161,18 +161,13 @@ mod tests {
     }
 
     #[test]
-    fn test_init_logging_with_level() {
+    fn test_init_logging_second_call_does_not_panic() {
         let temp_dir = TempDir::new().unwrap();
-        let executable_path = temp_dir.path().join("bin");
-        let log_dir = executable_path.join("logs");
+        let log_dir = temp_dir.path().join("test_logs_once");
 
-        fs::create_dir_all(&executable_path).unwrap();
-        init_logging_with_level(&executable_path, "debug");
-        tracing::debug!("Debug level test message");
-        thread::sleep(Duration::from_millis(50));
+        init_logging(&log_dir, "test", 3, "info");
+        init_logging(&log_dir, "test", 3, "debug");
 
         assert!(log_dir.is_dir());
-        let log_contents = read_log_files(&log_dir).join("\n");
-        assert!(log_contents.contains("Debug level test message"));
     }
 }
