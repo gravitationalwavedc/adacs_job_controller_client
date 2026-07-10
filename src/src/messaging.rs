@@ -158,7 +158,7 @@ impl Message {
             warn!("pop_byte: buffer underflow at index {}", self.index);
             return 0;
         }
-        let value = self.data[self.index] as i8;
+        let value = self.data[self.index].cast_signed();
         self.index += 1;
         value
     }
