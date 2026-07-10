@@ -642,14 +642,15 @@ mod tests {
     }
 
     #[test]
-    fn pop_string_replaces_invalid_utf8_with_replacement_char() {
+    fn test_primitive_string_unicode_roundtrip() {
         let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_bytes(&[0xFF, 0xFE, 0x41]);
+        let unicode = "héllo 世界 🚀";
+        msg.push_string(unicode);
 
         let data = msg.get_data().clone();
         let mut read_msg = Message::from_data(data);
 
-        assert_eq!(read_msg.pop_string(), "\u{FFFD}\u{FFFD}A");
+        assert_eq!(read_msg.pop_string(), unicode);
     }
 
     #[test]
