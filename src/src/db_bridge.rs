@@ -256,14 +256,16 @@ mod tests {
     }
 
     #[test]
-    fn test_db_bridge_returns_error_while_server_not_ready() {
+    fn test_db_bridge_returns_error_on_websocket_send_failure() {
         reset_websocket_client_for_test();
         DbBridge::start();
 
         let mut mock = MockWebsocketClient::new();
         mock.expect_is_connection_closed().return_const(false);
-        mock.expect_is_server_ready().return_const(false);
-        mock.expect_send_db_request().times(0);
+        mock.expect_is_server_ready().return_const(true);
+        mock.expect_send_db_request()
+            .times(1)
+            .returning(|_| Box::pin(async move { Err("connection reset".into()) }));
         set_websocket_client(Arc::new(mock));
 
         let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
@@ -271,7 +273,8 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert!(err.contains("WebSocket is disconnected"));
+        assert!(err.contains("DB request error"));
+        assert!(err.contains("connection reset"));
     }
 
     #[test]
