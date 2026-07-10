@@ -919,4 +919,11 @@ mod tests {
         let err = build_file_ws_request("not a websocket url", "test-token").unwrap_err();
         assert!(err.contains("invalid websocket endpoint"));
     }
+
+    #[test]
+    fn test_build_file_ws_request_rejects_invalid_token() {
+        let err =
+            build_file_ws_request("ws://127.0.0.1:9001/ws/", "token\nwith-newline").unwrap_err();
+        assert!(err.contains("invalid authorization header"));
+    }
 }
