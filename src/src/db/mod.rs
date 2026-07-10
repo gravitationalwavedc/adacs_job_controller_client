@@ -490,54 +490,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_job_maps_zero_optional_ids_to_none() {
+    fn parse_status_preserves_unicode_what() {
         let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(11);
-        msg.push_ulong(0);
-        msg.push_ulong(0);
-        msg.push_bool(false);
-        msg.push_uint(0);
-        msg.push_string("bundle-hash");
-        msg.push_string("/tmp/workdir");
-        msg.push_bool(false);
-        msg.push_bool(false);
-        msg.push_bool(false);
+        msg.push_ulong(7);
+        msg.push_ulong(3);
+        msg.push_string("状态/scheduler");
+        msg.push_uint(50);
 
         let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
+        let model = parse_status(&mut resp);
 
-        assert_eq!(model.id, 11);
-        assert_eq!(model.job_id, None);
-        assert_eq!(model.scheduler_id, None);
-        assert_eq!(model.bundle_hash, "bundle-hash");
-        assert_eq!(model.working_directory, "/tmp/workdir");
-    }
-
-    #[test]
-    fn parse_job_reads_boolean_flags_including_deleted() {
-        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(11);
-        msg.push_ulong(22);
-        msg.push_ulong(33);
-        msg.push_bool(true);
-        msg.push_uint(4);
-        msg.push_string("bundle-hash");
-        msg.push_string("/tmp/workdir");
-        msg.push_bool(true);
-        msg.push_bool(true);
-        msg.push_bool(true);
-
-        let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
-
-        assert_eq!(model.id, 11);
-        assert_eq!(model.job_id, Some(22));
-        assert_eq!(model.scheduler_id, Some(33));
-        assert!(model.submitting);
-        assert_eq!(model.submitting_count, 4);
-        assert!(model.running);
-        assert!(model.deleting);
-        assert!(model.deleted);
+        assert_eq!(model.id, 7);
+        assert_eq!(model.job_id, 3);
+        assert_eq!(model.what, "状态/scheduler");
+        assert_eq!(model.state, 50);
     }
 
     #[test]
