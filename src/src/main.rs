@@ -19,8 +19,8 @@ mod websocket;
 
 use crate::bundle_manager::BundleManager;
 use crate::config::{
-    get_log_level, get_ltk_from_config, get_python_library_path, read_client_config,
-    validate_config,
+    ensure_websocket_endpoint_trailing_slash, get_log_level, get_ltk_from_config,
+    get_python_library_path, read_client_config, validate_config,
 };
 use crate::daemon::daemonize_with_log_redirect;
 use crate::logging::init_logging_with_level;
@@ -234,12 +234,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         crate::db_bridge::DbBridge::start();
 
-        let ws_endpoint = config["websocketEndpoint"].as_str().unwrap();
-        let ws_url = if ws_endpoint.ends_with('/') {
-            ws_endpoint.to_string()
-        } else {
-            format!("{ws_endpoint}/")
-        };
+        let ws_url =
+            ensure_websocket_endpoint_trailing_slash(config["websocketEndpoint"].as_str().unwrap());
 
         info!("Connecting to WebSocket endpoint: {}", ws_url);
 
