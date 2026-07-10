@@ -430,3 +430,24 @@ impl Drop for ThreadScope {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn load_python_library_returns_ok_when_already_loaded() {
+        let path = std::env::var("PYTHON_LIB_PATH")
+            .unwrap_or_else(|_| "/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0".to_string());
+
+        let first = load_python_library(&path);
+        assert!(first.is_ok(), "first load failed: {first:?}");
+
+        let second = load_python_library(&path);
+        assert!(
+            second.is_ok(),
+            "second load should be idempotent: {second:?}"
+        );
+    }
+}
