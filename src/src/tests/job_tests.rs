@@ -1299,6 +1299,26 @@ fn test_archive_fail() {
     inner();
 }
 
+#[test]
+fn test_archive_dir_empty_directory() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let archive_path = temp_dir.path().join("archive.tar.gz");
+
+    let result = crate::jobs::archive_dir(temp_dir.path(), &archive_path);
+    assert!(result.is_ok());
+    assert!(archive_path.exists());
+
+    let archive_file = std::fs::File::open(&archive_path).unwrap();
+    let decoder = GzDecoder::new(archive_file);
+    let mut archive = Archive::new(decoder);
+    let entries: Vec<_> = archive
+        .entries()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(entries.is_empty());
+}
+
 // ============================================================================
 // Job Check Status Tests - ported from test_check_status.cpp
 // ============================================================================
