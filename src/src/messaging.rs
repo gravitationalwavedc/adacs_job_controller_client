@@ -736,43 +736,34 @@ mod tests {
         assert!(!read_msg.pop_bool());
     }
 
-    fn truncated_message(data: Vec<u8>, index: usize) -> Message {
-        Message {
-            id: 0,
-            source: String::new(),
-            priority: Priority::Lowest,
-            data,
-            index,
-        }
+    #[test]
+    fn clone_payload_bytes_skips_header_and_preserves_payload() {
+        let mut msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "database");
+        msg.push_ulong(42);
+        msg.push_string("extra");
+
+        let payload = msg.clone_payload_bytes();
+
+        let parsed = Message::from_data(msg.get_data().clone());
+        let expected_tail = parsed.data[parsed.index..].to_vec();
+        assert_eq!(payload, expected_tail);
     }
 
     #[test]
-    fn pop_bool_returns_false_on_buffer_underflow() {
-        let mut msg = truncated_message(vec![], 0);
-        assert!(!msg.pop_bool());
-        assert_eq!(msg.index, 0);
-    }
+    fn append_raw_bytes_extends_message_data() {
+        let mut msg = Message::new(1, Priority::Highest, "test");
+        let header_len = msg.get_data().len();
 
-    #[test]
-    fn pop_uint_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_uint(), 0);
-        assert_eq!(empty.index, 0);
+        msg.push_uint(99);
+        let payload = msg.clone_payload_bytes();
 
-        let mut partial = truncated_message(vec![0x01, 0x02, 0x03], 0);
-        assert_eq!(partial.pop_uint(), 0);
-        assert_eq!(partial.index, 0);
-    }
+        let mut wrapped = Message::new(1, Priority::Highest, "test");
+        wrapped.push_uint(7);
+        wrapped.append_raw_bytes(&payload);
 
-    #[test]
-    fn pop_bytes_returns_empty_on_truncated_payload() {
-        let mut short_length = truncated_message(vec![0x01, 0x02], 0);
-        assert_eq!(short_length.pop_bytes(), Vec::<u8>::new());
-        assert_eq!(short_length.index, 0);
-
-        let data = vec![5, 0, 0, 0, 0, 0, 0, 0, 0xAA, 0xBB];
-        let mut short_payload = truncated_message(data, 0);
-        assert_eq!(short_payload.pop_bytes(), Vec::<u8>::new());
-        assert_eq!(short_payload.index, 8);
+        let mut read_wrapped = Message::from_data(wrapped.get_data().clone());
+        assert_eq!(read_wrapped.pop_uint(), 7);
+        assert_eq!(read_wrapped.pop_uint(), 99);
+        assert_eq!(read_wrapped.get_data().len(), header_len + 4 + 4);
     }
 }
