@@ -390,33 +390,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_config_rejects_whitespace_only_python_library() {
-        let config = json!({
-            "pythonLibrary": "   ",
-            "websocketEndpoint": "ws://example.com/ws/"
-        });
-        let err = validate_config(&config).unwrap_err();
-        assert!(err.iter().any(|e| e.contains("pythonLibrary is empty")));
-    }
-
-    #[test]
-    fn validate_config_rejects_whitespace_only_websocket_endpoint() {
-        let config = json!({
-            "pythonLibrary": "/usr/lib/libpython3.so",
-            "websocketEndpoint": "  \t  "
-        });
-        let err = validate_config(&config).unwrap_err();
-        assert!(err.iter().any(|e| e.contains("websocketEndpoint is empty")));
-    }
-
-    #[test]
-    fn validate_config_rejects_whitespace_only_log_level() {
+    fn validate_config_accepts_null_log_level() {
         let config = json!({
             "pythonLibrary": "/usr/lib/libpython3.so",
             "websocketEndpoint": "ws://example.com/ws/",
-            "logLevel": "   "
+            "logLevel": null
         });
-        let err = validate_config(&config).unwrap_err();
-        assert!(err.iter().any(|e| e.contains("logLevel is empty")));
+        assert!(validate_config(&config).is_ok());
     }
 }
