@@ -245,6 +245,47 @@ mod tests {
         }
     }
 
+    // --- get_ltk_from_config tests ---
+
+    #[test]
+    fn get_ltk_from_config_returns_trimmed_token() {
+        let config = json!({"ltk": "  persisted-token  "});
+        assert_eq!(
+            get_ltk_from_config(&config),
+            Some("persisted-token".to_string())
+        );
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_when_missing() {
+        let config = json!({});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_when_null() {
+        let config = json!({"ltk": null});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_when_empty() {
+        let config = json!({"ltk": ""});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_when_whitespace_only() {
+        let config = json!({"ltk": "   "});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_for_non_string() {
+        let config = json!({"ltk": 42});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
     // --- get_log_level tests ---
 
     #[test]
