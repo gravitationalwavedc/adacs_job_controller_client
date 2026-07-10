@@ -735,3 +735,25 @@ pub fn handle_job_delete(mut msg: Message) {
         );
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    #[serial_test::serial]
+    fn get_default_job_details_includes_cluster_from_config() {
+        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
+            "cluster": "ozstar",
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://127.0.0.1:0/ws/",
+        }));
+
+        let details = get_default_job_details();
+        assert_eq!(details["cluster"], "ozstar");
+
+        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+}
