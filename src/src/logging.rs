@@ -159,4 +159,18 @@ mod tests {
         assert!(log_dir.is_dir());
         assert!(!read_log_files(&log_dir).is_empty());
     }
+
+    #[test]
+    fn test_init_logging_with_level() {
+        let temp_dir = TempDir::new().unwrap();
+        let executable_path = temp_dir.path().join("bin");
+        let log_dir = executable_path.join("logs");
+
+        fs::create_dir_all(&executable_path).unwrap();
+        init_logging_with_level(&executable_path, "debug");
+        thread::sleep(Duration::from_millis(50));
+
+        assert!(log_dir.is_dir());
+        assert!(!read_log_files(&log_dir).is_empty());
+    }
 }
