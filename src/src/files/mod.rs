@@ -904,6 +904,27 @@ mod tests {
     }
 
     #[test]
+    fn test_non_existent_path_rejects_parent_dir_in_suffix() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let sub = tmp.path().join("uploads");
+        fs::create_dir(&sub).unwrap();
+
+        // Prefix exists inside wd, but remaining suffix climbs out via "..".
+        let escape = sub.join("..").join("..").join("etc").join("passwd");
+        assert!(
+            !run_validate(&escape, &wd),
+            "non-existent path with .. in suffix should fail"
+        );
+
+        let nested_escape = sub.join("nested").join("..").join("..").join("outside.txt");
+        assert!(
+            !run_validate(&nested_escape, &wd),
+            "nested non-existent path with .. in suffix should fail"
+        );
+    }
+
+    #[test]
     fn test_build_file_ws_request_sets_bearer_header() {
         let request = build_file_ws_request("ws://127.0.0.1:9001/ws/", "test-token").unwrap();
 
