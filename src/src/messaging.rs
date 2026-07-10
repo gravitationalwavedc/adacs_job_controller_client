@@ -644,4 +644,10 @@ mod tests {
         assert_eq!(read_msg.pop_string(), "test");
         assert!(!read_msg.pop_bool());
     }
+
+    #[test]
+    fn pop_ubyte_buffer_underflow_returns_zero() {
+        let mut msg = Message::from_data(Vec::new());
+        assert_eq!(msg.pop_ubyte(), 0);
+    }
 }
