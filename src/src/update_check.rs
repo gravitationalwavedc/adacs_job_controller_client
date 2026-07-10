@@ -366,20 +366,18 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_release_missing_download_url() {
+    fn test_parse_release_missing_assets_field() {
         let resp = json!({
-            "tag_name": "v2.0.0",
-            "assets": [{"name": "adacs_job_client", "size": 12345}]
+            "tag_name": "v2.0.0"
         });
         let result = parse_release_response(&resp, "1.0.0");
         assert!(
             result.is_err(),
-            "asset without browser_download_url should fail: {result:?}"
+            "missing assets field should fail: {result:?}"
         );
-        let err = result.unwrap_err();
         assert!(
-            err.contains("No download URL"),
-            "unexpected error message: {err}"
+            result.unwrap_err().contains("No download URL"),
+            "error should mention missing download URL"
         );
     }
 
