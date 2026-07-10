@@ -495,6 +495,14 @@ mod tests {
     }
 
     #[test]
+    fn build_bundle_delete_message_sends_only_job_id() {
+        let mut msg = Message::from_data(build_bundle_delete_message(9).get_data().clone());
+
+        assert_eq!(msg.id, DB_BUNDLE_DELETE_JOB);
+        assert_eq!(msg.pop_ulong(), 9);
+    }
+
+    #[test]
     fn parse_get_job_by_id_response_reads_count_then_payload() {
         let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
         response.push_uint(1);
