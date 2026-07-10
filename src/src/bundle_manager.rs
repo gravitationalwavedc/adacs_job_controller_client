@@ -427,3 +427,25 @@ pub fn get_default_bundle_path() -> String {
     path.push("bundles");
     path.to_string_lossy().to_string()
 }
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn get_default_bundle_path_appends_bundles_dir() {
+        let path = get_default_bundle_path();
+        let suffix = std::path::Path::new(&path)
+            .file_name()
+            .and_then(|n| n.to_str());
+        assert_eq!(suffix, Some("bundles"));
+    }
+
+    #[test]
+    fn get_executable_path_returns_existing_file() {
+        let path = get_executable_path();
+        assert!(!path.as_os_str().is_empty());
+        assert!(path.exists(), "executable path should exist: {path:?}");
+        assert!(path.is_file());
+    }
+}
