@@ -50,9 +50,9 @@ fn resolve_websocket_token_requires_one_source() {
 }
 
 #[test]
-fn resolve_websocket_token_rejects_whitespace_only_cli_token() {
-    let args = vec!["client".to_string(), "   ".to_string()];
-    let err = resolve_websocket_token(&args, &json!({})).unwrap_err();
+fn resolve_websocket_token_uses_cli_when_config_ltk_whitespace_only() {
+    let args = vec!["client".to_string(), "cli-token".to_string()];
+    let result = resolve_websocket_token(&args, &json!({"ltk": "   "})).unwrap();
 
-    assert!(err.contains("No WebSocket token configured"));
+    assert_eq!(result, ("cli-token".to_string(), false));
 }
