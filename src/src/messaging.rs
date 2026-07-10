@@ -644,4 +644,28 @@ mod tests {
         assert_eq!(read_msg.pop_string(), "test");
         assert!(!read_msg.pop_bool());
     }
+
+    #[test]
+    fn pop_byte_returns_zero_on_buffer_underflow() {
+        let mut empty = Message {
+            id: 0,
+            source: String::new(),
+            priority: Priority::Lowest,
+            data: vec![],
+            index: 0,
+        };
+        assert_eq!(empty.pop_byte(), 0);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = Message {
+            id: 0,
+            source: String::new(),
+            priority: Priority::Lowest,
+            data: vec![0x01],
+            index: 0,
+        };
+        assert_eq!(partial.pop_byte(), 1);
+        assert_eq!(partial.pop_byte(), 0);
+        assert_eq!(partial.index, 1);
+    }
 }
