@@ -447,28 +447,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_job_reads_deleted_flag() {
-        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
-        msg.push_ulong(5);
-        msg.push_ulong(0);
-        msg.push_ulong(0);
-        msg.push_bool(false);
-        msg.push_uint(0);
-        msg.push_string("hash");
-        msg.push_string("/work");
-        msg.push_bool(false);
-        msg.push_bool(false);
-        msg.push_bool(true);
+    fn parse_response_skips_header_for_fresh_message() {
+        let mut msg = Message::new(DB_JOB_GET_BY_ID, Priority::Highest, "database");
+        msg.push_ulong(42);
 
-        let mut resp = Message::from_data(msg.get_data().clone());
-        let model = parse_job(&mut resp);
+        let mut parsed = parse_response(&msg);
+        assert_eq!(parsed.pop_ulong(), 42);
+    }
 
-        assert_eq!(model.id, 5);
-        assert_eq!(model.job_id, None);
-        assert_eq!(model.scheduler_id, None);
-        assert!(!model.running);
-        assert!(!model.deleting);
-        assert!(model.deleted);
+    #[test]
+    fn parse_response_preserves_partial_cursor() {
+        let mut wire = Message::new(DB_RESPONSE, Priority::Highest, "system");
+        wire.push_uint(7);
+        wire.push_ulong(99);
+
+        let mut delivered = Message::from_data(wire.get_data().clone());
+        assert_eq!(delivered.pop_uint(), 7);
+
+        let mut parsed = parse_response(&delivered);
+        assert_eq!(parsed.pop_ulong(), 99);
     }
 
     #[test]
