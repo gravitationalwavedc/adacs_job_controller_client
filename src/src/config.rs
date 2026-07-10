@@ -245,6 +245,30 @@ mod tests {
         }
     }
 
+    // --- get_ltk_from_config tests ---
+
+    #[test]
+    fn get_ltk_from_config_returns_trimmed_value() {
+        let config = json!({"ltk": "  persisted-token  "});
+        assert_eq!(
+            get_ltk_from_config(&config).as_deref(),
+            Some("persisted-token")
+        );
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_when_missing() {
+        let config = json!({"websocketEndpoint": "ws://example.com/ws/"});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_for_null_empty_or_whitespace() {
+        assert_eq!(get_ltk_from_config(&json!({"ltk": null})), None);
+        assert_eq!(get_ltk_from_config(&json!({"ltk": ""})), None);
+        assert_eq!(get_ltk_from_config(&json!({"ltk": "   "})), None);
+    }
+
     // --- get_log_level tests ---
 
     #[test]
