@@ -124,10 +124,12 @@ impl TungsteniteWebsocketClient {
         debug!("WS: Received pong at {} (latency: {}ms)", now, latency);
     }
 
-    fn handle_ping() {
+    fn handle_ping(&self) {
         // When we receive a ping from the server, we should respond with a pong
-        // tungstenite handles this automatically, but we track it
-        trace!("WS: Received ping from server");
+        // tungstenite handles this automatically, but we track the timestamp
+        let now = Self::get_epoch_millis();
+        self.ping_timestamp.store(now, Ordering::SeqCst);
+        trace!("WS: Received ping from server at {}", now);
     }
 
     /// Returns true if any priority queue below `max_priority` holds data, or if
@@ -341,7 +343,7 @@ impl TungsteniteWebsocketClient {
                         client.handle_message(conn_id, message);
                     }
                     Ok(WsMessage::Ping(_)) => {
-                        TungsteniteWebsocketClient::handle_ping();
+                        client.handle_ping();
                     }
                     Ok(WsMessage::Pong(_)) => {
                         client.handle_pong(conn_id);
