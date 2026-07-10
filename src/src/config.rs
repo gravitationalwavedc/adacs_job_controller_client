@@ -317,4 +317,36 @@ mod tests {
         });
         assert!(validate_config(&config).is_ok());
     }
+
+    // --- get_ltk_from_config tests ---
+
+    #[test]
+    fn get_ltk_from_config_returns_trimmed_value() {
+        let config = json!({"ltk": "  my-token  "});
+        assert_eq!(get_ltk_from_config(&config), Some("my-token".to_string()));
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_for_missing_key() {
+        let config = json!({});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_for_null() {
+        let config = json!({"ltk": null});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_for_empty_string() {
+        let config = json!({"ltk": ""});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_for_whitespace_only() {
+        let config = json!({"ltk": "   "});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
 }
