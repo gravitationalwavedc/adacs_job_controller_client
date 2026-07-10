@@ -32,3 +32,11 @@ fn resolve_websocket_token_requires_one_source() {
 
     assert!(err.contains("No WebSocket token configured"));
 }
+
+#[test]
+fn resolve_websocket_token_rejects_whitespace_only_cli_token() {
+    let args = vec!["client".to_string(), "   ".to_string()];
+    let err = resolve_websocket_token(&args, &json!({})).unwrap_err();
+
+    assert!(err.contains("No WebSocket token configured"));
+}
