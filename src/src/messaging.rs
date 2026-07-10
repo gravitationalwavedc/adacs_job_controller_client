@@ -644,4 +644,23 @@ mod tests {
         assert_eq!(read_msg.pop_string(), "test");
         assert!(!read_msg.pop_bool());
     }
+
+    #[test]
+    fn append_raw_bytes_extends_wire_data_after_payload() {
+        let mut msg = Message::new(42, Priority::Medium, "database");
+        msg.push_uint(7);
+        let len_before = msg.get_data().len();
+
+        msg.append_raw_bytes(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let data = msg.get_data();
+        assert_eq!(data.len(), len_before + 4);
+        assert_eq!(&data[len_before..], &[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let mut read_msg = Message::from_data(data.clone());
+        assert_eq!(read_msg.id, 42);
+        assert_eq!(read_msg.source, "database");
+        assert_eq!(read_msg.pop_uint(), 7);
+        assert_eq!(&data[data.len() - 4..], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    }
 }
