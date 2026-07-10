@@ -1284,6 +1284,42 @@ fn test_delete_job_success() {
 }
 
 #[test_fork::test]
+fn test_archive_dir_nested_files() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::write(temp_dir.path().join("root.txt"), "root").unwrap();
+    let nested = temp_dir.path().join("subdir").join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("file.txt"), "nested content").unwrap();
+
+    let archive_path = temp_dir.path().join("archive.tar.gz");
+    let result = crate::jobs::archive_dir(temp_dir.path(), &archive_path);
+    assert!(result.is_ok());
+    assert!(archive_path.exists());
+
+    let archive_file = std::fs::File::open(&archive_path).unwrap();
+    let decoder = GzDecoder::new(archive_file);
+    let mut archive = Archive::new(decoder);
+    let mut entries: Vec<String> = Vec::new();
+    let mut nested_content: Option<Vec<u8>> = None;
+    for entry_result in archive.entries().unwrap() {
+        let mut entry = entry_result.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().to_string();
+        entries.push(path.clone());
+        if path == "subdir/nested/file.txt" {
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf).unwrap();
+            nested_content = Some(buf);
+        }
+    }
+    assert!(entries.iter().any(|p| p == "root.txt"));
+    assert!(entries.iter().any(|p| p == "subdir"));
+    assert!(entries.iter().any(|p| p == "subdir/nested"));
+    assert!(entries.iter().any(|p| p == "subdir/nested/file.txt"));
+    assert_eq!(nested_content.as_deref(), Some(b"nested content".as_ref()));
+    assert!(!entries.iter().any(|p| p == "archive.tar.gz"));
+}
+
+#[test_fork::test]
 fn test_archive_fail() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
