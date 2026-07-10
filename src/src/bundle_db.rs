@@ -48,6 +48,8 @@ fn get_bundle_db_error(bundle_hash: &str) -> *mut crate::python_interface::PyObj
         || {
             // Fallback: create a generic RuntimeError if no exception was stored
             // for this bundle hash. This should not happen in normal operation.
+            // SAFETY: PyErr_NewException is called with a valid C string pointer
+            // and null parent/base dicts, which is always safe.
             unsafe {
                 let err = crate::python_interface::PyErr_NewException(
                     c"_bundledb.error".as_ptr(),
@@ -149,6 +151,9 @@ fn parse_get_job_by_id_response(
     Ok(resp.pop_string())
 }
 
+// SAFETY: Called by Python C API with a valid `args` tuple pointer.
+// All FFI calls (PyTuple_GetItem, PyDict_SetItemString, PyLong_*, etc.)
+// operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn create_or_update_job(
     _self: *mut PyObject,
@@ -241,6 +246,9 @@ unsafe extern "C" fn create_or_update_job(
     }
 }
 
+// SAFETY: Called by Python C API with a valid `args` tuple pointer.
+// All FFI calls (PyTuple_GetItem, PyLong_AsUnsignedLongLong, PyDict_SetItemString,
+// etc.) operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let job_id_obj = PyTuple_GetItem(args, 0);
@@ -306,6 +314,9 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
     }
 }
 
+// SAFETY: Called by Python C API with a valid `args` tuple pointer.
+// All FFI calls (PyTuple_GetItem, PyLong_FromUnsignedLongLong, PyDict_SetItemString,
+// etc.) operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let dict = PyTuple_GetItem(args, 0);
@@ -418,6 +429,10 @@ static mut BUNDLE_DB_MODULE: PyModuleDef = PyModuleDef {
     m_free: ptr::null_mut(),
 };
 
+// SAFETY: Called by Python interpreter during module import.
+// Returns a new reference to the module on success, or null on error.
+// All FFI calls (PyModule_Create2, PyErr_NewException, PyModule_AddObject, etc.)
+// follow Python C API ownership conventions.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
     BUNDLE_DB_MODULE.m_methods = (&raw mut BUNDLE_DB_METHODS).cast::<PyMethodDef>();
