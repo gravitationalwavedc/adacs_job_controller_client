@@ -404,6 +404,23 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_release_uses_first_asset_download_url() {
+        let resp = json!({
+            "tag_name": "v2.0.0",
+            "assets": [
+                {"browser_download_url": "https://example.com/first"},
+                {"browser_download_url": "https://example.com/second"}
+            ]
+        });
+        let result = parse_release_response(&resp, "1.0.0").unwrap();
+        assert_eq!(
+            result,
+            Some("https://example.com/first".to_string()),
+            "should use the first asset entry only"
+        );
+    }
+
+    #[test]
     fn test_parse_release_invalid_current_version() {
         let resp = json!({
             "tag_name": "v1.2.0",
