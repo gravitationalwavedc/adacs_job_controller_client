@@ -400,6 +400,22 @@ mod tests {
     }
 
     #[test]
+    fn pop_bool_treats_only_one_as_true() {
+        let mut msg = Message::new(1, Priority::Highest, "test");
+        msg.push_ubyte(0);
+        msg.push_ubyte(1);
+        msg.push_ubyte(2);
+        msg.push_ubyte(255);
+
+        let mut read_msg = Message::from_data(msg.get_data().clone());
+
+        assert!(!read_msg.pop_bool());
+        assert!(read_msg.pop_bool());
+        assert!(!read_msg.pop_bool());
+        assert!(!read_msg.pop_bool());
+    }
+
+    #[test]
     fn clone_for_reading_preserves_current_index() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         msg.push_uint(123);
