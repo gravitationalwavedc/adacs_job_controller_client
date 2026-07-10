@@ -970,21 +970,24 @@ mod tests {
     // ============================================================================
 
     #[test]
-    #[serial_test::serial]
-    fn get_tungstenite_client_returns_stable_singleton() {
-        reset_websocket_client_for_test();
-        let first = get_tungstenite_client();
-        let second = get_tungstenite_client();
+    fn get_reconnect_notify_returns_stable_singleton() {
+        let first = get_reconnect_notify();
+        let second = get_reconnect_notify();
         assert!(Arc::ptr_eq(&first, &second));
     }
 
     #[test]
-    #[serial_test::serial]
-    fn get_websocket_client_returns_stable_singleton() {
-        reset_websocket_client_for_test();
-        let first = get_websocket_client();
-        let second = get_websocket_client();
+    fn get_shutdown_notify_returns_stable_singleton() {
+        let first = get_shutdown_notify();
+        let second = get_shutdown_notify();
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn reconnect_and_shutdown_notifies_are_distinct() {
+        let reconnect = get_reconnect_notify();
+        let shutdown = get_shutdown_notify();
+        assert!(!Arc::ptr_eq(&reconnect, &shutdown));
     }
 
     #[test]
