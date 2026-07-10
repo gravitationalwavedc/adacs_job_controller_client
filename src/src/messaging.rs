@@ -624,6 +624,16 @@ mod tests {
     }
 
     #[test]
+    fn from_data_empty_buffer_leaves_defaults() {
+        let mut msg = Message::from_data(Vec::new());
+
+        assert_eq!(msg.id, 0);
+        assert_eq!(msg.source, "");
+        assert_eq!(msg.pop_uint(), 0);
+        assert_eq!(msg.pop_string(), "");
+    }
+
+    #[test]
     fn test_mixed_serialization() {
         let mut msg = Message::new(1, Priority::Highest, "test");
 
