@@ -539,4 +539,22 @@ mod tests {
         let payload = parse_get_job_by_id_response(&delivered, 9).unwrap();
         assert_eq!(payload, "{\"job_id\":9}");
     }
+
+    #[test]
+    fn parse_create_or_update_response_rejects_zero_job_id() {
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_ulong(0);
+
+        let err = parse_create_or_update_response(&response).unwrap_err();
+        assert_eq!(err, "Job was unable to be created or updated.");
+    }
+
+    #[test]
+    fn parse_get_job_by_id_response_rejects_missing_job() {
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_uint(0);
+
+        let err = parse_get_job_by_id_response(&response, 9).unwrap_err();
+        assert_eq!(err, "Job with ID 9 does not exist.");
+    }
 }
