@@ -104,7 +104,12 @@ pub fn get_python_library_path() -> String {
 
     // Then check config file
     let config = read_client_config();
-    if let Some(path) = config.get("pythonLibrary").and_then(|v| v.as_str()) {
+    if let Some(path) = config
+        .get("pythonLibrary")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         return path.to_string();
     }
 
@@ -235,6 +240,12 @@ mod tests {
 
         // Test 2: Falls back to config when env var is unset
         set_test_config(json!({"pythonLibrary": "/config/libpython.so"}));
+        let result = get_python_library_path();
+        reset_test_config();
+        assert_eq!(result, "/config/libpython.so");
+
+        // Test 3: Trims whitespace from config value
+        set_test_config(json!({"pythonLibrary": "  /config/libpython.so  "}));
         let result = get_python_library_path();
         reset_test_config();
         assert_eq!(result, "/config/libpython.so");
