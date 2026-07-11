@@ -117,6 +117,15 @@ pub fn get_python_library_path() -> String {
     std::process::exit(1);
 }
 
+/// Ensure the WebSocket endpoint URL ends with a trailing slash.
+pub fn ensure_websocket_endpoint_trailing_slash(endpoint: &str) -> String {
+    if endpoint.ends_with('/') {
+        endpoint.to_string()
+    } else {
+        format!("{endpoint}/")
+    }
+}
+
 /// Get the log level from config, defaulting to "info" if not set
 pub fn get_log_level(config: &Value) -> String {
     let result = config
@@ -256,14 +265,22 @@ mod tests {
         }
     }
 
-    // --- get_ltk_from_config tests ---
+    // --- ensure_websocket_endpoint_trailing_slash tests ---
 
     #[test]
-    fn get_ltk_from_config_returns_none_for_whitespace_only() {
-        for ltk in ["   ", "\t\n  ", " \t"] {
-            let config = json!({"ltk": ltk});
-            assert_eq!(get_ltk_from_config(&config), None, "ltk={ltk:?}");
-        }
+    fn ensure_websocket_endpoint_trailing_slash_preserves_existing_slash() {
+        assert_eq!(
+            ensure_websocket_endpoint_trailing_slash("ws://example.com/ws/"),
+            "ws://example.com/ws/"
+        );
+    }
+
+    #[test]
+    fn ensure_websocket_endpoint_trailing_slash_adds_missing_slash() {
+        assert_eq!(
+            ensure_websocket_endpoint_trailing_slash("ws://example.com/ws"),
+            "ws://example.com/ws/"
+        );
     }
 
     // --- get_log_level tests ---

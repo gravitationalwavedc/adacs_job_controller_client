@@ -189,10 +189,12 @@ pub fn handle_file_download(mut msg: Message) {
         );
 
         let config = crate::config::read_client_config();
-        let ws_endpoint = config["websocketEndpoint"]
-            .as_str()
-            .unwrap_or("ws://127.0.0.1:8001/ws/");
-        let request = match build_file_ws_request(ws_endpoint, &uuid) {
+        let ws_endpoint = crate::config::ensure_websocket_endpoint_trailing_slash(
+            config["websocketEndpoint"]
+                .as_str()
+                .unwrap_or("ws://127.0.0.1:8001/ws/"),
+        );
+        let request = match build_file_ws_request(&ws_endpoint, &uuid) {
             Ok(request) => request,
             Err(e) => {
                 warn!(
@@ -477,9 +479,11 @@ pub fn handle_file_upload(mut msg: Message) {
 
     // Read config BEFORE spawning to capture the correct URL for this upload
     let config = crate::config::read_client_config();
-    let ws_endpoint = config["websocketEndpoint"]
-        .as_str()
-        .unwrap_or("ws://127.0.0.1:8001/ws/");
+    let ws_endpoint = crate::config::ensure_websocket_endpoint_trailing_slash(
+        config["websocketEndpoint"]
+            .as_str()
+            .unwrap_or("ws://127.0.0.1:8001/ws/"),
+    );
 
     handle_file_upload_internal(
         uuid,
@@ -487,7 +491,7 @@ pub fn handle_file_upload(mut msg: Message) {
         bundle_hash,
         target_path,
         file_size,
-        ws_endpoint.to_string(),
+        ws_endpoint,
     );
 }
 
