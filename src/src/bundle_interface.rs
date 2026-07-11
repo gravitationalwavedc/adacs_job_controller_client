@@ -681,3 +681,67 @@ mod fallback_value_text_tests {
         assert_eq!(fallback_value_text("", "repr"), "repr");
     }
 }
+
+// ─── BundleInterface conversion tests ────────────────────────────────────────
+
+#[cfg(test)]
+mod bundle_interface_conversion_tests {
+    use super::*;
+
+    /// Helper: create a minimal `BundleInterface` with null pointer fields.
+    /// Safe for testing null-object paths that don't dereference inner fields.
+    fn null_bundle() -> BundleInterface {
+        BundleInterface {
+            inner: Arc::new(BundleInterfaceInner {
+                python_interpreter: SubInterpreter::null(),
+                p_global: std::ptr::null_mut(),
+                p_bundle_module: std::ptr::null_mut(),
+                json_module: std::ptr::null_mut(),
+                traceback_module: std::ptr::null_mut(),
+                bundle_hash: "test-bundle".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn to_bool_returns_false_for_null_pointer() {
+        let bundle = null_bundle();
+        unsafe {
+            assert!(!bundle.to_bool(std::ptr::null_mut()));
+        }
+    }
+
+    #[test]
+    fn to_uint64_returns_zero_for_null_pointer() {
+        let bundle = null_bundle();
+        unsafe {
+            assert_eq!(bundle.to_uint64(std::ptr::null_mut()), 0);
+        }
+    }
+
+    #[test]
+    fn to_string_py_returns_empty_for_null_pointer() {
+        let bundle = null_bundle();
+        unsafe {
+            assert_eq!(bundle.to_string_py(std::ptr::null_mut()), "");
+        }
+    }
+
+    #[test]
+    fn dispose_object_is_safe_with_null_pointer() {
+        let bundle = null_bundle();
+        // Should not crash or dereference null
+        unsafe {
+            bundle.dispose_object(std::ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn json_dumps_returns_null_string_for_null_pointer() {
+        let bundle = null_bundle();
+        unsafe {
+            let result = bundle.json_dumps(std::ptr::null_mut());
+            assert_eq!(result.unwrap(), "null");
+        }
+    }
+}

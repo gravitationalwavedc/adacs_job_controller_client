@@ -348,6 +348,14 @@ unsafe impl Send for SubInterpreter {}
 unsafe impl Sync for SubInterpreter {}
 
 impl SubInterpreter {
+    /// Create a null `SubInterpreter` for testing purposes.
+    /// Only safe for testing null-object paths that don't dereference `ts`.
+    pub fn null() -> Self {
+        SubInterpreter {
+            ts: std::ptr::null_mut(),
+        }
+    }
+
     /// Creates a new sub-interpreter. MUST be called with the GIL held
     /// (i.e., with a valid current thread state).
     pub unsafe fn new() -> Result<Self, String> {
