@@ -931,6 +931,17 @@ mod tests {
     }
 
     #[test]
+    fn test_build_file_ws_request_accepts_wss_endpoint() {
+        let request = build_file_ws_request("wss://example.com:443/ws/", "secure-token").unwrap();
+
+        assert_eq!(request.uri().to_string(), "wss://example.com:443/ws/");
+        assert_eq!(
+            request.headers().get(AUTHORIZATION).unwrap(),
+            "Bearer secure-token"
+        );
+    }
+
+    #[test]
     fn test_build_file_ws_request_rejects_invalid_endpoint() {
         let err = build_file_ws_request("not a websocket url", "test-token").unwrap_err();
         assert!(err.contains("invalid websocket endpoint"));
