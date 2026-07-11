@@ -413,6 +413,16 @@ mod tests {
         assert!(result.is_err(), "invalid current version should error");
     }
 
+    #[test]
+    fn test_parse_release_invalid_latest_version() {
+        let resp = json!({
+            "tag_name": "not-a-version",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "1.0.0");
+        assert!(result.is_err(), "invalid latest version should error");
+    }
+
     // ─── replace_binary tests ─────────────────────────────────────────────
 
     #[test]
