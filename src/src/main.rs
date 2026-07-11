@@ -212,6 +212,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             error!("Failed to load Python library: {e}");
             std::process::exit(1);
         }
+        // SAFETY: PyImport_AppendInittab registers built-in extension modules before
+        // Py_Initialize. Module names are valid null-terminated C strings and init_func
+        // pointers reference `#[no_mangle]` C-ABI entry points in bundle_db and
+        // bundle_logging. The Python shared library was loaded above; init_python() has
+        // not yet been called.
         unsafe {
             python_interface::PyImport_AppendInittab(
                 c"_bundledb".as_ptr(),

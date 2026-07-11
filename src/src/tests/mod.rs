@@ -46,6 +46,11 @@ fn init_python_global() {
         }));
         let _ =
             crate::python_interface::load_python_library(&crate::config::get_python_library_path());
+        // SAFETY: PyImport_AppendInittab registers built-in extension modules before
+        // Py_Initialize. Module names are valid null-terminated C strings and init_func
+        // pointers reference `#[no_mangle]` C-ABI entry points in bundle_db and
+        // bundle_logging. load_python_library() succeeded above; init_python() has
+        // not yet been called.
         unsafe {
             crate::python_interface::PyImport_AppendInittab(
                 c"_bundledb".as_ptr(),
