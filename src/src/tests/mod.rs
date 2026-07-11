@@ -22,7 +22,7 @@ pub mod main_tests;
 static INIT_PYTHON: std::sync::Once = std::sync::Once::new();
 
 #[cfg(test)]
-fn init_python_global() {
+pub fn init_python_global() {
     INIT_PYTHON.call_once(|| {
         // Default TEST_CONFIG for all tests. Individual tests may override
         // fields (e.g. file_tests::set_test_config sets a real
@@ -34,6 +34,7 @@ fn init_python_global() {
         // upgrade with the resolved python library path below.
         *crate::config::TEST_CONFIG.lock().unwrap() = Some(serde_json::json!({
             "cluster": "test_cluster",
+            "pythonLibrary": "/usr/lib/x86_64-linux-gnu/libpython3.so",
             "websocketEndpoint": "ws://127.0.0.1:0/ws/",
             "ltk": "test_token",
         }));

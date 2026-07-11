@@ -71,7 +71,7 @@ impl BundleFixture {
         self.temp_dir.path().to_path_buf()
     }
 
-    fn write_script(&self, hash: &str, script: &str, replacements: &[(&str, &str)]) {
+    pub fn write_script(&self, hash: &str, script: &str, replacements: &[(&str, &str)]) {
         let bundle_path = self.get_bundle_path().join(hash);
         fs::create_dir_all(&bundle_path).expect("Failed to create bundle directory");
 

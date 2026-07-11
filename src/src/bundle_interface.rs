@@ -62,6 +62,13 @@ pub struct BundleInterface {
     inner: Arc<BundleInterfaceInner>,
 }
 
+impl BundleInterface {
+    /// Return the bundle hash for this interface.
+    pub fn bundle_hash(&self) -> &str {
+        &self.inner.bundle_hash
+    }
+}
+
 /// Custom error for when a Python function returns None
 pub struct NoneException;
 

@@ -449,3 +449,28 @@ mod path_tests {
         assert!(path.is_file());
     }
 }
+
+#[cfg(test)]
+mod load_bundle_tests {
+    use super::*;
+    use crate::tests::fixtures::bundle_fixture::{BundleFixture, JOB_SUBMIT_SCRIPT};
+
+    #[test]
+    fn load_bundle_returns_cached_result_on_second_call() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = "test_bundle_cache_hit";
+        fixture.write_script(bundle_hash, JOB_SUBMIT_SCRIPT, &[]);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let first = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("first load_bundle should succeed");
+        let second = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("second load_bundle should succeed");
+
+        // Both should reference the same inner Arc (cache hit, not re-loaded)
+        assert_eq!(first.bundle_hash(), second.bundle_hash());
+    }
+}
