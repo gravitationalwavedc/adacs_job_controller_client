@@ -545,4 +545,29 @@ mod tests {
         let saved = rt.block_on(async { save_status(status).await }).unwrap();
         assert_eq!(saved.id, 77);
     }
+
+    #[test]
+    fn get_job_status_by_job_id_and_what_empty_count_returns_empty_vec() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|message| {
+            let mut parsed = Message::from_data(message.get_data().clone());
+            assert_eq!(parsed.id, DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT);
+            assert_eq!(parsed.pop_ulong(), 42);
+            assert_eq!(parsed.pop_string(), "scheduler_id");
+
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_uint(0);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let statuses = rt
+            .block_on(async { get_job_status_by_job_id_and_what(42, "scheduler_id").await })
+            .unwrap();
+
+        assert!(statuses.is_empty());
+    }
 }
