@@ -447,6 +447,31 @@ mod tests {
     }
 
     #[test]
+    fn parse_job_reads_deleted_flag() {
+        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        msg.push_ulong(5);
+        msg.push_ulong(0);
+        msg.push_ulong(0);
+        msg.push_bool(false);
+        msg.push_uint(0);
+        msg.push_string("hash");
+        msg.push_string("/work");
+        msg.push_bool(false);
+        msg.push_bool(false);
+        msg.push_bool(true);
+
+        let mut resp = Message::from_data(msg.get_data().clone());
+        let model = parse_job(&mut resp);
+
+        assert_eq!(model.id, 5);
+        assert_eq!(model.job_id, None);
+        assert_eq!(model.scheduler_id, None);
+        assert!(!model.running);
+        assert!(!model.deleting);
+        assert!(model.deleted);
+    }
+
+    #[test]
     fn parse_status_reads_state_as_uint() {
         let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
         msg.push_ulong(99); // id
