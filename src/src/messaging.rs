@@ -614,6 +614,17 @@ mod tests {
     }
 
     #[test]
+    fn pop_string_replaces_invalid_utf8_with_replacement_char() {
+        let mut msg = Message::new(1, Priority::Highest, "test");
+        msg.push_bytes(&[0xFF, 0xFE, 0x41]);
+
+        let data = msg.get_data().clone();
+        let mut read_msg = Message::from_data(data);
+
+        assert_eq!(read_msg.pop_string(), "\u{FFFD}\u{FFFD}A");
+    }
+
+    #[test]
     fn test_primitive_bytes() {
         let mut msg = Message::new(1, Priority::Highest, "test");
 
