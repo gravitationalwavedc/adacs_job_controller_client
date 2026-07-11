@@ -298,6 +298,44 @@ mod tests {
         assert_eq!(get_log_level(&config), "info");
     }
 
+    // --- get_ltk_from_config tests ---
+
+    #[test]
+    fn get_ltk_from_config_returns_config_value() {
+        let config = json!({"ltk": "my-ltk-token"});
+        assert_eq!(
+            get_ltk_from_config(&config),
+            Some("my-ltk-token".to_string())
+        );
+    }
+
+    #[test]
+    fn get_ltk_from_config_trims_whitespace() {
+        let config = json!({"ltk": "  my-ltk-token  "});
+        assert_eq!(
+            get_ltk_from_config(&config),
+            Some("my-ltk-token".to_string())
+        );
+    }
+
+    #[test]
+    fn get_ltk_from_config_rejects_empty_string() {
+        let config = json!({"ltk": ""});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_when_missing() {
+        let config = json!({});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
+    #[test]
+    fn get_ltk_from_config_returns_none_when_null() {
+        let config = json!({"ltk": null});
+        assert_eq!(get_ltk_from_config(&config), None);
+    }
+
     #[test]
     fn validate_config_accepts_valid_log_level() {
         let config = json!({
