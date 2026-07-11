@@ -337,6 +337,12 @@ mod tests {
     }
 
     #[test]
+    fn get_log_level_defaults_to_info_for_non_string() {
+        let config = json!({"logLevel": 42});
+        assert_eq!(get_log_level(&config), "info");
+    }
+
+    #[test]
     fn validate_config_accepts_valid_log_level() {
         let config = json!({
             "pythonLibrary": "/usr/lib/libpython3.so",
