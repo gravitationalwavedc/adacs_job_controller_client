@@ -66,27 +66,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn set_and_get_current_thread_bundle() {
+    fn thread_bundle_guard_sets_bundle_on_creation() {
         clear_current_thread_bundle();
         assert!(get_current_thread_bundle().is_none());
 
-        set_current_thread_bundle("hash-abc".to_string());
-        assert_eq!(get_current_thread_bundle(), Some("hash-abc".to_string()));
+        let _guard = ThreadBundleGuard::new("bundle-alpha".to_string());
+        assert_eq!(
+            get_current_thread_bundle(),
+            Some("bundle-alpha".to_string())
+        );
+
         clear_current_thread_bundle();
     }
 
     #[test]
-    fn clear_current_thread_bundle_removes_entry() {
+    fn thread_bundle_guard_clears_bundle_on_drop() {
         clear_current_thread_bundle();
-        set_current_thread_bundle("to-clear".to_string());
-        assert_eq!(get_current_thread_bundle(), Some("to-clear".to_string()));
 
-        clear_current_thread_bundle();
+        {
+            let _guard = ThreadBundleGuard::new("bundle-beta".to_string());
+            assert_eq!(get_current_thread_bundle(), Some("bundle-beta".to_string()));
+        }
+
         assert!(get_current_thread_bundle().is_none());
     }
 
     #[test]
-    fn get_current_thread_bundle_returns_none_when_unset() {
+    fn clear_current_thread_bundle_removes_active_entry() {
+        set_current_thread_bundle("bundle-gamma".to_string());
+        assert_eq!(
+            get_current_thread_bundle(),
+            Some("bundle-gamma".to_string())
+        );
+
         clear_current_thread_bundle();
         assert!(get_current_thread_bundle().is_none());
     }
