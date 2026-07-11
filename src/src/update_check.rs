@@ -524,4 +524,21 @@ mod tests {
             "should fail when parent directory doesn't exist"
         );
     }
+
+    // ─── download_file tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_download_file_success() {
+        let data = download_file("https://example.com").unwrap();
+        assert!(
+            !data.is_empty(),
+            "downloaded data from example.com should be non-empty"
+        );
+        let html = String::from_utf8_lossy(&data);
+        assert!(
+            html.to_lowercase().contains("<html"),
+            "expected HTML content, got: {}",
+            &html[..html.len().min(200)]
+        );
+    }
 }
