@@ -402,6 +402,17 @@ mod tests {
     }
 
     #[test]
+    fn from_data_defaults_priority_to_lowest() {
+        let msg = Message::new(7, Priority::Highest, "scheduler");
+        assert_eq!(msg.priority, Priority::Highest);
+
+        let parsed = Message::from_data(msg.get_data().clone());
+        assert_eq!(parsed.id, 7);
+        assert_eq!(parsed.source, "scheduler");
+        assert_eq!(parsed.priority, Priority::Lowest);
+    }
+
+    #[test]
     fn test_primitive_bool() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         msg.push_bool(true);
