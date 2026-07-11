@@ -245,6 +245,16 @@ mod tests {
         }
     }
 
+    // --- get_ltk_from_config tests ---
+
+    #[test]
+    fn get_ltk_from_config_returns_none_for_whitespace_only() {
+        for ltk in ["   ", "\t\n  ", " \t"] {
+            let config = json!({"ltk": ltk});
+            assert_eq!(get_ltk_from_config(&config), None, "ltk={ltk:?}");
+        }
+    }
+
     // --- get_log_level tests ---
 
     #[test]
