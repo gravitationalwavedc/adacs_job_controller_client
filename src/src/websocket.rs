@@ -970,6 +970,24 @@ mod tests {
     // ============================================================================
 
     #[test]
+    #[serial_test::serial]
+    fn get_tungstenite_client_returns_stable_singleton() {
+        reset_websocket_client_for_test();
+        let first = get_tungstenite_client();
+        let second = get_tungstenite_client();
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_websocket_client_returns_stable_singleton() {
+        reset_websocket_client_for_test();
+        let first = get_websocket_client();
+        let second = get_websocket_client();
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
     fn test_websocket_client_creation() {
         let client = TungsteniteWebsocketClient::new();
         assert!(!client.is_server_ready());
