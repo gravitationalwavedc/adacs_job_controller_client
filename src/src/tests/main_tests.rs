@@ -10,6 +10,14 @@ fn resolve_websocket_token_prefers_config_ltk() {
 }
 
 #[test]
+fn resolve_websocket_token_trims_config_ltk_whitespace() {
+    let args = vec!["client".to_string()];
+    let result = resolve_websocket_token(&args, &json!({"ltk": "  persisted-token  "})).unwrap();
+
+    assert_eq!(result, ("persisted-token".to_string(), true));
+}
+
+#[test]
 fn resolve_websocket_token_uses_cli_when_no_ltk() {
     let args = vec!["client".to_string(), "cli-token".to_string()];
     let result = resolve_websocket_token(&args, &json!({})).unwrap();
