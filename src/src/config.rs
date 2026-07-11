@@ -45,7 +45,7 @@ pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
             errors.push("pythonLibrary is missing or null".to_string());
         }
         Some(Value::String(s)) => {
-            if s.is_empty() {
+            if s.trim().is_empty() {
                 errors.push("pythonLibrary is empty".to_string());
             }
         }
@@ -59,7 +59,7 @@ pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
             errors.push("websocketEndpoint is missing or null".to_string());
         }
         Some(Value::String(s)) => {
-            if s.is_empty() {
+            if s.trim().is_empty() {
                 errors.push("websocketEndpoint is empty".to_string());
             }
         }
@@ -71,7 +71,7 @@ pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
     // Optional: validate logLevel if present
     if let Some(log_level) = config.get("logLevel") {
         if let Some(s) = log_level.as_str() {
-            if s.is_empty() {
+            if s.trim().is_empty() {
                 errors.push("logLevel is empty".to_string());
             }
         } else if !log_level.is_null() {
@@ -375,5 +375,36 @@ mod tests {
             "websocketEndpoint": "ws://example.com/ws/"
         });
         assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validate_config_rejects_whitespace_only_python_library() {
+        let config = json!({
+            "pythonLibrary": "   ",
+            "websocketEndpoint": "ws://example.com/ws/"
+        });
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.iter().any(|e| e.contains("pythonLibrary is empty")));
+    }
+
+    #[test]
+    fn validate_config_rejects_whitespace_only_websocket_endpoint() {
+        let config = json!({
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "  \t  "
+        });
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.iter().any(|e| e.contains("websocketEndpoint is empty")));
+    }
+
+    #[test]
+    fn validate_config_rejects_whitespace_only_log_level() {
+        let config = json!({
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://example.com/ws/",
+            "logLevel": "   "
+        });
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.iter().any(|e| e.contains("logLevel is empty")));
     }
 }
