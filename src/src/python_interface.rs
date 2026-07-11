@@ -90,7 +90,10 @@ pub static PYTHON_MUTEX: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy)]
 pub struct ThreadStatePtr(pub *mut PyThreadState);
+// SAFETY: Pointer is only transferred between threads while holding PYTHON_MUTEX
+// and dereferenced on the owning Python thread after PyEval_RestoreThread.
 unsafe impl Send for ThreadStatePtr {}
+// SAFETY: Same invariants as Send — the pointer is never read concurrently.
 unsafe impl Sync for ThreadStatePtr {}
 
 static MAIN_TS: OnceLock<ThreadStatePtr> = OnceLock::new();
@@ -104,6 +107,8 @@ pub fn load_python_library(path: &str) -> Result<(), String> {
         return Ok(());
     }
     // RTLD_NOW | RTLD_GLOBAL – matches the C++ dlopen flags exactly.
+    // SAFETY: `path` is a valid filesystem path; dlopen/dlerror use null-terminated
+    // C strings and the handle is checked before wrapping via libloading.
     let lib = unsafe {
         let flags = libc::RTLD_NOW | libc::RTLD_GLOBAL;
         let c_path = CString::new(path).map_err(|_| "invalid library path".to_string())?;
@@ -290,6 +295,8 @@ unsafe fn install_gil_hooks() {
 pub fn init_python() {
     info!("Initializing Python interpreter");
     INIT_PYTHON.call_once(|| {
+        // SAFETY: Runs once before worker threads; GIL hooks install before
+        // Py_Initialize and the main thread state is saved before GIL release.
         unsafe {
             // Install GIL hooks (subhook patches)
             debug!("Installing GIL hooks");
@@ -329,7 +336,10 @@ pub struct SubInterpreter {
     ts: *mut PyThreadState,
 }
 
+// SAFETY: `ts` is owned by this SubInterpreter; all access is serialized via
+// PYTHON_MUTEX and only used on Python threads holding the GIL.
 unsafe impl Send for SubInterpreter {}
+// SAFETY: Same invariants as Send.
 unsafe impl Sync for SubInterpreter {}
 
 impl SubInterpreter {
@@ -367,6 +377,8 @@ impl SubInterpreter {
 
 impl Drop for SubInterpreter {
     fn drop(&mut self) {
+        // SAFETY: `self.ts` is a valid sub-interpreter thread state; swaps and
+        // Py_EndInterpreter mirror the C++ SubInterpreter destructor contract.
         unsafe {
             if !self.ts.is_null() {
                 trace!(
@@ -418,6 +430,8 @@ impl ThreadScope {
 
 impl Drop for ThreadScope {
     fn drop(&mut self) {
+        // SAFETY: `self.ts` was created by PyThreadState_New and made current via
+        // PyEval_RestoreThread; clear/delete matches the C++ ThreadScope destructor.
         unsafe {
             trace!(
                 "ThreadScope::drop - releasing GIL for thread state: {:?}",
