@@ -185,24 +185,29 @@ py_wrap!(PyErr_SetString, (type_: *mut PyObject, message: *const c_char) -> ());
 py_wrap!(PyRun_StringFlags, (code: *const c_char, start: c_int, globals: *mut PyObject, locals: *mut PyObject, flags: *mut c_void) -> *mut PyObject);
 
 // ─── Convenience helpers ─────────────────────────────────────────────────────
+// SAFETY: Caller holds PYTHON_MUTEX; `obj` is NULL or a valid owned/borrowed
+// reference on this thread's Python interpreter.
 pub unsafe fn Py_XDECREF(obj: *mut PyObject) {
     if !obj.is_null() {
         Py_DecRef(obj);
     }
 }
 
+// SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     let lib = get_python_lib();
     let symbol: Symbol<*mut PyObject> = lib.get(b"_Py_NoneStruct\0").unwrap();
     *symbol
 }
 
+// SAFETY: Python library is loaded; `_Py_TrueStruct` is a process-wide singleton.
 pub unsafe fn my_py_true_struct() -> *mut PyObject {
     let lib = get_python_lib();
     let symbol: Symbol<*mut PyObject> = lib.get(b"_Py_TrueStruct\0").unwrap();
     *symbol
 }
 
+// SAFETY: Caller holds PYTHON_MUTEX; `obj` is a live object on this thread.
 pub unsafe fn MyPy_IsNone(obj: *mut PyObject) -> bool {
     obj == my_py_none_struct()
 }
