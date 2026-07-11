@@ -537,6 +537,8 @@ impl BundleInterface {
 /// Returns `"unknown"` if the attribute lookup itself fails. Any Python
 /// error raised by the lookup is fetched and discarded so the caller's
 /// error state is not corrupted.
+// SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+// `extype` is a live type object from `PyErr_Fetch` on this thread.
 unsafe fn extract_type_name(extype: *mut PyObject) -> String {
     let type_str = PyObject_GetAttrString(extype, c"__name__".as_ptr());
     if type_str.is_null() {
@@ -556,6 +558,8 @@ unsafe fn extract_type_name(extype: *mut PyObject) -> String {
 /// Extract the `repr()` of a Python object as a Rust `String`. Returns
 /// `""` if `value` is NULL or `repr()` fails. Any Python error raised by
 /// the conversion is fetched and discarded.
+// SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+// `value` is NULL or a live object from `PyErr_Fetch` on this thread.
 unsafe fn extract_value_repr(value: *mut PyObject) -> String {
     if value.is_null() {
         return String::new();
@@ -578,6 +582,8 @@ unsafe fn extract_value_repr(value: *mut PyObject) -> String {
 /// Extract the `str()` of a Python object as a Rust `String`. Returns `""`
 /// if `value` is NULL or `str()` fails. Any Python error raised by the
 /// conversion is fetched and discarded.
+// SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+// `value` is NULL or a live object from `PyErr_Fetch` on this thread.
 unsafe fn extract_value_display(value: *mut PyObject) -> String {
     if value.is_null() {
         return String::new();
@@ -607,6 +613,8 @@ fn fallback_value_text<'a>(display: &'a str, repr: &'a str) -> &'a str {
 
 /// Iterate a Python iterable of strings and log each line via
 /// `tracing::info!`. Returns silently on NULL or non-iterable input.
+// SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+// `lines` is NULL or a live list/iterable returned by traceback formatting.
 unsafe fn log_python_lines(lines: *mut PyObject) {
     if lines.is_null() {
         return;
@@ -634,6 +642,8 @@ unsafe fn log_python_lines(lines: *mut PyObject) {
 /// thread's error indicator. Used by `print_last_python_exception`
 /// to recover from a failed fallback call without poisoning the next
 /// Python C-API call on this thread.
+// SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+// only reads and clears this thread's Python error indicator.
 unsafe fn swallow_python_error() {
     let mut ex: *mut PyObject = std::ptr::null_mut();
     let mut val: *mut PyObject = std::ptr::null_mut();
