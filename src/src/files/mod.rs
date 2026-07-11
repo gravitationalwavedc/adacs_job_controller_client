@@ -883,6 +883,22 @@ mod tests {
     }
 
     #[test]
+    fn test_symlink_within_working_dir_allowed() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let target = tmp.path().join("data.txt");
+        fs::write(&target, "data").unwrap();
+        let link = tmp.path().join("link_to_data");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(
+            run_validate(&link, &wd),
+            "symlink to a file inside wd should pass"
+        );
+    }
+
+    #[test]
     fn test_invalid_working_directory() {
         let tmp = TempDir::new().unwrap();
         let wd = "/nonexistent/path/that/does/not/exist";
