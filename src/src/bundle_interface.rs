@@ -666,3 +666,18 @@ impl Drop for BundleInterfaceInner {
         // teardown handles that.
     }
 }
+
+#[cfg(test)]
+mod fallback_value_text_tests {
+    use super::fallback_value_text;
+
+    #[test]
+    fn prefers_display_when_nonempty() {
+        assert_eq!(fallback_value_text("display", "repr"), "display");
+    }
+
+    #[test]
+    fn uses_repr_when_display_empty() {
+        assert_eq!(fallback_value_text("", "repr"), "repr");
+    }
+}
