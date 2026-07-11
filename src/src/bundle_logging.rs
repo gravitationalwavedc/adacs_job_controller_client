@@ -127,10 +127,11 @@ static mut BUNDLE_LOGGING_MODULE: PyModuleDef = PyModuleDef {
     m_free: std::ptr::null_mut(),
 };
 
+// SAFETY: Called by Python interpreter during module import.
+// Returns a new reference to the module on success, or null on error.
+// All FFI calls (PyModule_Create2) follow Python C API ownership conventions.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInit_bundlelogging() -> *mut PyObject {
-    unsafe {
-        BUNDLE_LOGGING_MODULE.m_methods = (&raw mut BUNDLE_LOGGING_METHODS).cast::<PyMethodDef>();
-        PyModule_Create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION)
-    }
+    BUNDLE_LOGGING_MODULE.m_methods = (&raw mut BUNDLE_LOGGING_METHODS).cast::<PyMethodDef>();
+    PyModule_Create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION)
 }
