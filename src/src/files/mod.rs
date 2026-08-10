@@ -458,6 +458,11 @@ pub fn handle_file_download(mut msg: Message) {
             // Yield to allow pause/resume messages to be processed
             tokio::task::yield_now().await;
         }
+        if total_bytes as u64 != file_size {
+            warn!(
+                "handle_file_download: File size mismatch: expected {file_size} bytes, got {total_bytes} bytes (file truncated or modified during download)"
+            );
+        }
         debug!(
             "handle_file_download: COMPLETED - downloaded {} bytes in {:?}",
             total_bytes,
