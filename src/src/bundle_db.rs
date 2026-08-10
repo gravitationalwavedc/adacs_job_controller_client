@@ -318,7 +318,6 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
             let value = PyLong_FromUnsignedLongLong(job_id);
             PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
             Py_DecRef(value);
-            Py_IncRef(dict);
 
             dict
         }
