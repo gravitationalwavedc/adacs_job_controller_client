@@ -44,15 +44,23 @@ pub fn handle_file_list(mut msg: Message) {
         );
 
         let working_directory = if job_id != 0 {
-            if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
-                if job.submitting {
-                    send_file_list_error(&uuid, "Job is not submitted");
+            match db::get_job_by_job_id(job_id).await {
+                Ok(Some(job)) => {
+                    if job.submitting {
+                        send_file_list_error(&uuid, "Job is not submitted");
+                        return;
+                    }
+                    job.working_directory
+                }
+                Ok(None) => {
+                    send_file_list_error(&uuid, "Job does not exist");
                     return;
                 }
-                job.working_directory
-            } else {
-                send_file_list_error(&uuid, "Job does not exist");
-                return;
+                Err(e) => {
+                    error!("handle_file_list: Database error for job {}: {}", job_id, e);
+                    send_file_list_error(&uuid, &format!("Database error: {e}"));
+                    return;
+                }
             }
         } else {
             let bundle_hash_clone = bundle_hash.clone();
@@ -549,15 +557,26 @@ fn handle_file_upload_internal(
             .await;
 
         let working_directory = if job_id != 0 {
-            if let Ok(Some(job)) = db::get_job_by_job_id(job_id).await {
-                if job.submitting {
-                    send_upload_error(&mut ws_sender, &uuid, "Job is not submitted").await;
+            match db::get_job_by_job_id(job_id).await {
+                Ok(Some(job)) => {
+                    if job.submitting {
+                        send_upload_error(&mut ws_sender, &uuid, "Job is not submitted").await;
+                        return;
+                    }
+                    job.working_directory
+                }
+                Ok(None) => {
+                    send_upload_error(&mut ws_sender, &uuid, "Job does not exist").await;
                     return;
                 }
-                job.working_directory
-            } else {
-                send_upload_error(&mut ws_sender, &uuid, "Job does not exist").await;
-                return;
+                Err(e) => {
+                    warn!(
+                        "handle_file_upload_internal: Database error for job {}: {}",
+                        job_id, e
+                    );
+                    send_upload_error(&mut ws_sender, &uuid, &format!("Database error: {e}")).await;
+                    return;
+                }
             }
         } else {
             let bundle_hash_clone = bundle_hash.clone();
