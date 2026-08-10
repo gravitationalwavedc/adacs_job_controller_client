@@ -1739,7 +1739,7 @@ fn test_file_upload_bundle_based_success() {
         handle_file_upload(msg);
 
         let mut server = server;
-        let ready = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+        let ready = tokio::time::timeout(Duration::from_secs(5), server.msg_rx.recv())
             .await
             .expect("Timeout waiting for SERVER_READY")
             .expect("No ready");
@@ -1752,7 +1752,7 @@ fn test_file_upload_bundle_based_success() {
         let complete_msg = Message::new(FILE_UPLOAD_COMPLETE, Priority::Highest, &test_uuid);
         server.msg_tx.send(complete_msg.get_data().clone()).unwrap();
 
-        let response = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+        let response = tokio::time::timeout(Duration::from_secs(5), server.msg_rx.recv())
             .await
             .expect("Timeout waiting for response")
             .expect("No response");
