@@ -58,9 +58,6 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
 
     // Don't write trailing newlines – accumulate line parts
     if msg == "\n" {
-        #[cfg(test)]
-        let _ = is_stdout; // suppress unused warning in cfg block below
-
         let mut full_message = format!("Bundle [{bundle_hash}]: ");
         LINE_PARTS.with(|parts| {
             let mut parts = parts.borrow_mut();
