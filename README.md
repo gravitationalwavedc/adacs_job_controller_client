@@ -39,7 +39,7 @@ cd src
 
 ### Running Tests
 
-The test suite (283 tests) runs serially with `--test-threads=1`. Parallel execution is flaky — 7 unit tests race on the global WebSocket singleton — so always run tests serially. All DB operations are remote over WebSocket; there is no local SQLite database. On Ubuntu 24.04+ the `PYTHON_LIB_PATH` env var is required (the default path in `tests/mod.rs` only exists on Debian).
+Tests must run serially with `--test-threads=1`: parallel execution is flaky because some unit tests race on the global WebSocket singleton, so always run tests serially. All DB operations are remote over WebSocket; there is no local SQLite database. On Ubuntu 24.04+ the `PYTHON_LIB_PATH` env var is required (the default path in `tests/mod.rs` only exists on Debian).
 
 ```bash
 # Run all tests (canonical command)
