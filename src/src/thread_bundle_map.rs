@@ -44,14 +44,12 @@ pub fn get_current_thread_bundle() -> Option<String> {
 
 /// RAII guard that sets the current thread bundle on creation
 /// and clears it on drop, even if the scope panics.
-pub struct ThreadBundleGuard {
-    bundle_hash: String,
-}
+pub struct ThreadBundleGuard;
 
 impl ThreadBundleGuard {
     pub fn new(bundle_hash: String) -> Self {
-        set_current_thread_bundle(bundle_hash.clone());
-        Self { bundle_hash }
+        set_current_thread_bundle(bundle_hash);
+        Self
     }
 }
 
