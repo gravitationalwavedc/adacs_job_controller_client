@@ -15,108 +15,6 @@ use std::os::unix::io::{AsRawFd, IntoRawFd};
 use std::process;
 use tracing::{error, info};
 
-/// Perform UNIX double-fork daemonization with stdout/stderr redirection
-/// Returns true if this is the daemon process, false if this is a parent that should exit
-///
-/// This function matches the C++ implementation exactly, including:
-/// - Double-fork pattern
-/// - Session creation
-/// - File descriptor redirection
-/// - stdout/stderr to log files
-pub fn daemonize() -> Result<bool, Box<dyn std::error::Error>> {
-    // First fork
-    // SAFETY: libc::fork() is a raw syscall; returns -1 on error, 0 in child, PID in parent.
-    match unsafe { libc::fork() } {
-        -1 => {
-            error!("fork #1 failed");
-            return Err("fork #1 failed".into());
-        }
-        pid if pid > 0 => {
-            // First parent - exit immediately
-            info!("First parent exiting (pid: {})", pid);
-            return Ok(false);
-        }
-        0 => {
-            // First child - continue to daemonize
-        }
-        _ => unreachable!(),
-    }
-
-    // Decouple from parent environment
-    // Change working directory to root to avoid keeping any directory mounted
-    // SAFETY: c"/" is a valid null-terminated C string pointing to a valid directory.
-    let ret = unsafe { libc::chdir(c"/".as_ptr()) };
-    if ret != 0 {
-        tracing::warn!("chdir to / failed: {}", std::io::Error::last_os_error());
-    }
-
-    // Create a new session and become the session leader
-    // SAFETY: setsid() has no undefined behavior; returns session ID or -1 on error.
-    unsafe {
-        libc::setsid();
-    }
-
-    // Reset umask to have full control over file permissions
-    // SAFETY: umask() always succeeds and returns the previous mask value.
-    unsafe {
-        libc::umask(0);
-    }
-
-    // Second fork
-    // SAFETY: libc::fork() is a raw syscall; returns -1 on error, 0 in child, PID in parent.
-    match unsafe { libc::fork() } {
-        -1 => {
-            error!("fork #2 failed");
-            return Err("fork #2 failed".into());
-        }
-        pid if pid > 0 => {
-            // Second parent - exit
-            info!("Second parent exiting (pid: {})", pid);
-            return Ok(false);
-        }
-        0 => {
-            // Second child - this is the daemon process
-            info!("Daemon process started (pid: {})", process::id());
-        }
-        _ => unreachable!(),
-    }
-
-    // We are now the daemon process
-
-    // Redirect standard file descriptors (matches C++ main.cpp lines 112-120)
-    // This ensures the daemon doesn't hold open any file descriptors from the parent
-    // Open /dev/null using safe Rust, then dup2 to stdio slots.
-    // into_raw_fd() transfers ownership so we manually close below,
-    // avoiding a double-close if the fd happened to land on 0/1/2.
-    let fd_in = std::fs::File::open("/dev/null")
-        .map_err(|e| format!("open /dev/null: {e}"))?
-        .into_raw_fd();
-    let fd_out = std::fs::OpenOptions::new()
-        .write(true)
-        .open("/dev/null")
-        .map_err(|e| format!("open /dev/null: {e}"))?
-        .into_raw_fd();
-    // Flush stdout and stderr before redirection (matches C++)
-    let _ = io::stdout().flush();
-    let _ = io::stderr().flush();
-
-    // SAFETY: fd_in and fd_out are valid open FDs from into_raw_fd(); dup2 returns -1 on error.
-    unsafe {
-        libc::dup2(fd_in, libc::STDIN_FILENO);
-        libc::dup2(fd_out, libc::STDOUT_FILENO);
-        libc::dup2(fd_out, libc::STDERR_FILENO);
-        // Close the /dev/null source fds unless dup2 already mapped them onto stdio.
-        if fd_in > 2 {
-            libc::close(fd_in);
-        }
-        if fd_out > 2 {
-            libc::close(fd_out);
-        }
-    }
-
-    Ok(true)
-}
-
 /// Perform UNIX double-fork daemonization with stdout/stderr redirection to log files
 ///
 /// This is the full daemonization that matches C++ exactly, including:
@@ -266,16 +164,6 @@ mod tests {
     use serial_test::serial;
     use tempfile::TempDir;
     use test_fork::test;
-
-    #[test]
-    #[serial]
-    fn test_daemonize_basic() {
-        // This test verifies daemonize() can be called without panicking
-        // Note: Due to fork() behavior, the test framework captures both parent and child
-        // The parent returns Ok(false) and exits, child returns Ok(true) and continues
-        let result = daemonize();
-        assert!(result.is_ok());
-    }
 
     #[test]
     #[serial]
