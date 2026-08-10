@@ -776,4 +776,92 @@ mod tests {
         assert_eq!(short_payload.pop_bytes(), Vec::<u8>::new());
         assert_eq!(short_payload.index, 8);
     }
+
+    #[test]
+    fn pop_byte_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert_eq!(empty.pop_byte(), 0);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01], 1);
+        assert_eq!(partial.pop_byte(), 0);
+        assert_eq!(partial.index, 1);
+    }
+
+    #[test]
+    fn pop_ushort_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert_eq!(empty.pop_ushort(), 0);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01], 0);
+        assert_eq!(partial.pop_ushort(), 0);
+        assert_eq!(partial.index, 0);
+    }
+
+    #[test]
+    fn pop_short_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert_eq!(empty.pop_short(), 0);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01], 0);
+        assert_eq!(partial.pop_short(), 0);
+        assert_eq!(partial.index, 0);
+    }
+
+    #[test]
+    fn pop_int_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert_eq!(empty.pop_int(), 0);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01, 0x02, 0x03], 0);
+        assert_eq!(partial.pop_int(), 0);
+        assert_eq!(partial.index, 0);
+    }
+
+    #[test]
+    fn pop_ulong_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert_eq!(empty.pop_ulong(), 0);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01, 0x02, 0x03, 0x04], 0);
+        assert_eq!(partial.pop_ulong(), 0);
+        assert_eq!(partial.index, 0);
+    }
+
+    #[test]
+    fn pop_long_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert_eq!(empty.pop_long(), 0);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01, 0x02, 0x03, 0x04], 0);
+        assert_eq!(partial.pop_long(), 0);
+        assert_eq!(partial.index, 0);
+    }
+
+    #[test]
+    fn pop_float_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert!((empty.pop_float() - 0.0).abs() < f32::EPSILON);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01, 0x02, 0x03], 0);
+        assert!((partial.pop_float() - 0.0).abs() < f32::EPSILON);
+        assert_eq!(partial.index, 0);
+    }
+
+    #[test]
+    fn pop_double_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert!((empty.pop_double() - 0.0).abs() < f64::EPSILON);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01, 0x02, 0x03, 0x04], 0);
+        assert!((partial.pop_double() - 0.0).abs() < f64::EPSILON);
+        assert_eq!(partial.index, 0);
+    }
 }
