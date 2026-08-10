@@ -3,23 +3,23 @@
 # Test runner script for ADACS Job Controller Client (Rust port)
 #
 # Usage:
-#   ./run_tests.sh                              # Run all tests in parallel
+#   ./run_tests.sh                              # Run all tests serially (--test-threads=1)
 #   ./run_tests.sh --verbose                    # Run with verbose output
 #   ./run_tests.sh tests::job_tests             # Run specific test suite
 #   ./run_tests.sh -- --nocapture               # Pass through to cargo test
 #   ./run_tests.sh --coverage                   # Generate coverage report
 #   ./run_tests.sh --coverage --open            # Generate and open coverage report
 #
-# Tests can now run in parallel. Previously required --test-threads=1 but after the
-# unsafe refactor (OnceLock singleton for BundleManager), tests are thread-safe.
+# Tests must run serially (--test-threads=1): parallel execution reproducibly fails
+# 7 unit tests that race on the global WebSocket singleton.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Default: parallel execution (tests are thread-safe)
-DEFAULT_TEST_ARGS=""
+# Default: serial execution (required — 7 unit tests race on the global WebSocket singleton)
+DEFAULT_TEST_ARGS="-- --test-threads=1"
 
 # Check for --coverage flag
 COVERAGE=false
@@ -63,8 +63,8 @@ elif [[ "$*" == *"--test-threads"* ]]; then
     # User knows what they're doing, pass through
     exec cargo test "$@"
 elif [[ $# -eq 0 ]]; then
-    # No arguments - run all tests in parallel
-    exec cargo test
+    # No arguments - run all tests serially
+    exec cargo test $DEFAULT_TEST_ARGS
 else
     # Arguments provided - separate cargo args from test args
     # Everything before '--' goes to cargo, everything after goes to test binary
