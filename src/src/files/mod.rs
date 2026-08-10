@@ -404,6 +404,11 @@ pub fn handle_file_download(mut msg: Message) {
                     }
                 }
             }
+            // Connection closed: if a PAUSE was received without a matching
+            // RESUME, wake the download loop so it observes the dead connection
+            // and exits instead of blocking forever on the pause notification.
+            is_paused_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+            paused_clone.notify_one();
         });
 
         loop {
