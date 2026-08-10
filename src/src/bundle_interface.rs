@@ -251,7 +251,12 @@ impl BundleInterface {
         // Build a tuple to hold the arguments
         let p_args = PyTuple_New(2);
         PyTuple_SetItem(p_args, 0, json_obj);
-        let p_job_data = PyUnicode_FromString(CString::new(job_data).unwrap().as_ptr());
+        let Ok(c_job_data) = CString::new(job_data) else {
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return Err(NoneException);
+        };
+        let p_job_data = PyUnicode_FromString(c_job_data.as_ptr());
         PyTuple_SetItem(p_args, 1, p_job_data);
 
         // Set up the thread bundle hash map (RAII guard clears on drop)
