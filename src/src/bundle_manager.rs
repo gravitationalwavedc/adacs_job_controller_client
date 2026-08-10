@@ -111,11 +111,7 @@ impl BundleManager {
             bundle_hash, self.bundle_path_root
         );
         let bundle = unsafe { BundleInterface::new(bundle_hash, &self.bundle_path_root)? };
-        info!(
-            "BundleManager: loaded bundle {} ({} bytes)",
-            bundle_hash,
-            bundle_hash.len()
-        );
+        info!("BundleManager: loaded bundle {}", bundle_hash);
         bundles.insert(bundle_hash.to_string(), bundle.clone());
         debug!("BundleManager: bundle {} inserted into cache", bundle_hash);
         Ok(bundle)
