@@ -2888,3 +2888,104 @@ fn test_file_download_pause_resume() {
     } // end inner()
     inner();
 }
+
+#[cfg(target_os = "linux")]
+fn count_open_fds_for(path: &Path) -> usize {
+    let mut count = 0;
+    if let Ok(entries) = std::fs::read_dir("/proc/self/fd") {
+        for entry in entries.flatten() {
+            if let Ok(target) = std::fs::read_link(entry.path()) {
+                if target == path {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+#[cfg(target_os = "linux")]
+#[test_fork::test]
+fn test_file_download_pause_then_disconnect_exits_cleanly() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test35");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let file_path = fixture.get_temp_path().join("pause_drop_test.bin");
+        fs::write(&file_path, vec![0u8; 320 * 1024]).unwrap();
+        let canonical_file = fs::canonicalize(&file_path).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1247i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-pause-drop".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("pause_drop_test.bin");
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+        handle_file_download(msg);
+
+        let mut server = server;
+        let _ = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv()).await; // DETAILS
+        let _ = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv()).await; // CHUNK 1
+
+        assert!(
+            count_open_fds_for(&canonical_file) > 0,
+            "download task should hold the file open while streaming"
+        );
+
+        let pause_msg = Message::new(PAUSE_FILE_CHUNK_STREAM, Priority::Highest, &test_uuid);
+        server.msg_tx.send(pause_msg.get_data().clone()).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Drain any chunks that were in-flight before the pause took effect
+        while let Ok(Some(_)) =
+            tokio::time::timeout(Duration::from_millis(50), server.msg_rx.recv()).await
+        {}
+        let res = tokio::time::timeout(Duration::from_millis(500), server.msg_rx.recv()).await;
+        assert!(res.is_err(), "Expected no chunks while paused");
+
+        // Drop the connection while paused (no RESUME). The download loop must
+        // wake, observe the dead connection, and release the file handle.
+        server.stop().await;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut released = false;
+        while tokio::time::Instant::now() < deadline {
+            if count_open_fds_for(&canonical_file) == 0 {
+                released = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            released,
+            "download task leaked the file handle after disconnect while paused"
+        );
+    } // end inner()
+    inner();
+}
