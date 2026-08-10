@@ -378,6 +378,10 @@ impl BundleInterface {
     /// Call json.loads on a string. Mirrors C++ `BundleInterface::jsonLoads()`.
     pub unsafe fn json_loads(&self, content: &str) -> *mut PyObject {
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"loads".as_ptr());
+        if p_func.is_null() {
+            error!("json_loads: failed to get json.loads function");
+            return std::ptr::null_mut();
+        }
 
         let p_args = PyTuple_New(1);
         let c_content = match CString::new(content) {
