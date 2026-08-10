@@ -428,12 +428,13 @@ pub async fn check_all_jobs_status() {
         "check_all_jobs_status: waiting for {} status checks to complete",
         handles.len()
     );
+    let total = handles.len();
     for (idx, handle) in handles.into_iter().enumerate() {
         let _ = handle.await;
         debug!(
             "check_all_jobs_status: status check {}/{} completed after {:?}",
             idx + 1,
-            idx + 1,
+            total,
             wait_start.elapsed()
         );
     }
