@@ -213,6 +213,60 @@ fn test_get_file_list_job_not_exist() {
 }
 
 #[test_fork::test]
+fn test_get_file_list_database_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_db_err_list");
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::new(std::io::Error::other("db connection failed"))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "test-uuid-db-err-list".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let msg = Message::from_data(data);
+                let _ = tx_clone.send(msg);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let mut msg_raw = Message::new(FILE_LIST, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(2234); // Job ID
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(".");
+        msg_raw.push_bool(false);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+        handle_file_list(msg);
+
+        let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("Timeout")
+            .expect("No response");
+        assert_eq!(response.id, FILE_LIST_ERROR);
+        let mut response_msg = response;
+        assert_eq!(response_msg.pop_string(), test_uuid);
+        assert_eq!(
+            response_msg.pop_string(),
+            "Database error: db connection failed"
+        );
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
 fn test_get_file_list_job_submitting() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
@@ -1796,6 +1850,59 @@ fn test_file_upload_invalid_job_id() {
         let mut response_msg = response;
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Job does not exist");
+        assert_eq!(response_msg.source, test_uuid);
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
+fn test_file_upload_database_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_db_err_upload");
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::new(std::io::Error::other("db connection failed"))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        });
+        set_websocket_client(Arc::new(mock_ws));
+
+        let server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-upload-db-err".to_string();
+        let target_path = "test.txt";
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_uint(1243); // Job ID
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(100);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_upload(msg);
+
+        let mut server = server;
+        let ready = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for SERVER_READY")
+            .expect("No ready");
+        assert_eq!(ready.id, SERVER_READY);
+
+        // Error should be sent immediately after SERVER_READY since DB lookup fails
+        let response = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for error response")
+            .expect("No response");
+        assert_eq!(response.id, FILE_UPLOAD_ERROR);
+        let mut response_msg = response;
+        let error_msg = response_msg.pop_string();
+        assert_eq!(error_msg, "Database error: db connection failed");
         assert_eq!(response_msg.source, test_uuid);
     } // end inner()
     inner();
