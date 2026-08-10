@@ -27,12 +27,26 @@ use tracing::{debug, error, trace, warn};
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
+#[cfg(test)]
+pub(crate) fn close_file_list_semaphore_for_test() {
+    FILE_LIST_SEMAPHORE.close();
+}
+
 /// Caller note: this function spawns internally and does not need to be awaited.
 pub fn handle_file_list(mut msg: Message) {
     let sem = FILE_LIST_SEMAPHORE.clone();
     tokio::spawn(async move {
         debug!("handle_file_list: received request");
-        let _permit = sem.acquire_owned().await.expect("semaphore closed");
+        let _permit = match sem.acquire_owned().await {
+            Ok(permit) => permit,
+            Err(e) => {
+                error!(
+                    "handle_file_list: semaphore closed, dropping request: {}",
+                    e
+                );
+                return;
+            }
+        };
         let job_id = i64::from(msg.pop_uint());
         let uuid = msg.pop_string();
         let bundle_hash = msg.pop_string();
