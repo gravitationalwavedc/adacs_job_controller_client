@@ -355,8 +355,8 @@ impl BundleInterface {
 
         Py_DecRef(p_args);
         Py_XDECREF(p_func);
-        // Note: p_value's refcount was stolen by json.dumps, but we need to
-        // decref it since CallObject returns a new reference
+        // Note: CallObject returns a new reference owned by the caller, so
+        // we need to decref p_value
         Py_DecRef(p_value);
 
         Ok(result)
