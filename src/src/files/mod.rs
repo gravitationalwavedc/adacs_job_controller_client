@@ -725,6 +725,11 @@ fn handle_file_upload_internal(
                 }
             }
         }
+
+        // Connection dropped before FILE_UPLOAD_COMPLETE — remove the partial
+        // file so it isn't mistaken for a complete upload.
+        warn!("handle_file_upload: connection dropped before FILE_UPLOAD_COMPLETE, removing partial file");
+        let _ = fs::remove_file(&full_path).await;
     });
 }
 
