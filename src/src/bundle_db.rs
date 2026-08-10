@@ -293,6 +293,15 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 
             // Create a dict from the JSON response
             let dict = bundle.json_loads(&job_data_json);
+            if dict.is_null() {
+                error!(
+                    "DB: get_job_by_id failed to parse job data JSON for bundle hash: {}, jobId: {}",
+                    bundle_hash, job_id
+                );
+                let err_msg = CString::new("Failed to parse job data JSON").unwrap();
+                PyErr_SetString(error_obj, err_msg.as_ptr());
+                return ptr::null_mut();
+            }
 
             // Set job_id in the dict
             let value = PyLong_FromUnsignedLongLong(job_id);
