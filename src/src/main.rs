@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         log_level
     );
     info!(
-        "Logging initialized with debug level - check logs at {}",
+        "Logging initialized with {log_level} level - check logs at {}",
         log_dir.display()
     );
 
