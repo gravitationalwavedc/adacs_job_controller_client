@@ -228,7 +228,10 @@ impl BundleInterface {
         }
 
         // Get a pointer to the bundle function to call
-        let s_func = CString::new(func).unwrap();
+        let Ok(s_func) = CString::new(func) else {
+            Py_DecRef(json_obj);
+            return Err(NoneException);
+        };
         let p_func = PyObject_GetAttrString(self.inner.p_bundle_module, s_func.as_ptr());
 
         // Check if function exists
