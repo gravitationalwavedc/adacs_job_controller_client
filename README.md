@@ -39,11 +39,11 @@ cd src
 
 ### Running Tests
 
-The test suite (127 tests) uses in-memory SQLite and runs in parallel by default. Tests are isolated via the BundleManager singleton (OnceLock) and atomic database pointer, ensuring thread safety.
+Tests must run serially with `--test-threads=1`: parallel execution is flaky because some unit tests race on the global WebSocket singleton, so always run tests serially. All DB operations are remote over WebSocket; there is no local SQLite database. On Ubuntu 24.04+ the `PYTHON_LIB_PATH` env var is required (the default path in `tests/mod.rs` only exists on Debian).
 
 ```bash
-# Run all tests
-./run_tests.sh
+# Run all tests (canonical command)
+PYTHON_LIB_PATH=/usr/lib/x86_64-linux-gnu/libpython3.12.so ./run_tests.sh -- --test-threads=1
 
 # Run specific test module
 ./run_tests.sh job_tests
