@@ -25,7 +25,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub type MessageCallback = Arc<dyn Fn() + Send + Sync + 'static>;
 
-#[mockall::automock]
+#[cfg_attr(test, mockall::automock)]
 #[allow(dead_code)]
 pub trait WebsocketClient: Send + Sync {
     fn start(&self, url: String) -> BoxFuture<'static, Result<(), Box<dyn Error + Send + Sync>>>;
