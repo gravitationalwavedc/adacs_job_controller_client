@@ -481,6 +481,50 @@ mod tests {
     }
 
     #[test]
+    fn clone_payload_bytes_returns_bytes_after_source_and_id_header() {
+        let mut msg = Message::new(42, Priority::Medium, "test_source");
+        msg.push_uint(123);
+        msg.push_ulong(456);
+        msg.push_string("payload");
+
+        let payload = msg.clone_payload_bytes();
+
+        let parsed = Message::from_data(msg.get_data().clone());
+        let expected = parsed.get_data()[parsed.index..].to_vec();
+        assert_eq!(payload, expected);
+
+        let mut expected_bytes = Vec::new();
+        expected_bytes.extend_from_slice(&123u32.to_le_bytes());
+        expected_bytes.extend_from_slice(&456u64.to_le_bytes());
+        expected_bytes.extend_from_slice(&7u64.to_le_bytes());
+        expected_bytes.extend_from_slice(b"payload");
+        assert_eq!(payload, expected_bytes);
+    }
+
+    #[test]
+    fn clone_payload_bytes_reparses_from_start_ignoring_current_cursor() {
+        let mut msg = Message::new(1, Priority::Highest, "test");
+        msg.push_uint(123);
+        msg.push_ulong(456);
+
+        let mut read_msg = Message::from_data(msg.get_data().clone());
+        assert_eq!(read_msg.pop_uint(), 123);
+
+        let payload = read_msg.clone_payload_bytes();
+
+        let mut expected_bytes = Vec::new();
+        expected_bytes.extend_from_slice(&123u32.to_le_bytes());
+        expected_bytes.extend_from_slice(&456u64.to_le_bytes());
+        assert_eq!(payload, expected_bytes);
+    }
+
+    #[test]
+    fn clone_payload_bytes_returns_empty_for_header_only_message() {
+        let msg = Message::new(1, Priority::Highest, "test");
+        assert!(msg.clone_payload_bytes().is_empty());
+    }
+
+    #[test]
     fn test_primitive_ubyte() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         msg.push_ubyte(1);
