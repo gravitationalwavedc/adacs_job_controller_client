@@ -151,6 +151,17 @@ fn parse_get_job_by_id_response(
     Ok(resp.pop_string())
 }
 
+/// Build a NUL-terminated C string for an FFI error message.
+///
+/// Server-provided error text may contain an interior NUL byte, which would
+/// make `CString::new` panic (AGENTS.md rule #2: never panic on untrusted
+/// input). Fall back to a static message in that case.
+fn err_cstring(msg: &str) -> CString {
+    CString::new(msg).unwrap_or_else(|_| {
+        CString::new("Internal error").expect("static fallback has no NUL byte")
+    })
+}
+
 // SAFETY: Called by Python C API with a valid `args` tuple pointer.
 // All FFI calls (PyTuple_GetItem, PyDict_SetItemString, PyLong_*, etc.)
 // operate on pointers derived from `args` or freshly created Python objects.
@@ -216,7 +227,7 @@ unsafe extern "C" fn create_or_update_job(
                         "DB: create_or_update_job parse error for bundle hash: {}, jobId: {}: {}",
                         bundle_hash, job_id, message
                     );
-                    let err_msg = CString::new(message).unwrap();
+                    let err_msg = err_cstring(&message);
                     PyErr_SetString(error_obj, err_msg.as_ptr());
                     return ptr::null_mut();
                 }
@@ -239,7 +250,7 @@ unsafe extern "C" fn create_or_update_job(
                 "DB: create_or_update_job error for bundle hash: {}, jobId: {}: {}",
                 bundle_hash, job_id, e
             );
-            let err_msg = CString::new(format!("DB error: {e}")).unwrap();
+            let err_msg = err_cstring(&format!("DB error: {e}"));
             PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
         }
@@ -283,7 +294,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
                         "DB: get_job_by_id parse error for bundle hash: {}, jobId: {}: {}",
                         bundle_hash, job_id, message
                     );
-                    let err_msg = CString::new(message).unwrap();
+                    let err_msg = err_cstring(&message);
                     PyErr_SetString(error_obj, err_msg.as_ptr());
                     return ptr::null_mut();
                 }
@@ -298,7 +309,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
                     "DB: get_job_by_id failed to parse job data JSON for bundle hash: {}, jobId: {}",
                     bundle_hash, job_id
                 );
-                let err_msg = CString::new("Failed to parse job data JSON").unwrap();
+                let err_msg = err_cstring("Failed to parse job data JSON");
                 PyErr_SetString(error_obj, err_msg.as_ptr());
                 return ptr::null_mut();
             }
@@ -316,7 +327,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
                 "DB: get_job_by_id error for bundle hash: {}, jobId: {}: {}",
                 bundle_hash, job_id, e
             );
-            let err_msg = CString::new(format!("DB error: {e}")).unwrap();
+            let err_msg = err_cstring(&format!("DB error: {e}"));
             PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
         }
@@ -383,7 +394,7 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
                 "DB: delete_job error for bundle hash: {}, jobId: {}: {}",
                 bundle_hash, job_id, e
             );
-            let err_msg = CString::new(format!("DB error: {e}")).unwrap();
+            let err_msg = err_cstring(&format!("DB error: {e}"));
             let error_obj = get_bundle_db_error(&bundle_hash);
             PyErr_SetString(error_obj, err_msg.as_ptr());
             ptr::null_mut()
@@ -480,6 +491,18 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
 mod tests {
     use super::*;
     use crate::messaging::DB_RESPONSE;
+
+    #[test]
+    fn err_cstring_preserves_well_formed_message() {
+        let cstr = err_cstring("Job with ID 9 does not exist.");
+        assert_eq!(cstr.to_str().unwrap(), "Job with ID 9 does not exist.");
+    }
+
+    #[test]
+    fn err_cstring_falls_back_on_interior_nul() {
+        let cstr = err_cstring("bad\x00message");
+        assert_eq!(cstr.to_str().unwrap(), "Internal error");
+    }
 
     #[test]
     fn build_bundle_create_or_update_message_matches_server_order() {
