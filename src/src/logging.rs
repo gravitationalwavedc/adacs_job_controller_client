@@ -86,16 +86,6 @@ pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize, log_
     );
 }
 
-/// Initialize logging with default settings.
-///
-/// Uses the log directory relative to the executable path,
-/// prefix "`adacs_job_client`", and retains 7 days of logs.
-/// Uses "info" as default log level.
-pub fn init_default_logging(executable_path: &Path) {
-    let log_dir = executable_path.join("logs");
-    init_logging(&log_dir, "adacs_job_client", 7, "info");
-}
-
 /// Initialize logging with settings from config.
 ///
 /// Uses the log directory relative to the executable path,
@@ -144,20 +134,6 @@ mod tests {
 
         let log_contents = read_log_files(&log_dir).join("\n");
         assert!(log_contents.contains("Test log message"));
-    }
-
-    #[test]
-    fn test_init_default_logging() {
-        let temp_dir = TempDir::new().unwrap();
-        let executable_path = temp_dir.path().join("bin");
-        let log_dir = executable_path.join("logs");
-
-        fs::create_dir_all(&executable_path).unwrap();
-        init_default_logging(&executable_path);
-        thread::sleep(Duration::from_millis(50));
-
-        assert!(log_dir.is_dir());
-        assert!(!read_log_files(&log_dir).is_empty());
     }
 
     #[test]
