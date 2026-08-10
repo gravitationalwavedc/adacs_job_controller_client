@@ -64,8 +64,6 @@ pub const PYTHON_API_VERSION: c_int = 1013;
 
 pub type PyGILState_STATE = c_int;
 pub const PY_GILSTATE_LOCKED: PyGILState_STATE = 0;
-#[allow(dead_code)]
-pub const PY_GILSTATE_UNLOCKED: PyGILState_STATE = 1;
 
 // ─── py_wrap! macro ──────────────────────────────────────────────────────────
 // Each wrapped function looks up its symbol in the dynamically loaded libpython.
@@ -164,7 +162,6 @@ py_wrap!(PyTuple_GetItem, (tuple: *mut PyObject, pos: Py_ssize_t) -> *mut PyObje
 py_wrap!(Py_IncRef, (obj: *mut PyObject) -> ());
 py_wrap!(Py_DecRef, (obj: *mut PyObject) -> ());
 py_wrap!(PyThreadState_New, (interp: *mut PyInterpreterState) -> *mut PyThreadState);
-py_wrap!(PyThreadState_Delete, (state: *mut PyThreadState) -> ());
 py_wrap!(PyEval_RestoreThread, (state: *mut PyThreadState) -> ());
 py_wrap!(PyEval_InitThreads, () -> ());
 py_wrap!(PyThreadState_Clear, (state: *mut PyThreadState) -> ());
@@ -177,7 +174,6 @@ py_wrap!(PyErr_Fetch, (extype: *mut *mut PyObject, value: *mut *mut PyObject, tr
 py_wrap!(PyErr_Clear, () -> ());
 py_wrap!(PyErr_Print, () -> ());
 py_wrap!(PyCallable_Check, (callable: *mut PyObject) -> c_int);
-py_wrap!(PyObject_IsTrue, (obj: *mut PyObject) -> c_int);
 py_wrap!(PyObject_Str, (obj: *mut PyObject) -> *mut PyObject);
 py_wrap!(PySys_GetObject, (obj: *const c_char) -> *mut PyObject);
 py_wrap!(PyList_Append, (list: *mut PyObject, item: *mut PyObject) -> c_int);
