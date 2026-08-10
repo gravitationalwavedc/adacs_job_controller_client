@@ -237,7 +237,6 @@ unsafe extern "C" fn create_or_update_job(
             let value = PyLong_FromUnsignedLongLong(new_job_id);
             PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
             Py_DecRef(value);
-            Py_IncRef(dict);
 
             debug!("DB: create_or_update_job res - jobId: {}", new_job_id);
 
