@@ -999,6 +999,50 @@ fn test_get_file_list_multiple_concurrent_calls_release_semaphore() {
     inner();
 }
 
+#[test_fork::test]
+fn test_get_file_list_semaphore_closed_drops_request() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_fl_semaphore_closed");
+
+        crate::files::close_file_list_semaphore_for_test();
+
+        let state = create_mock_state();
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+        mock_ws
+            .expect_queue_message()
+            .times(0)
+            .returning(move |_, data, _| {
+                let msg = Message::from_data(data);
+                let _ = tx_clone.send(msg);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let test_uuid = "test-uuid-semaphore-closed".to_string();
+        let mut msg_raw = Message::new(FILE_LIST, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(2234); // Job ID
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(".");
+        msg_raw.push_bool(false);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+        handle_file_list(msg);
+
+        // Give the spawned task time to run; a closed semaphore must drop the
+        // request without panicking or queuing any response.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "closed semaphore should drop the request without queuing a response"
+        );
+    }
+    inner();
+}
+
 // ============================================================================
 // File Download Error Tests - ported from test_file_download.cpp
 // ============================================================================

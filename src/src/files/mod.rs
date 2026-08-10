@@ -27,6 +27,11 @@ use tracing::{debug, error, trace, warn};
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
+#[cfg(test)]
+pub(crate) fn close_file_list_semaphore_for_test() {
+    FILE_LIST_SEMAPHORE.close();
+}
+
 /// Caller note: this function spawns internally and does not need to be awaited.
 pub fn handle_file_list(mut msg: Message) {
     let sem = FILE_LIST_SEMAPHORE.clone();
