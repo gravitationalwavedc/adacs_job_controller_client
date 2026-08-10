@@ -2211,15 +2211,27 @@ fn test_file_upload_partial_file_cleanup_on_connection_drop() {
         chunk_msg.push_bytes(&partial_data);
         server.msg_tx.send(chunk_msg.get_data().clone()).unwrap();
 
+        // Wait for the client to create the partial file before dropping the
+        // connection. Without this, the test can pass trivially if the client
+        // hasn't started writing yet, leaving the cleanup path uncovered.
+        let full_path = fixture.get_temp_path().join(target_path);
+        let created_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !full_path.exists() {
+            assert!(
+                std::time::Instant::now() < created_deadline,
+                "Partial file should have been created after upload started"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
         // Drop the connection before FILE_UPLOAD_COMPLETE
         server.stop().await;
 
         // Verify partial file was cleaned up (deleted)
-        let full_path = fixture.get_temp_path().join(target_path);
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let cleaned_deadline = std::time::Instant::now() + Duration::from_secs(2);
         while full_path.exists() {
             assert!(
-                std::time::Instant::now() < deadline,
+                std::time::Instant::now() < cleaned_deadline,
                 "Partial file should have been cleaned up after connection drop"
             );
             tokio::time::sleep(Duration::from_millis(10)).await;
