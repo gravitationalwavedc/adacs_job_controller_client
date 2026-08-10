@@ -324,7 +324,7 @@ impl Message {
             trace!("Message: popped empty bytes");
             return Vec::new();
         }
-        if self.index + len > self.data.len() {
+        if len > self.data.len().saturating_sub(self.index) {
             warn!("pop_bytes: length {} exceeds remaining buffer size", len);
             return Vec::new();
         }
@@ -863,5 +863,14 @@ mod tests {
         let mut partial = truncated_message(vec![0x01, 0x02, 0x03, 0x04], 0);
         assert!((partial.pop_double() - 0.0).abs() < f64::EPSILON);
         assert_eq!(partial.index, 0);
+    }
+
+    #[test]
+    fn pop_bytes_returns_empty_on_huge_length_field() {
+        let mut data = vec![0xFF; 8];
+        data.extend_from_slice(&[0xAA, 0xBB]);
+        let mut huge_length = truncated_message(data, 0);
+        assert_eq!(huge_length.pop_bytes(), Vec::<u8>::new());
+        assert_eq!(huge_length.index, 8);
     }
 }
