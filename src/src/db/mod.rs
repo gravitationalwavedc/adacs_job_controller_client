@@ -158,18 +158,7 @@ pub async fn delete_job(id: i64) -> Result<(), String> {
 pub async fn get_or_create_by_job_id(job_id_val: i64) -> Result<job::Model, String> {
     match get_job_by_job_id(job_id_val).await? {
         Some(job) => Ok(job),
-        None => Ok(job::Model {
-            id: 0,
-            job_id: None,
-            scheduler_id: None,
-            submitting: false,
-            submitting_count: 0,
-            bundle_hash: String::new(),
-            working_directory: String::new(),
-            running: false,
-            deleted: false,
-            deleting: false,
-        }),
+        None => Ok(job::Model::default()),
     }
 }
 
