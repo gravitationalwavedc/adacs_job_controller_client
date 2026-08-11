@@ -28,7 +28,6 @@ pub type MessageCallback = Arc<dyn Fn() + Send + Sync + 'static>;
 #[cfg_attr(test, mockall::automock)]
 #[allow(dead_code)]
 pub trait WebsocketClient: Send + Sync {
-    fn start(&self, url: String) -> BoxFuture<'static, Result<(), Box<dyn Error + Send + Sync>>>;
     fn start_with_token(
         &self,
         url: String,
@@ -723,13 +722,6 @@ impl TungsteniteWebsocketClient {
 }
 
 impl WebsocketClient for TungsteniteWebsocketClient {
-    fn start(&self, url: String) -> BoxFuture<'static, Result<(), Box<dyn Error + Send + Sync>>> {
-        Box::pin(async move {
-            let _ = url;
-            Err("start() without an explicit token is no longer supported".into())
-        })
-    }
-
     fn start_with_token(
         &self,
         url: String,
@@ -991,19 +983,6 @@ mod tests {
     fn test_websocket_client_creation() {
         let client = TungsteniteWebsocketClient::new();
         assert!(!client.is_server_ready());
-    }
-
-    #[test]
-    fn test_start_requires_token() {
-        let client = TungsteniteWebsocketClient::new();
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result =
-            rt.block_on(async { client.start("ws://localhost:8001/ws/".to_string()).await });
-
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("no longer supported"));
     }
 
     #[test]
