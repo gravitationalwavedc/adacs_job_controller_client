@@ -51,11 +51,7 @@ pub trait WebsocketClient: Send + Sync {
     fn prune_sources(&self);
 }
 
-pub(crate) struct SDataItem {
-    data: Vec<u8>,
-}
-
-type PriorityQueue = Vec<Arc<Mutex<HashMap<String, VecDeque<SDataItem>>>>>;
+type PriorityQueue = Vec<Arc<Mutex<HashMap<String, VecDeque<Vec<u8>>>>>>;
 
 #[derive(Clone)]
 struct ConnectionConfig {
@@ -479,11 +475,11 @@ impl TungsteniteWebsocketClient {
                             if let Some((item, source)) = item_to_send {
                                 had_any_data = true;
                                 consecutive_count += 1;
-                                let data_len = item.data.len();
+                                let data_len = item.len();
                                 trace!("WS: Scheduler - processing item from source '{}' at priority {} - size: {} bytes, consecutive: {}, id={}", source, p, data_len, consecutive_count, conn_id);
                                 trace!("WS: Scheduler sending message at priority {} - size: {} bytes, consecutive: {}, id={}", p, data_len, consecutive_count, conn_id);
                                 if writer_tx_for_scheduler
-                                    .send(WsMessage::Binary(item.data.into()))
+                                    .send(WsMessage::Binary(item.into()))
                                     .is_err()
                                 {
                                     error!(
@@ -775,7 +771,7 @@ impl WebsocketClient for TungsteniteWebsocketClient {
             let mut map = self.queue[p].lock();
             let q = map.entry(source.clone()).or_default();
             let data_len = data.len();
-            q.push_back(SDataItem { data });
+            q.push_back(data);
             let queue_len = q.len();
             debug!("WS: Queued message to source '{}' at priority {} - data size: {} bytes, queue depth: {}", source, p, data_len, queue_len);
         }
@@ -1064,7 +1060,7 @@ mod tests {
 
         let queue = client.queue[Priority::Highest as usize].lock();
         let queued = queue.get("db").unwrap().front().unwrap();
-        let mut parsed = Message::from_data(queued.data.clone());
+        let mut parsed = Message::from_data(queued.clone());
         assert_eq!(parsed.id, DB_JOB_GET_RUNNING_JOBS);
         assert_eq!(parsed.pop_uint(), 0);
         assert_eq!(parsed.pop_ulong(), 42);
@@ -1140,7 +1136,7 @@ mod tests {
         );
         let q = queued.unwrap();
         assert_eq!(q.len(), 1);
-        assert_eq!(q.front().unwrap().data, test_data);
+        assert_eq!(q.front().unwrap(), &test_data);
     }
 
     #[test]
@@ -1188,7 +1184,7 @@ mod tests {
             queued_item.is_some(),
             "Arc scheduler should be able to access messages queued by main thread"
         );
-        assert_eq!(queued_item.unwrap().data, test_data);
+        assert_eq!(queued_item.unwrap(), test_data);
     }
 
     #[test]
@@ -1581,31 +1577,18 @@ mod tests {
         // Manually populate priorities 1, 2, 5 (no named Priority variant).
         {
             let mut map = client.queue[1].lock();
-            map.insert(
-                "p1".to_string(),
-                VecDeque::from(vec![
-                    SDataItem { data: vec![1] },
-                    SDataItem { data: vec![2] },
-                ]),
-            );
+            map.insert("p1".to_string(), VecDeque::from(vec![vec![1], vec![2]]));
         }
         {
             let mut map = client.queue[2].lock();
-            map.insert(
-                "p2".to_string(),
-                VecDeque::from(vec![SDataItem { data: vec![1] }]),
-            );
+            map.insert("p2".to_string(), VecDeque::from(vec![vec![1]]));
         }
         let p5_count: usize = 3;
         {
             let mut map = client.queue[5].lock();
             map.insert(
                 "p5".to_string(),
-                VecDeque::from(vec![
-                    SDataItem { data: vec![1] },
-                    SDataItem { data: vec![2] },
-                    SDataItem { data: vec![3] },
-                ]),
+                VecDeque::from(vec![vec![1], vec![2], vec![3]]),
             );
         }
 
@@ -1752,10 +1735,7 @@ mod tests {
         client.queue_message("p0".to_string(), vec![1], Priority::Highest);
         {
             let mut map = client.queue[5].lock();
-            map.insert(
-                "p5".to_string(),
-                VecDeque::from(vec![SDataItem { data: vec![5] }]),
-            );
+            map.insert("p5".to_string(), VecDeque::from(vec![vec![5]]));
         }
         client.queue_message("p10".to_string(), vec![10], Priority::Medium);
         client.queue_message("p19".to_string(), vec![19], Priority::Lowest);
@@ -1778,10 +1758,7 @@ mod tests {
         let contended_client = TungsteniteWebsocketClient::new();
         {
             let mut map = contended_client.queue[5].lock();
-            map.insert(
-                "p5".to_string(),
-                VecDeque::from(vec![SDataItem { data: vec![5] }]),
-            );
+            map.insert("p5".to_string(), VecDeque::from(vec![vec![5]]));
         }
         let held = contended_client.queue[5].lock();
         assert!(
