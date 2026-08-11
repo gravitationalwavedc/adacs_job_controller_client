@@ -483,11 +483,7 @@ pub fn handle_file_download(mut msg: Message) {
                 }
                 Err(e) => {
                     warn!("Error reading file: {}", e);
-                    let mut err_msg = Message::new(FILE_DOWNLOAD_ERROR, Priority::Highest, &uuid);
-                    err_msg.push_string("Exception reading file");
-                    let _ = ws_sender
-                        .send(WsMessage::Binary(err_msg.get_data().clone().into()))
-                        .await;
+                    send_download_error(&mut ws_sender, &uuid, "Exception reading file").await;
                     return;
                 }
             };
