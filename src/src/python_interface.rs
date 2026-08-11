@@ -113,8 +113,18 @@ pub fn load_python_library(path: &str) -> Result<(), String> {
         debug!("dlopen {} with flags RTLD_NOW|RTLD_GLOBAL", path);
         let handle = libc::dlopen(c_path.as_ptr(), flags);
         if handle.is_null() {
-            let err = std::ffi::CStr::from_ptr(libc::dlerror());
-            let err_msg = format!("Failed to dlopen libpython: {}", err.to_string_lossy());
+            let err_ptr = libc::dlerror();
+            // SAFETY: dlerror() returns either NULL or a pointer to a static,
+            // null-terminated error string; the NULL case is handled before
+            // CStr::from_ptr dereferences the pointer.
+            let detail = if err_ptr.is_null() {
+                "unknown dlopen error".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(err_ptr)
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            let err_msg = format!("Failed to dlopen libpython: {detail}");
             error!("{}", err_msg);
             return Err(err_msg);
         }
