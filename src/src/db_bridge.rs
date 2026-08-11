@@ -133,7 +133,10 @@ impl DbBridge {
                 msg,
                 response_tx: tx,
             })
-            .map_err(|_| "DbBridge channel closed — bridge thread may have panicked".to_string())?;
+            .map_err(|_| {
+                self.queue_depth.fetch_sub(1, Ordering::SeqCst);
+                "DbBridge channel closed — bridge thread may have panicked".to_string()
+            })?;
         trace!("DbBridge: request sent to channel");
         let result_start = std::time::Instant::now();
         let result = rx
