@@ -171,6 +171,10 @@ unsafe extern "C" fn create_or_update_job(
     args: *mut PyObject,
 ) -> *mut PyObject {
     let dict = PyTuple_GetItem(args, 0);
+    if dict.is_null() {
+        error!("DB: create_or_update_job - invalid arguments");
+        return ptr::null_mut();
+    }
 
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
     let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
@@ -262,6 +266,10 @@ unsafe extern "C" fn create_or_update_job(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let job_id_obj = PyTuple_GetItem(args, 0);
+    if job_id_obj.is_null() {
+        error!("DB: get_job_by_id - invalid arguments");
+        return ptr::null_mut();
+    }
     let job_id = PyLong_AsUnsignedLongLong(job_id_obj);
 
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
@@ -338,6 +346,10 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 #[unsafe(no_mangle)]
 unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let dict = PyTuple_GetItem(args, 0);
+    if dict.is_null() {
+        error!("DB: delete_job - invalid arguments");
+        return ptr::null_mut();
+    }
 
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
     let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
