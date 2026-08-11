@@ -33,7 +33,8 @@ pub fn get_last_log_message() -> Option<(String, bool)> {
 /// Mirrors C++ `writeLog` exactly.
 // SAFETY: Called by Python C API with a valid `args` tuple (is_stdout, message).
 // FFI calls (PyTuple_GetItem, PyUnicode_AsUTF8, Py_IncRef) operate on tuple
-// items or Python singletons returned by helpers; null UTF-8 is handled below.
+// items or Python singletons returned by helpers; null tuple items and null
+// UTF-8 are guarded before use.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     // Get the bundle hash for this thread

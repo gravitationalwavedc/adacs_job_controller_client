@@ -149,3 +149,18 @@ fn test_stderr_during_load() {
     );
     assert!(!last_log.1); // is_stdout is false
 }
+
+#[test]
+fn test_wrong_arity_write_does_not_crash() {
+    setup();
+    let fixture = BundleFixture::new();
+    let bundle_hash = Uuid::new_v4().to_string();
+
+    fixture.write_bundle_logging_wrong_arity(&bundle_hash);
+
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+    let result =
+        BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
+
+    assert!(result);
+}

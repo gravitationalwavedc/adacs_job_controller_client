@@ -28,6 +28,17 @@ def logging_test(details, job_data):
     return True
 ";
 
+pub const LOGGING_WRONG_ARITY_SCRIPT: &str = r"
+import _bundlelogging
+
+def logging_test(details, job_data):
+    try:
+        _bundlelogging.write(True)
+    except Exception:
+        pass
+    return True
+";
+
 pub const JOB_SUBMIT_SCRIPT: &str = r#"
 def working_directory(details, job_data):
     return "WORKING_DIR"
@@ -97,6 +108,10 @@ impl BundleFixture {
 
     pub fn write_bundle_logging_std_err_during_load(&self, hash: &str, content: &str) {
         self.write_script(hash, LOGGING_STDERR_DURING_LOAD_SCRIPT, &[("xxx", content)]);
+    }
+
+    pub fn write_bundle_logging_wrong_arity(&self, hash: &str) {
+        self.write_script(hash, LOGGING_WRONG_ARITY_SCRIPT, &[]);
     }
 
     pub fn write_raw_script(&self, hash: &str, content: &str) {
