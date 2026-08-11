@@ -45,6 +45,12 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
 
     // Convert the second argument to a string
     let arg_msg = PyTuple_GetItem(args, 1);
+    if arg_msg.is_null() {
+        // Return Py_None with INCREF like C++
+        let result = my_py_none_struct();
+        Py_IncRef(result);
+        return result;
+    }
     let c_msg = PyUnicode_AsUTF8(arg_msg);
 
     if c_msg.is_null() {
