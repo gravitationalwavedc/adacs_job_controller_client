@@ -77,64 +77,40 @@ pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
     Ok(jobs)
 }
 
-pub async fn get_job_by_id(id: i64) -> Result<Option<job::Model>, String> {
-    debug!("DB: get_job_by_id - requesting job id={}", id);
-    let mut msg = Message::new(DB_JOB_GET_BY_ID, Priority::Medium, "database");
+async fn get_job_by_message(
+    msg_type: u32,
+    id: i64,
+    context: &str,
+) -> Result<Option<job::Model>, String> {
+    debug!("DB: {} - requesting id={}", context, id);
+    let mut msg = Message::new(msg_type, Priority::Medium, "database");
     msg.push_ulong(id as u64);
     let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
         .map_err(|e| {
-            error!("DB: get_job_by_id - request failed for id={}: {}", id, e);
+            error!("DB: {} - request failed for id={}: {}", context, id, e);
             e.to_string()
         })?;
     let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
     let count = resp.pop_uint();
     if count == 0 {
-        debug!("DB: get_job_by_id - job id={} not found", id);
+        debug!("DB: {} - id={} not found", context, id);
         return Ok(None);
     }
     let job = parse_job(&mut resp);
-    debug!(
-        "DB: get_job_by_id - received job id={} in {:?}",
-        id, elapsed
-    );
+    debug!("DB: {} - received job id={} in {:?}", context, id, elapsed);
     Ok(Some(job))
 }
 
+pub async fn get_job_by_id(id: i64) -> Result<Option<job::Model>, String> {
+    get_job_by_message(DB_JOB_GET_BY_ID, id, "get_job_by_id").await
+}
+
 pub async fn get_job_by_job_id(job_id_val: i64) -> Result<Option<job::Model>, String> {
-    debug!(
-        "DB: get_job_by_job_id - requesting job_id_val={}",
-        job_id_val
-    );
-    let mut msg = Message::new(DB_JOB_GET_BY_JOB_ID, Priority::Medium, "database");
-    msg.push_ulong(job_id_val as u64);
-    let send_start = std::time::Instant::now();
-    let raw = get_websocket_client()
-        .send_db_request(msg)
-        .await
-        .map_err(|e| {
-            error!(
-                "DB: get_job_by_job_id - request failed for job_id_val={}: {}",
-                job_id_val, e
-            );
-            e.to_string()
-        })?;
-    let elapsed = send_start.elapsed();
-    let mut resp = parse_response(&raw);
-    let count = resp.pop_uint();
-    if count == 0 {
-        debug!(
-            "DB: get_job_by_job_id - job_id_val={} not found",
-            job_id_val
-        );
-        return Ok(None);
-    }
-    let job = parse_job(&mut resp);
-    debug!("DB: get_job_by_job_id - received job in {:?}", elapsed);
-    Ok(Some(job))
+    get_job_by_message(DB_JOB_GET_BY_JOB_ID, job_id_val, "get_job_by_job_id").await
 }
 
 pub async fn delete_job(id: i64) -> Result<(), String> {
