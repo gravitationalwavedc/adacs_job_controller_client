@@ -202,7 +202,8 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
 }
 
 /// Set `job_id` in a Python dict, handling a failed `PyLong_FromUnsignedLongLong`
-/// allocation. Returns `false` (and sets the Python error) when `value` is NULL.
+/// allocation and a failed `PyDict_SetItemString`. Returns `false` (and sets the
+/// Python error) when `value` is NULL or the dict insertion fails.
 ///
 /// `context` names the caller for the error log (e.g. `"create_or_update_job"`).
 ///
@@ -227,7 +228,16 @@ unsafe fn set_job_id_in_dict(
         PyErr_SetString(error_obj, err_msg.as_ptr());
         return false;
     }
-    PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
+    if PyDict_SetItemString(dict, c"job_id".as_ptr(), value) < 0 {
+        Py_DecRef(value);
+        error!(
+            "DB: {} failed to set job_id in dict for bundle hash: {}, jobId: {}",
+            context, bundle_hash, job_id
+        );
+        let err_msg = err_cstring("Failed to set job_id in dict");
+        PyErr_SetString(error_obj, err_msg.as_ptr());
+        return false;
+    }
     Py_DecRef(value);
     true
 }
