@@ -311,7 +311,13 @@ pub fn handle_file_download(mut msg: Message) {
                             );
                         }
                     }
-                    send_download_error(&mut ws_sender, &uuid, &err.client_message()).await;
+                    send_file_error(
+                        &mut ws_sender,
+                        &uuid,
+                        &err.client_message(),
+                        FILE_DOWNLOAD_ERROR,
+                    )
+                    .await;
                     return;
                 }
             }
@@ -349,10 +355,11 @@ pub fn handle_file_download(mut msg: Message) {
             }
             Err(e) => {
                 warn!("handle_file_download: Failed to canonicalize path: {}", e);
-                send_download_error(
+                send_file_error(
                     &mut ws_sender,
                     &uuid,
                     "Path to file download does not exist",
+                    FILE_DOWNLOAD_ERROR,
                 )
                 .await;
                 return;
@@ -361,10 +368,11 @@ pub fn handle_file_download(mut msg: Message) {
 
         if !validate_path_is_within(&abs_path, &working_directory).await {
             warn!("handle_file_download: Path validation failed - outside working directory");
-            send_download_error(
+            send_file_error(
                 &mut ws_sender,
                 &uuid,
                 "Path to file download is outside the working directory",
+                FILE_DOWNLOAD_ERROR,
             )
             .await;
             return;
@@ -381,16 +389,22 @@ pub fn handle_file_download(mut msg: Message) {
                     "handle_file_download: Path is not a file (is_directory={})",
                     m.is_dir()
                 );
-                send_download_error(&mut ws_sender, &uuid, "Path to file download is not a file")
-                    .await;
+                send_file_error(
+                    &mut ws_sender,
+                    &uuid,
+                    "Path to file download is not a file",
+                    FILE_DOWNLOAD_ERROR,
+                )
+                .await;
                 return;
             }
             Err(e) => {
                 warn!("handle_file_download: Failed to get file metadata: {}", e);
-                send_download_error(
+                send_file_error(
                     &mut ws_sender,
                     &uuid,
                     &format!("Failed to get file metadata: {e}"),
+                    FILE_DOWNLOAD_ERROR,
                 )
                 .await;
                 return;
@@ -424,8 +438,13 @@ pub fn handle_file_download(mut msg: Message) {
             }
             Err(e) => {
                 warn!("Failed to open file for download: {}", e);
-                send_download_error(&mut ws_sender, &uuid, "Failed to open file for download")
-                    .await;
+                send_file_error(
+                    &mut ws_sender,
+                    &uuid,
+                    "Failed to open file for download",
+                    FILE_DOWNLOAD_ERROR,
+                )
+                .await;
                 return;
             }
         };
@@ -517,7 +536,7 @@ pub fn handle_file_download(mut msg: Message) {
     });
 }
 
-async fn send_download_error(
+async fn send_file_error(
     ws_sender: &mut futures_util::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -526,8 +545,9 @@ async fn send_download_error(
     >,
     uuid: &str,
     error_msg: &str,
+    msg_id: u32,
 ) {
-    let mut result = Message::new(FILE_DOWNLOAD_ERROR, Priority::Highest, uuid);
+    let mut result = Message::new(msg_id, Priority::Highest, uuid);
     result.push_string(error_msg);
     if let Err(e) = ws_sender
         .send(WsMessage::Binary(result.get_data().clone().into()))
@@ -649,7 +669,13 @@ fn handle_file_upload_internal(
                             job_id, e
                         );
                     }
-                    send_upload_error(&mut ws_sender, &uuid, &err.client_message()).await;
+                    send_file_error(
+                        &mut ws_sender,
+                        &uuid,
+                        &err.client_message(),
+                        FILE_UPLOAD_ERROR,
+                    )
+                    .await;
                     return;
                 }
             }
@@ -677,10 +703,11 @@ fn handle_file_upload_internal(
         let full_path = Path::new(&working_directory).join(&target_path);
 
         if !validate_path_is_within(&full_path, &working_directory).await {
-            send_upload_error(
+            send_file_error(
                 &mut ws_sender,
                 &uuid,
                 "Target path for file upload is outside the working directory",
+                FILE_UPLOAD_ERROR,
             )
             .await;
             return;
@@ -700,10 +727,11 @@ fn handle_file_upload_internal(
             Ok(f) => f,
             Err(e) => {
                 warn!("Failed to create file: {}", e);
-                send_upload_error(
+                send_file_error(
                     &mut ws_sender,
                     &uuid,
                     "Failed to open target file for writing",
+                    FILE_UPLOAD_ERROR,
                 )
                 .await;
                 return;
@@ -720,20 +748,26 @@ fn handle_file_upload_internal(
                     if let Err(e) = file.write_all(&chunk).await {
                         warn!("Failed to write chunk: {}", e);
                         let _ = fs::remove_file(&full_path).await;
-                        send_upload_error(&mut ws_sender, &uuid, "Failed to write chunk to file")
-                            .await;
+                        send_file_error(
+                            &mut ws_sender,
+                            &uuid,
+                            "Failed to write chunk to file",
+                            FILE_UPLOAD_ERROR,
+                        )
+                        .await;
                         return;
                     }
                     received_size += chunk.len() as u64;
                 } else if m.id == FILE_UPLOAD_COMPLETE {
                     if received_size != file_size {
                         let _ = fs::remove_file(&full_path).await;
-                        send_upload_error(
+                        send_file_error(
                             &mut ws_sender,
                             &uuid,
                             &format!(
                                 "File size mismatch: expected {file_size}, got {received_size}"
                             ),
+                            FILE_UPLOAD_ERROR,
                         )
                         .await;
                         return;
@@ -741,10 +775,11 @@ fn handle_file_upload_internal(
                     if let Err(e) = file.flush().await {
                         warn!("Failed to flush uploaded file: {}", e);
                         let _ = fs::remove_file(&full_path).await;
-                        send_upload_error(
+                        send_file_error(
                             &mut ws_sender,
                             &uuid,
                             "Failed to finalize uploaded file",
+                            FILE_UPLOAD_ERROR,
                         )
                         .await;
                         return;
@@ -752,10 +787,11 @@ fn handle_file_upload_internal(
                     if let Err(e) = file.sync_all().await {
                         warn!("Failed to sync uploaded file: {}", e);
                         let _ = fs::remove_file(&full_path).await;
-                        send_upload_error(
+                        send_file_error(
                             &mut ws_sender,
                             &uuid,
                             "Failed to finalize uploaded file",
+                            FILE_UPLOAD_ERROR,
                         )
                         .await;
                         return;
@@ -882,26 +918,6 @@ async fn validate_path_is_within(target_path: &Path, working_directory: &str) ->
     }
 
     true
-}
-
-async fn send_upload_error(
-    ws_sender: &mut futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        WsMessage,
-    >,
-    uuid: &str,
-    error_msg: &str,
-) {
-    let mut result = Message::new(FILE_UPLOAD_ERROR, Priority::Highest, uuid);
-    result.push_string(error_msg);
-    if let Err(e) = ws_sender
-        .send(WsMessage::Binary(result.get_data().clone().into()))
-        .await
-    {
-        warn!("send_upload_error: Failed to send FILE_UPLOAD_ERROR: {}", e);
-    }
 }
 
 #[cfg(test)]
