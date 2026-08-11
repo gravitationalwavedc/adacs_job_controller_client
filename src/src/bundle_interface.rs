@@ -253,6 +253,11 @@ impl BundleInterface {
 
         // Build a tuple to hold the arguments
         let p_args = PyTuple_New(2);
+        if p_args.is_null() {
+            Py_XDECREF(p_func);
+            Py_DecRef(json_obj);
+            return Err(NoneException);
+        }
         PyTuple_SetItem(p_args, 0, json_obj);
         let Ok(c_job_data) = CString::new(job_data) else {
             Py_DecRef(p_args);
