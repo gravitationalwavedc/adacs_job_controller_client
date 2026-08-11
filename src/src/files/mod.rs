@@ -88,10 +88,6 @@ pub fn handle_file_list(mut msg: Message) {
                 )
             })
             .await
-            .map_err(|e| {
-                error!("handle_file_list: Python FFI task panicked: {}", e);
-                format!("Python FFI task failed: {e}")
-            })
             .unwrap_or_else(|e| {
                 error!("handle_file_list: spawn_blocking error: {}", e);
                 String::new()
@@ -292,10 +288,6 @@ pub fn handle_file_download(mut msg: Message) {
                 )
             })
             .await
-            .map_err(|e| {
-                error!("handle_file_download: Python FFI task panicked: {}", e);
-                format!("Python FFI task failed: {e}")
-            })
             .unwrap_or_else(|e| {
                 error!("handle_file_download: spawn_blocking error: {}", e);
                 String::new()
@@ -614,13 +606,6 @@ fn handle_file_upload_internal(
                 )
             })
             .await
-            .map_err(|e| {
-                error!(
-                    "handle_file_upload_internal: Python FFI task panicked: {}",
-                    e
-                );
-                format!("Python FFI task failed: {e}")
-            })
             .unwrap_or_else(|e| {
                 error!("handle_file_upload_internal: spawn_blocking error: {}", e);
                 String::new()
