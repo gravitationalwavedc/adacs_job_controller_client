@@ -86,13 +86,16 @@ pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
     }
 }
 
-pub fn get_ltk_from_config(config: &Value) -> Option<String> {
+fn get_non_empty_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
     config
-        .get("ltk")
+        .get(key)
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+}
+
+pub fn get_ltk_from_config(config: &Value) -> Option<String> {
+    get_non_empty_str(config, "ltk").map(ToOwned::to_owned)
 }
 
 /// Get the Python library path from config or environment variable
@@ -104,12 +107,7 @@ pub fn get_python_library_path() -> String {
 
     // Then check config file
     let config = read_client_config();
-    if let Some(path) = config
-        .get("pythonLibrary")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(path) = get_non_empty_str(&config, "pythonLibrary") {
         return path.to_string();
     }
 
@@ -128,12 +126,8 @@ pub fn ensure_websocket_endpoint_trailing_slash(endpoint: &str) -> String {
 
 /// Get the log level from config, defaulting to "info" if not set
 pub fn get_log_level(config: &Value) -> String {
-    let result = config
-        .get("logLevel")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| "info".to_string(), ToOwned::to_owned);
+    let result =
+        get_non_empty_str(config, "logLevel").map_or_else(|| "info".to_string(), ToOwned::to_owned);
     tracing::debug!("Config log level: {}", result);
     result
 }
