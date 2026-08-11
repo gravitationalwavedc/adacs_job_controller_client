@@ -174,6 +174,11 @@ impl BundleInterface {
         let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
             .map_err(|_| "Bundle path contains NUL byte".to_string())?;
         let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
+        if p_bundle_path.is_null() {
+            error!("Error creating bundle path string");
+            PyErr_Print();
+            return Err("Failed to create bundle path string".to_string());
+        }
         PyList_Append(p_path, p_bundle_path);
         Py_DecRef(p_bundle_path);
 
