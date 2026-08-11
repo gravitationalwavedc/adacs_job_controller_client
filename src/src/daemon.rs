@@ -13,7 +13,7 @@ use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::os::unix::io::{AsRawFd, IntoRawFd};
 use std::process;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Perform UNIX double-fork daemonization with stdout/stderr redirection to log files
 ///
@@ -60,8 +60,9 @@ pub fn daemonize_with_log_redirect(
 
     // Create a new session and become the session leader
     // SAFETY: setsid() has no undefined behavior; returns session ID or -1 on error.
-    unsafe {
-        libc::setsid();
+    let ret = unsafe { libc::setsid() };
+    if ret == -1 {
+        warn!("setsid() failed: {}", std::io::Error::last_os_error());
     }
 
     // Reset umask to have full control over file permissions
@@ -109,9 +110,15 @@ pub fn daemonize_with_log_redirect(
 
     // SAFETY: fd_in and fd_out are valid open FDs from into_raw_fd(); dup2 returns -1 on error.
     unsafe {
-        libc::dup2(fd_in, libc::STDIN_FILENO);
-        libc::dup2(fd_out, libc::STDOUT_FILENO);
-        libc::dup2(fd_out, libc::STDERR_FILENO);
+        if libc::dup2(fd_in, libc::STDIN_FILENO) == -1 {
+            warn!("dup2(stdin) failed: {}", std::io::Error::last_os_error());
+        }
+        if libc::dup2(fd_out, libc::STDOUT_FILENO) == -1 {
+            warn!("dup2(stdout) failed: {}", std::io::Error::last_os_error());
+        }
+        if libc::dup2(fd_out, libc::STDERR_FILENO) == -1 {
+            warn!("dup2(stderr) failed: {}", std::io::Error::last_os_error());
+        }
         // Close the /dev/null source fds unless dup2 already mapped them onto stdio.
         if fd_in > 2 {
             libc::close(fd_in);
@@ -143,8 +150,12 @@ pub fn daemonize_with_log_redirect(
     // Duplicate file descriptors to stdout/stderr
     // SAFETY: stdout_fd and stderr_fd are valid open FDs from as_raw_fd(); dup2 returns -1 on error.
     unsafe {
-        libc::dup2(stdout_fd, libc::STDOUT_FILENO);
-        libc::dup2(stderr_fd, libc::STDERR_FILENO);
+        if libc::dup2(stdout_fd, libc::STDOUT_FILENO) == -1 {
+            warn!("dup2(stdout) failed: {}", std::io::Error::last_os_error());
+        }
+        if libc::dup2(stderr_fd, libc::STDERR_FILENO) == -1 {
+            warn!("dup2(stderr) failed: {}", std::io::Error::last_os_error());
+        }
     }
 
     // Log files will be closed when stdout_file and stderr_file go out of scope
