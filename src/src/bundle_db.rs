@@ -254,6 +254,15 @@ unsafe extern "C" fn create_or_update_job(
 
             // Set job_id in the original dict (matches C++ exactly)
             let value = PyLong_FromUnsignedLongLong(new_job_id);
+            if value.is_null() {
+                error!(
+                    "DB: create_or_update_job failed to allocate job_id for bundle hash: {}, jobId: {}",
+                    bundle_hash, job_id
+                );
+                let err_msg = err_cstring("Failed to allocate job_id");
+                PyErr_SetString(error_obj, err_msg.as_ptr());
+                return ptr::null_mut();
+            }
             PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
             Py_DecRef(value);
 
@@ -332,6 +341,15 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 
             // Set job_id in the dict
             let value = PyLong_FromUnsignedLongLong(job_id);
+            if value.is_null() {
+                error!(
+                    "DB: get_job_by_id failed to allocate job_id for bundle hash: {}, jobId: {}",
+                    bundle_hash, job_id
+                );
+                let err_msg = err_cstring("Failed to allocate job_id");
+                PyErr_SetString(error_obj, err_msg.as_ptr());
+                return ptr::null_mut();
+            }
             PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
             Py_DecRef(value);
 
