@@ -347,19 +347,14 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
     let v_status = db::get_job_status_by_job_id(job.id)
         .await
         .unwrap_or_default();
-    let mut job_error = 0u32;
-    for state in &v_status {
-        if state.state as u32 > RUNNING && state.state as u32 != COMPLETED {
-            job_error = state.state as u32;
-        }
-    }
+    let job_error = v_status
+        .iter()
+        .filter(|state| state.state as u32 > RUNNING && state.state as u32 != COMPLETED)
+        .map(|state| state.state as u32)
+        .next_back()
+        .unwrap_or(0);
 
-    let mut job_complete = true;
-    for state in &v_status {
-        if state.state as u32 != COMPLETED {
-            job_complete = false;
-        }
-    }
+    let job_complete = v_status.iter().all(|state| state.state as u32 == COMPLETED);
 
     if job_error != 0 || (status_json["complete"].as_bool().unwrap_or(false) && job_complete) {
         debug!("check_job_status: job complete, saving to DB");
