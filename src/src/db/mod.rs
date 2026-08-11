@@ -13,25 +13,16 @@ fn parse_response(resp: &Message) -> Message {
     resp.clone_for_payload_reading()
 }
 
+fn pop_optional_id(resp: &mut Message) -> Option<i64> {
+    let v = resp.pop_ulong() as i64;
+    (v != 0).then_some(v)
+}
+
 fn parse_job(resp: &mut Message) -> job::Model {
     job::Model {
         id: resp.pop_ulong() as i64,
-        job_id: {
-            let v = resp.pop_ulong() as i64;
-            if v != 0 {
-                Some(v)
-            } else {
-                None
-            }
-        },
-        scheduler_id: {
-            let v = resp.pop_ulong() as i64;
-            if v != 0 {
-                Some(v)
-            } else {
-                None
-            }
-        },
+        job_id: pop_optional_id(resp),
+        scheduler_id: pop_optional_id(resp),
         submitting: resp.pop_bool(),
         submitting_count: resp.pop_uint() as i32,
         bundle_hash: resp.pop_string(),
