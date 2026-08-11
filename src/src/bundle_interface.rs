@@ -171,6 +171,11 @@ impl BundleInterface {
         // Add the bundle path to the system path
         info!("BundleInterface::new appending bundle path to sys.path");
         let p_path = PySys_GetObject(c"path".as_ptr());
+        if p_path.is_null() {
+            error!("Error getting sys.path");
+            PyErr_Print();
+            return Err("Failed to get sys.path".to_string());
+        }
         let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
             .map_err(|_| "Bundle path contains NUL byte".to_string())?;
         let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
