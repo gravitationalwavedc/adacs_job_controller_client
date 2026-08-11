@@ -799,6 +799,17 @@ mod tests {
     }
 
     #[test]
+    fn pop_ubyte_returns_zero_on_buffer_underflow() {
+        let mut empty = truncated_message(vec![], 0);
+        assert_eq!(empty.pop_ubyte(), 0);
+        assert_eq!(empty.index, 0);
+
+        let mut partial = truncated_message(vec![0x01], 1);
+        assert_eq!(partial.pop_ubyte(), 0);
+        assert_eq!(partial.index, 1);
+    }
+
+    #[test]
     fn pop_uint_returns_zero_on_buffer_underflow() {
         let mut empty = truncated_message(vec![], 0);
         assert_eq!(empty.pop_uint(), 0);
