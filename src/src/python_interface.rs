@@ -248,12 +248,6 @@ unsafe fn install_gil_hooks() {
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
     let result = subhook_install(hook_ensure);
-    if result < 0 {
-        error!(
-            "PyGILState_Ensure redirection failed to install (result={})",
-            result
-        );
-    }
     assert!(
         result >= 0,
         "PyGILState_Ensure redirection failed to install"
@@ -267,12 +261,6 @@ unsafe fn install_gil_hooks() {
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
     let result = subhook_install(hook_release);
-    if result < 0 {
-        error!(
-            "PyGILState_Release redirection failed to install (result={})",
-            result
-        );
-    }
     assert!(
         result >= 0,
         "myPyGILState_Release redirection failed to install"
