@@ -27,6 +27,20 @@ fn get_default_job_details() -> Value {
     })
 }
 
+fn queue_job_completion_message(job_id: i64, status: u32, message: &str) {
+    let ws = get_websocket_client();
+    let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
+    result.push_uint(job_id as u32);
+    result.push_string(JOB_COMPLETION_SOURCE);
+    result.push_uint(status);
+    result.push_string(message);
+    ws.queue_message(
+        job_id.to_string(),
+        result.get_data().clone(),
+        Priority::Medium,
+    );
+}
+
 pub fn handle_job_submit(mut msg: Message) {
     let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
@@ -504,17 +518,7 @@ pub fn handle_job_cancel(mut msg: Message) {
             );
 
             if !job_model.submitting {
-                let ws = get_websocket_client();
-                let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-                result.push_uint(job_id as u32);
-                result.push_string(JOB_COMPLETION_SOURCE);
-                result.push_uint(CANCELLED);
-                result.push_string("Job has been cancelled");
-                ws.queue_message(
-                    job_id.to_string(),
-                    result.get_data().clone(),
-                    Priority::Medium,
-                );
+                queue_job_completion_message(job_id, CANCELLED, "Job has been cancelled");
             }
             return;
         }
@@ -610,17 +614,7 @@ pub fn handle_job_cancel(mut msg: Message) {
             warn!("Archive failed for job {}: {}", job_id, e);
         }
 
-        let ws = get_websocket_client();
-        let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-        result.push_uint(job_id as u32);
-        result.push_string(JOB_COMPLETION_SOURCE);
-        result.push_uint(CANCELLED);
-        result.push_string("Job has been cancelled");
-        ws.queue_message(
-            job_id.to_string(),
-            result.get_data().clone(),
-            Priority::Medium,
-        );
+        queue_job_completion_message(job_id, CANCELLED, "Job has been cancelled");
     });
 }
 
@@ -639,17 +633,7 @@ pub fn handle_job_delete(mut msg: Message) {
             );
 
             if job_model.id == 0 || job_model.deleted {
-                let ws = get_websocket_client();
-                let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-                result.push_uint(job_id as u32);
-                result.push_string(JOB_COMPLETION_SOURCE);
-                result.push_uint(DELETED);
-                result.push_string("Job has been deleted");
-                ws.queue_message(
-                    job_id.to_string(),
-                    result.get_data().clone(),
-                    Priority::Medium,
-                );
+                queue_job_completion_message(job_id, DELETED, "Job has been deleted");
             }
             return;
         }
@@ -698,17 +682,7 @@ pub fn handle_job_delete(mut msg: Message) {
         job_model.deleted = true;
         let _ = db::save_job(job_model.clone()).await;
 
-        let ws = get_websocket_client();
-        let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-        result.push_uint(job_id as u32);
-        result.push_string(JOB_COMPLETION_SOURCE);
-        result.push_uint(DELETED);
-        result.push_string("Job has been deleted");
-        ws.queue_message(
-            job_id.to_string(),
-            result.get_data().clone(),
-            Priority::Medium,
-        );
+        queue_job_completion_message(job_id, DELETED, "Job has been deleted");
     });
 }
 
