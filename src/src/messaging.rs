@@ -5,6 +5,7 @@ use std::io::Cursor;
 use tracing::{debug, trace, warn};
 
 pub const SYSTEM_SOURCE: &str = "system";
+pub const JOB_COMPLETION_SOURCE: &str = "_job_completion_";
 
 pub const SERVER_READY: u32 = 1000;
 

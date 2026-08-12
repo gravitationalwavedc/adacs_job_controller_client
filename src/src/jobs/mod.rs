@@ -2,8 +2,8 @@ use crate::bundle_manager::BundleManager;
 use crate::config::read_client_config;
 use crate::db::{self, job, jobstatus};
 use crate::messaging::{
-    Message, Priority, CANCELLED, COMPLETED, DELETED, ERROR, RUNNING, SUBMITTED, SYSTEM_SOURCE,
-    UPDATE_JOB,
+    Message, Priority, CANCELLED, COMPLETED, DELETED, ERROR, JOB_COMPLETION_SOURCE, RUNNING,
+    SUBMITTED, SYSTEM_SOURCE, UPDATE_JOB,
 };
 use crate::websocket::get_websocket_client;
 use flate2::write::GzEncoder;
@@ -190,7 +190,7 @@ pub fn handle_job_submit(mut msg: Message) {
 
             let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
             result.push_uint(job_id as u32);
-            result.push_string("_job_completion_");
+            result.push_string(JOB_COMPLETION_SOURCE);
             result.push_uint(ERROR);
             result.push_string("Unable to submit job. Please check the logs as to why.");
             ws.queue_message(
@@ -362,7 +362,7 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
             &job.job_id.unwrap_or(0).to_string(),
         );
         result.push_uint(job.job_id.unwrap_or(0) as u32);
-        result.push_string("_job_completion_");
+        result.push_string(JOB_COMPLETION_SOURCE);
         result.push_uint(if job_error != 0 { job_error } else { COMPLETED });
         result.push_string("Job has completed");
         ws.queue_message(
@@ -507,7 +507,7 @@ pub fn handle_job_cancel(mut msg: Message) {
                 let ws = get_websocket_client();
                 let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
                 result.push_uint(job_id as u32);
-                result.push_string("_job_completion_");
+                result.push_string(JOB_COMPLETION_SOURCE);
                 result.push_uint(CANCELLED);
                 result.push_string("Job has been cancelled");
                 ws.queue_message(
@@ -613,7 +613,7 @@ pub fn handle_job_cancel(mut msg: Message) {
         let ws = get_websocket_client();
         let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
         result.push_uint(job_id as u32);
-        result.push_string("_job_completion_");
+        result.push_string(JOB_COMPLETION_SOURCE);
         result.push_uint(CANCELLED);
         result.push_string("Job has been cancelled");
         ws.queue_message(
@@ -642,7 +642,7 @@ pub fn handle_job_delete(mut msg: Message) {
                 let ws = get_websocket_client();
                 let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
                 result.push_uint(job_id as u32);
-                result.push_string("_job_completion_");
+                result.push_string(JOB_COMPLETION_SOURCE);
                 result.push_uint(DELETED);
                 result.push_string("Job has been deleted");
                 ws.queue_message(
@@ -701,7 +701,7 @@ pub fn handle_job_delete(mut msg: Message) {
         let ws = get_websocket_client();
         let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
         result.push_uint(job_id as u32);
-        result.push_string("_job_completion_");
+        result.push_string(JOB_COMPLETION_SOURCE);
         result.push_uint(DELETED);
         result.push_string("Job has been deleted");
         ws.queue_message(
