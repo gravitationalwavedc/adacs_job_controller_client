@@ -19,6 +19,8 @@ const GITHUB_ENDPOINT: &str = "api.github.com";
 const GITHUB_LATEST_URL: &str =
     "/repos/gravitationalwavedc/adacs_job_controller_client/releases/latest";
 
+const USER_AGENT: &str = "ADACS-Job-Controller-Client-Update-Check";
+
 const MAX_DOWNLOAD_RETRIES: u32 = 3;
 const INITIAL_RETRY_DELAY_SECS: u64 = 1;
 
@@ -90,7 +92,7 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
     debug!("Update check: GitHub endpoint={}", GITHUB_ENDPOINT);
 
     let response = ureq::AgentBuilder::new()
-        .user_agent("ADACS-Job-Controller-Client-Update-Check")
+        .user_agent(USER_AGENT)
         .timeout_connect(Duration::from_secs(10))
         .timeout_read(Duration::from_secs(10))
         .build()
@@ -123,7 +125,7 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     for attempt in 1..=MAX_DOWNLOAD_RETRIES {
         debug!("Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES}");
         let agent = ureq::AgentBuilder::new()
-            .user_agent("ADACS-Job-Controller-Client-Update-Check")
+            .user_agent(USER_AGENT)
             .redirects(3)
             .timeout_connect(Duration::from_secs(10))
             .timeout_read(Duration::from_secs(30))
