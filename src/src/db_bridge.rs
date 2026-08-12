@@ -5,6 +5,10 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tracing::{debug, error, info, trace, warn};
 
+const CHANNEL_CAPACITY: usize = 128;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const QUEUE_DEPTH_WARNING_THRESHOLD: usize = 50;
+
 struct DbRequest {
     msg: Message,
     response_tx: std::sync::mpsc::Sender<Result<Message, String>>,
@@ -19,7 +23,7 @@ static DB_BRIDGE: OnceLock<DbBridge> = OnceLock::new();
 
 impl DbBridge {
     pub fn start() {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<DbRequest>(128);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<DbRequest>(CHANNEL_CAPACITY);
         let queue_depth = Arc::new(AtomicUsize::new(0));
         let qd = Arc::clone(&queue_depth);
         std::thread::spawn(move || {
@@ -49,7 +53,7 @@ impl DbBridge {
                         debug!("DbBridge: sending request #{} via WebSocket", request_count);
                         let send_start = std::time::Instant::now();
                         let result = tokio::time::timeout(
-                            Duration::from_secs(30),
+                            REQUEST_TIMEOUT,
                             ws_client.send_db_request(req.msg),
                         )
                         .await;
@@ -108,7 +112,7 @@ impl DbBridge {
             "DbBridge: send() called - msg_id={}, source={}, queue_depth={}",
             msg_id, source, depth
         );
-        if depth > 50 {
+        if depth > QUEUE_DEPTH_WARNING_THRESHOLD {
             tracing::warn!("DbBridge queue depth: {} pending requests", depth);
         }
         let send_start = std::time::Instant::now();
