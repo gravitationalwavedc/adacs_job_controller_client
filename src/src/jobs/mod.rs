@@ -122,10 +122,6 @@ pub fn handle_job_submit(mut msg: Message) {
             )
         })
         .await
-        .map_err(|e| {
-            error!("handle_job_submit: Python FFI task panicked: {}", e);
-            format!("Python FFI task failed: {e}")
-        })
         .unwrap_or_else(|e| {
             error!("handle_job_submit: spawn_blocking error: {}", e);
             String::new()
@@ -159,10 +155,6 @@ pub fn handle_job_submit(mut msg: Message) {
             )
         })
         .await
-        .map_err(|e| {
-            error!("handle_job_submit: Python FFI task panicked: {}", e);
-            format!("Python FFI task failed: {e}")
-        })
         .unwrap_or_else(|e| {
             error!("handle_job_submit: spawn_blocking error: {}", e);
             0u64
@@ -267,10 +259,6 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
         BundleManager::singleton().run_bundle_json("status", &bundle_hash_clone, &details_clone, "")
     })
     .await
-    .map_err(|e| {
-        error!("check_job_status: Python FFI task panicked: {}", e);
-        serde_json::Value::Null
-    })
     .unwrap_or_else(|e| {
         error!("check_job_status: spawn_blocking error: {}", e);
         serde_json::Value::Null
@@ -585,10 +573,6 @@ pub fn handle_job_cancel(mut msg: Message) {
             )
         })
         .await
-        .map_err(|e| {
-            error!("handle_job_cancel: Python FFI task panicked: {}", e);
-            false
-        })
         .unwrap_or_else(|e| {
             error!("handle_job_cancel: spawn_blocking error: {}", e);
             false
@@ -698,10 +682,6 @@ pub fn handle_job_delete(mut msg: Message) {
             )
         })
         .await
-        .map_err(|e| {
-            error!("handle_job_delete: Python FFI task panicked: {}", e);
-            false
-        })
         .unwrap_or_else(|e| {
             error!("handle_job_delete: spawn_blocking error: {}", e);
             false
