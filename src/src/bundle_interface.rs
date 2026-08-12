@@ -140,18 +140,12 @@ impl BundleInterface {
             p_local,
             std::ptr::null_mut(),
         );
-        // Like C++: PyUnicode_AsUTF8(PyObject_Repr(PyRun_String(...)))
         if result.is_null() {
             error!("Error installing stdout/stderr redirection");
             PyErr_Print();
             return Err("Failed to install stdout/stderr redirection".to_string());
         }
 
-        let repr = PyObject_Repr(result);
-        if !repr.is_null() {
-            PyUnicode_AsUTF8(repr);
-            Py_DecRef(repr);
-        }
         Py_DecRef(result);
         Py_DecRef(p_local);
 
