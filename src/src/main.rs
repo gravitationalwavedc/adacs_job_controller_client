@@ -36,6 +36,11 @@ use tracing::{debug, error, info, trace, warn};
 static IS_LTK: AtomicBool = AtomicBool::new(false);
 static READY_FOR_RESTART: AtomicBool = AtomicBool::new(false);
 
+const SERVER_READY_TIMEOUT_SECS: u64 = 30;
+const SERVER_READY_POLL_INTERVAL_MS: u64 = 100;
+const JOB_CHECK_INTERVAL_MINS: u64 = 1;
+const SHUTDOWN_TIMEOUT_SECS: u64 = 10;
+
 fn is_production() -> bool {
     #[cfg(debug_assertions)]
     {
@@ -250,7 +255,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         debug!("WS: start_with_token completed");
 
         info!("Waiting for server to be ready...");
-        let ready_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let ready_deadline =
+            tokio::time::Instant::now() + Duration::from_secs(SERVER_READY_TIMEOUT_SECS);
         loop {
             if ws_client.is_server_ready() {
                 break;
@@ -260,10 +266,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return Err("WebSocket connection closed during startup".into());
             }
             if !reconnectable && tokio::time::Instant::now() > ready_deadline {
-                error!("Timed out waiting for server to be ready after 30s");
+                error!(
+                    "Timed out waiting for server to be ready after {SERVER_READY_TIMEOUT_SECS}s"
+                );
                 return Err("Server did not become ready within the timeout period".into());
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(SERVER_READY_POLL_INTERVAL_MS)).await;
         }
 
         info!("Server ready, starting job status check loop");
@@ -276,7 +284,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
                 .map_err(|e| format!("Failed to set up SIGINT handler: {e}"))?;
 
-        let mut job_check_interval = tokio::time::interval(Duration::from_mins(1));
+        let mut job_check_interval =
+            tokio::time::interval(Duration::from_mins(JOB_CHECK_INTERVAL_MINS));
         loop {
             tokio::select! {
                 _ = job_check_interval.tick() => {
@@ -322,6 +331,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     });
 
-    rt.shutdown_timeout(Duration::from_secs(10));
+    rt.shutdown_timeout(Duration::from_secs(SHUTDOWN_TIMEOUT_SECS));
     result
 }
