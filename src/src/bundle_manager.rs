@@ -117,6 +117,25 @@ impl BundleManager {
         Ok(bundle)
     }
 
+    /// Load a bundle, logging the failure and returning a formatted error message
+    /// on error. Shared by all `run_bundle_*` methods.
+    fn load_bundle_or_error(
+        &self,
+        function_name: &str,
+        bundle_hash: &str,
+    ) -> Result<BundleInterface, String> {
+        match self.load_bundle(bundle_hash) {
+            Ok(bundle) => Ok(bundle),
+            Err(e) => {
+                error!(
+                    "{}: Failed to load bundle {}: {}",
+                    function_name, bundle_hash, e
+                );
+                Err(format!("Failed to load bundle {bundle_hash}: {e}"))
+            }
+        }
+    }
+
     /// Run a bundle function and return the result as a String.
     /// Mirrors C++ `BundleManager::runBundle_string()`.
     pub fn run_bundle_string(
@@ -130,17 +149,10 @@ impl BundleManager {
             "run_bundle_string entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = match self.load_bundle(bundle_hash) {
+        let bundle = match self.load_bundle_or_error("run_bundle_string", bundle_hash) {
             Ok(b) => b,
-            Err(e) => {
-                error!(
-                    "run_bundle_string: Failed to load bundle {}: {}",
-                    bundle_hash, e
-                );
-                return serde_json::json!({
-                    "error": format!("Failed to load bundle {}: {}", bundle_hash, e)
-                })
-                .to_string();
+            Err(msg) => {
+                return serde_json::json!({ "error": msg }).to_string();
             }
         };
         debug!(
@@ -211,15 +223,8 @@ impl BundleManager {
             "run_bundle_uint64 entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = match self.load_bundle(bundle_hash) {
-            Ok(b) => b,
-            Err(e) => {
-                error!(
-                    "run_bundle_uint64: Failed to load bundle {}: {}",
-                    bundle_hash, e
-                );
-                return 0;
-            }
+        let Ok(bundle) = self.load_bundle_or_error("run_bundle_uint64", bundle_hash) else {
+            return 0;
         };
         debug!(
             "run_bundle_uint64 loaded bundle {} for {}",
@@ -285,15 +290,8 @@ impl BundleManager {
             "run_bundle_bool entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = match self.load_bundle(bundle_hash) {
-            Ok(b) => b,
-            Err(e) => {
-                error!(
-                    "run_bundle_bool: Failed to load bundle {}: {}",
-                    bundle_hash, e
-                );
-                return false;
-            }
+        let Ok(bundle) = self.load_bundle_or_error("run_bundle_bool", bundle_hash) else {
+            return false;
         };
         debug!(
             "run_bundle_bool loaded bundle {} for {}",
@@ -350,15 +348,8 @@ impl BundleManager {
             "run_bundle_json entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = match self.load_bundle(bundle_hash) {
-            Ok(b) => b,
-            Err(e) => {
-                error!(
-                    "run_bundle_json: Failed to load bundle {}: {}",
-                    bundle_hash, e
-                );
-                return Value::Null;
-            }
+        let Ok(bundle) = self.load_bundle_or_error("run_bundle_json", bundle_hash) else {
+            return Value::Null;
         };
         debug!(
             "run_bundle_json loaded bundle {} for {}",
