@@ -1092,6 +1092,27 @@ mod tests {
         server.stop().await;
     }
 
+    #[test]
+    fn test_handle_incoming_message_dispatches_text_bytes_like_binary() {
+        let client = Arc::new(TungsteniteWebsocketClient::new());
+        client.connection_id.store(7, Ordering::SeqCst);
+
+        // Register a pending DB request promise for request_id 42.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        client.db_request_promises.write().insert(42, tx);
+
+        // Build a DB_RESPONSE for request_id 42 and feed it through the text path.
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_uint(42);
+        response.push_uint(1);
+        let data = response.get_data().clone();
+        client.handle_incoming_message(7, 1, "text", &data);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut returned = rt.block_on(async { rx.await.unwrap() });
+        assert_eq!(returned.pop_uint(), 1);
+    }
+
     // ============================================================================
     // WebSocket Arc Sharing Tests
     // ============================================================================
