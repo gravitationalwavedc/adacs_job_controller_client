@@ -494,12 +494,26 @@ async fn send_download_error(
         .await;
 }
 
+struct UploadFields {
+    uuid: String,
+    job_id: i64,
+    bundle_hash: String,
+    target_path: String,
+    file_size: u64,
+}
+
+fn parse_upload_fields(msg: &mut Message) -> UploadFields {
+    UploadFields {
+        uuid: msg.pop_string(),
+        job_id: i64::from(msg.pop_uint()),
+        bundle_hash: msg.pop_string(),
+        target_path: msg.pop_string(),
+        file_size: msg.pop_ulong(),
+    }
+}
+
 pub fn handle_file_upload(mut msg: Message) {
-    let uuid = msg.pop_string();
-    let job_id = i64::from(msg.pop_uint());
-    let bundle_hash = msg.pop_string();
-    let target_path = msg.pop_string();
-    let file_size = msg.pop_ulong();
+    let fields = parse_upload_fields(&mut msg);
 
     // Read config BEFORE spawning to capture the correct URL for this upload
     let config = crate::config::read_client_config();
@@ -510,28 +524,24 @@ pub fn handle_file_upload(mut msg: Message) {
     );
 
     handle_file_upload_internal(
-        uuid,
-        job_id,
-        bundle_hash,
-        target_path,
-        file_size,
+        fields.uuid,
+        fields.job_id,
+        fields.bundle_hash,
+        fields.target_path,
+        fields.file_size,
         ws_endpoint,
     );
 }
 
 pub fn handle_file_upload_with_url(mut msg: Message, ws_endpoint: String) {
-    let uuid = msg.pop_string();
-    let job_id = i64::from(msg.pop_uint());
-    let bundle_hash = msg.pop_string();
-    let target_path = msg.pop_string();
-    let file_size = msg.pop_ulong();
+    let fields = parse_upload_fields(&mut msg);
 
     handle_file_upload_internal(
-        uuid,
-        job_id,
-        bundle_hash,
-        target_path,
-        file_size,
+        fields.uuid,
+        fields.job_id,
+        fields.bundle_hash,
+        fields.target_path,
+        fields.file_size,
         ws_endpoint,
     );
 }
@@ -830,6 +840,7 @@ async fn send_upload_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::messaging::UPLOAD_FILE;
     use std::fs;
     use tempfile::TempDir;
     use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
@@ -1010,5 +1021,24 @@ mod tests {
         let err =
             build_file_ws_request("ws://127.0.0.1:9001/ws/", "token\nwith-newline").unwrap_err();
         assert!(err.contains("invalid authorization header"));
+    }
+
+    #[test]
+    fn parse_upload_fields_reads_wire_order() {
+        let mut msg = Message::new(UPLOAD_FILE, Priority::Highest, "client");
+        msg.push_string("uuid-123");
+        msg.push_uint(42);
+        msg.push_string("bundle-hash");
+        msg.push_string("/data/out.txt");
+        msg.push_ulong(1024);
+
+        let mut resp = Message::from_data(msg.get_data().clone());
+        let fields = parse_upload_fields(&mut resp);
+
+        assert_eq!(fields.uuid, "uuid-123");
+        assert_eq!(fields.job_id, 42);
+        assert_eq!(fields.bundle_hash, "bundle-hash");
+        assert_eq!(fields.target_path, "/data/out.txt");
+        assert_eq!(fields.file_size, 1024);
     }
 }
