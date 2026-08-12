@@ -121,42 +121,22 @@ pub fn handle_file_list(mut msg: Message) {
                 if let Ok(mut entries) = fs::read_dir(current_dir).await {
                     while let Ok(Some(entry)) = entries.next_entry().await {
                         let path = entry.path();
-                        let Ok(metadata) = entry.metadata().await else {
-                            continue;
-                        };
-                        if metadata.is_symlink() {
-                            continue;
-                        }
-
-                        let relative_path = path
-                            .strip_prefix(&working_directory)
-                            .unwrap_or(&path)
-                            .to_string_lossy()
-                            .into_owned();
-                        file_list.push((relative_path, metadata.is_dir(), metadata.len()));
-
-                        if metadata.is_dir() {
-                            stack.push(path);
+                        if let Some((relative_path, is_dir, size)) =
+                            collect_dir_entry(entry, &working_directory).await
+                        {
+                            file_list.push((relative_path, is_dir, size));
+                            if is_dir {
+                                stack.push(path);
+                            }
                         }
                     }
                 }
             }
         } else if let Ok(mut entries) = fs::read_dir(&abs_path).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                let Ok(metadata) = entry.metadata().await else {
-                    continue;
-                };
-                if metadata.is_symlink() {
-                    continue;
+                if let Some(entry_info) = collect_dir_entry(entry, &working_directory).await {
+                    file_list.push(entry_info);
                 }
-
-                let relative_path = path
-                    .strip_prefix(&working_directory)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .into_owned();
-                file_list.push((relative_path, metadata.is_dir(), metadata.len()));
             }
         }
 
@@ -181,6 +161,26 @@ pub fn handle_file_list(mut msg: Message) {
         get_websocket_client().queue_message(uuid, result.get_data().clone(), Priority::Highest);
         debug!("handle_file_list: FILE_LIST message queued");
     });
+}
+
+async fn collect_dir_entry(
+    entry: fs::DirEntry,
+    working_directory: &str,
+) -> Option<(String, bool, u64)> {
+    let path = entry.path();
+    let Ok(metadata) = entry.metadata().await else {
+        return None;
+    };
+    if metadata.is_symlink() {
+        return None;
+    }
+
+    let relative_path = path
+        .strip_prefix(working_directory)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .into_owned();
+    Some((relative_path, metadata.is_dir(), metadata.len()))
 }
 
 fn send_file_list_error(uuid: &str, error_msg: &str) {
