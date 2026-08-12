@@ -24,6 +24,7 @@ const UPDATE_CHECK_INTERVAL_MS: i64 = 300_000;
 
 // Priority queue bucket count; must stay in sync with Priority (Highest=0/Medium=10/Lowest=19)
 const PRIORITY_LEVELS: usize = 20;
+const MAX_CONSECUTIVE_PRIORITY_ITEMS: u32 = 16;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -423,9 +424,10 @@ impl TungsteniteWebsocketClient {
                             if client.connection_id.load(Ordering::SeqCst) != conn_id {
                                 return;
                             }
-                            if consecutive_count >= 16 {
+                            if consecutive_count >= MAX_CONSECUTIVE_PRIORITY_ITEMS {
                                 trace!(
-                                    "WS: Scheduler - reached consecutive cap (16) at priority {} (id={})",
+                                    "WS: Scheduler - reached consecutive cap ({}) at priority {} (id={})",
+                                    MAX_CONSECUTIVE_PRIORITY_ITEMS,
                                     p,
                                     conn_id
                                 );
