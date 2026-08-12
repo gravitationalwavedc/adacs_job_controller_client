@@ -23,8 +23,6 @@ const QUEUE_SOURCE_PRUNE_SECONDS: u64 = 60;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-pub type MessageCallback = Arc<dyn Fn() + Send + Sync + 'static>;
-
 #[cfg_attr(test, mockall::automock)]
 #[allow(dead_code)]
 pub trait WebsocketClient: Send + Sync {
