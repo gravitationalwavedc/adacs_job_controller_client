@@ -2,9 +2,8 @@
 //!
 //! This module sets up production-grade logging with:
 //! - Time-based rotation (daily)
-//! - Size-based rotation (configurable max size)
 //! - Automatic cleanup of old log files (keeps last 7 days by default)
-//! - JSON formatting for structured logging
+//! - Plain-text formatting (no JSON)
 //! - Environment variable filtering (`RUST_LOG`)
 //!
 //! This replaces the custom `rotating_log` implementation with the
