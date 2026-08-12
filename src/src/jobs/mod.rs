@@ -78,7 +78,7 @@ pub fn handle_job_submit(mut msg: Message) {
                 }
             }
 
-            if job_model.job_id.unwrap_or(0) != 0 && job_model.job_id.unwrap_or(0) == job_id {
+            if job_id != 0 && job_model.job_id == Some(job_id) {
                 debug!(
                     "Job with ID {} has already been submitted, checking status...",
                     job_id
