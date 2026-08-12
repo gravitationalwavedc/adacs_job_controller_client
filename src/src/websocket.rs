@@ -300,38 +300,15 @@ impl TungsteniteWebsocketClient {
                 recv_count += 1;
                 match msg {
                     Ok(WsMessage::Binary(data)) => {
-                        let data_len = data.len();
-                        trace!(
-                            "WS: Received binary message (size: {} bytes, total received: {}, id={})",
-                            data_len,
-                            recv_count,
-                            conn_id
-                        );
-                        let message = Message::from_data(data.to_vec());
-                        trace!(
-                            "WS: Parsed message - id: {}, source: {}, priority: {:?}",
-                            message.id,
-                            message.source,
-                            message.priority
-                        );
-                        client.handle_message(conn_id, message);
+                        client.handle_incoming_message(conn_id, recv_count, "binary", &data);
                     }
                     Ok(WsMessage::Text(text)) => {
-                        let text_len = text.len();
-                        trace!(
-                            "WS: Received text message (size: {} bytes, total received: {}, id={})",
-                            text_len,
+                        client.handle_incoming_message(
+                            conn_id,
                             recv_count,
-                            conn_id
+                            "text",
+                            text.as_bytes(),
                         );
-                        let message = Message::from_data(text.as_bytes().to_vec());
-                        trace!(
-                            "WS: Parsed message - id: {}, source: {}, priority: {:?}",
-                            message.id,
-                            message.source,
-                            message.priority
-                        );
-                        client.handle_message(conn_id, message);
                     }
                     Ok(WsMessage::Ping(_)) => {
                         TungsteniteWebsocketClient::handle_ping();
@@ -640,6 +617,31 @@ impl TungsteniteWebsocketClient {
                 }
             }
         }
+    }
+
+    fn handle_incoming_message(
+        self: &Arc<Self>,
+        connection_id: u64,
+        recv_count: u64,
+        kind: &str,
+        data: &[u8],
+    ) {
+        let data_len = data.len();
+        trace!(
+            "WS: Received {} message (size: {} bytes, total received: {}, id={})",
+            kind,
+            data_len,
+            recv_count,
+            connection_id
+        );
+        let message = Message::from_data(data.to_vec());
+        trace!(
+            "WS: Parsed message - id: {}, source: {}, priority: {:?}",
+            message.id,
+            message.source,
+            message.priority
+        );
+        self.handle_message(connection_id, message);
     }
 
     fn handle_message(self: &Arc<Self>, connection_id: u64, mut message: Message) {
