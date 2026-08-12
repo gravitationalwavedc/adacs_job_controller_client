@@ -343,6 +343,10 @@ impl BundleInterface {
         }
 
         let p_args = PyTuple_New(1);
+        if p_args.is_null() {
+            Py_XDECREF(p_func);
+            return Err("Failed to allocate argument tuple".to_string());
+        }
         Py_IncRef(obj); // INCREF before SetItem (which steals a ref) – matches C++
         PyTuple_SetItem(p_args, 0, obj);
 
