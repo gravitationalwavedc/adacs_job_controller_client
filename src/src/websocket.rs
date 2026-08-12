@@ -21,6 +21,9 @@ const PING_INTERVAL_SECONDS: u64 = 30;
 const WRITER_FLUSH_INTERVAL_SECONDS: u64 = 5;
 const QUEUE_SOURCE_PRUNE_SECONDS: u64 = 60;
 
+// Priority queue bucket count; must stay in sync with Priority (Highest=0/Medium=10/Lowest=19)
+const PRIORITY_LEVELS: usize = 20;
+
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[cfg_attr(test, mockall::automock)]
@@ -74,8 +77,8 @@ pub struct TungsteniteWebsocketClient {
 
 impl TungsteniteWebsocketClient {
     fn new_internal() -> Self {
-        let mut queue = Vec::with_capacity(20);
-        for _ in 0..20 {
+        let mut queue = Vec::with_capacity(PRIORITY_LEVELS);
+        for _ in 0..PRIORITY_LEVELS {
             queue.push(Arc::new(Mutex::new(HashMap::new())));
         }
 
@@ -442,7 +445,7 @@ impl TungsteniteWebsocketClient {
 
                 'reset: loop {
                     let mut had_any_data = false;
-                    for p in 0..20 {
+                    for p in 0..PRIORITY_LEVELS {
                         let mut consecutive_count = 0u32;
                         loop {
                             if client.connection_id.load(Ordering::SeqCst) != conn_id {
@@ -752,7 +755,7 @@ impl WebsocketClient for TungsteniteWebsocketClient {
         }
 
         let p = priority as usize;
-        if p >= 20 {
+        if p >= PRIORITY_LEVELS {
             error!("WS: Invalid priority {}", p);
             return;
         }
@@ -1527,7 +1530,7 @@ mod tests {
         client.queue_message("s3".to_string(), vec![3], Priority::Lowest);
 
         // Consume all data
-        for p in 0..20 {
+        for p in 0..PRIORITY_LEVELS {
             let mut map = client.queue[p].lock();
             for q in map.values_mut() {
                 q.pop_front();
@@ -1538,7 +1541,7 @@ mod tests {
         client.prune_sources();
 
         // Verify all queues are empty
-        for p in 0..20 {
+        for p in 0..PRIORITY_LEVELS {
             let map = client.queue[p].lock();
             assert_eq!(map.len(), 0, "Priority {p} should have no queues");
         }
@@ -1601,7 +1604,7 @@ mod tests {
             "should clear priority 5 on second pass"
         );
 
-        for p in 0..20 {
+        for p in 0..PRIORITY_LEVELS {
             let map = client.queue[p].lock();
             let count: usize = map.values().map(VecDeque::len).sum();
             assert_eq!(count, 0, "Priority {p} should be cleared after second pass");
@@ -1614,7 +1617,7 @@ mod tests {
         let client = TungsteniteWebsocketClient::new();
 
         // Verify the client is created and has the expected number of priority queues
-        for p in 0..20 {
+        for p in 0..PRIORITY_LEVELS {
             let map = client.queue[p].lock();
             assert_eq!(
                 map.len(),
