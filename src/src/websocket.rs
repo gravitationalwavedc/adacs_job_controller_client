@@ -20,6 +20,7 @@ use tracing::{debug, error, info, trace, warn};
 const PING_INTERVAL_SECONDS: u64 = 30;
 const WRITER_FLUSH_INTERVAL_SECONDS: u64 = 5;
 const QUEUE_SOURCE_PRUNE_SECONDS: u64 = 60;
+const UPDATE_CHECK_INTERVAL_MS: i64 = 300_000;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -581,7 +582,7 @@ impl TungsteniteWebsocketClient {
         if self.reconnectable.load(Ordering::SeqCst) {
             let now = Self::get_epoch_millis();
             let last = self.last_update_check.load(Ordering::SeqCst);
-            if now.saturating_sub(last) >= 300_000 {
+            if now.saturating_sub(last) >= UPDATE_CHECK_INTERVAL_MS {
                 self.last_update_check.store(now, Ordering::SeqCst);
                 let _ = tokio::task::spawn_blocking(move || {
                     crate::update_check::check_for_updates();
