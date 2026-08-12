@@ -117,12 +117,6 @@ impl TungsteniteWebsocketClient {
         debug!("WS: Received pong at {} (latency: {}ms)", now, latency);
     }
 
-    fn handle_ping() {
-        // When we receive a ping from the server, we should respond with a pong
-        // tungstenite handles this automatically, but we track it
-        trace!("WS: Received ping from server");
-    }
-
     /// Returns true if any priority queue below `max_priority` holds data, or if
     /// any such priority lock is currently held by another thread. Uses
     /// `try_lock` so the async scheduler never blocks on a `parking_lot` mutex:
@@ -334,7 +328,7 @@ impl TungsteniteWebsocketClient {
                         client.handle_message(conn_id, message);
                     }
                     Ok(WsMessage::Ping(_)) => {
-                        TungsteniteWebsocketClient::handle_ping();
+                        trace!("WS: Received ping from server");
                     }
                     Ok(WsMessage::Pong(_)) => {
                         client.handle_pong(conn_id);
