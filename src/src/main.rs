@@ -33,8 +33,6 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace, warn};
 
-const _GIT_HASH: &str = env!("GIT_HASH");
-
 static IS_LTK: AtomicBool = AtomicBool::new(false);
 static READY_FOR_RESTART: AtomicBool = AtomicBool::new(false);
 
