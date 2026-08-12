@@ -40,31 +40,31 @@ unsafe impl Send for SendPyObject {}
 static BUNDLE_DB_ERRORS: OnceLock<Mutex<HashMap<String, SendPyObject>>> = OnceLock::new();
 
 fn get_bundle_db_error(bundle_hash: &str) -> *mut crate::python_interface::PyObject {
-    let errors = BUNDLE_DB_ERRORS
+    let mut errors = BUNDLE_DB_ERRORS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .unwrap();
-    errors.get(bundle_hash).map_or_else(
-        || {
-            // Fallback: create a generic RuntimeError if no exception was stored
-            // for this bundle hash. This should not happen in normal operation.
-            // SAFETY: PyErr_NewException is called with a valid C string pointer
-            // and null parent/base dicts, which is always safe.
-            unsafe {
-                let err = crate::python_interface::PyErr_NewException(
-                    c"_bundledb.error".as_ptr(),
-                    ptr::null_mut(),
-                    ptr::null_mut(),
-                );
-                if err.is_null() {
-                    ptr::null_mut()
-                } else {
-                    err
-                }
-            }
-        },
-        |e| e.0,
-    )
+    if let Some(exc) = errors.get(bundle_hash) {
+        return exc.0;
+    }
+    // Fallback: create a generic RuntimeError if no exception was stored
+    // for this bundle hash. This should not happen in normal operation.
+    // SAFETY: PyErr_NewException is called with a valid C string pointer
+    // and null parent/base dicts, which is always safe.
+    let err = unsafe {
+        crate::python_interface::PyErr_NewException(
+            c"_bundledb.error".as_ptr(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    if err.is_null() {
+        return ptr::null_mut();
+    }
+    // Cache the fallback so each bundle hash gets exactly one exception
+    // object instead of leaking a new one on every call.
+    errors.insert(bundle_hash.to_string(), SendPyObject(err));
+    err
 }
 
 fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
