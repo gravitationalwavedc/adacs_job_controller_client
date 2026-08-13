@@ -43,6 +43,13 @@ fn queue_job_update(job_id: i64, source: &str, status: u32, message: &str) {
     );
 }
 
+fn get_job_details(job: &job::Model) -> Value {
+    let mut details = get_default_job_details();
+    details["job_id"] = json!(job.job_id);
+    details["scheduler_id"] = json!(job.scheduler_id);
+    details
+}
+
 pub fn handle_job_submit(mut msg: Message) {
     let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
@@ -242,9 +249,7 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
         return;
     }
 
-    let mut details = get_default_job_details();
-    details["job_id"] = json!(job.job_id);
-    details["scheduler_id"] = json!(job.scheduler_id);
+    let details = get_job_details(&job);
 
     debug!(
         "check_job_status: calling bundle status for job_id={}",
@@ -560,9 +565,7 @@ pub fn handle_job_cancel(mut msg: Message) {
             return;
         }
 
-        let mut details = get_default_job_details();
-        details["job_id"] = json!(job_model.job_id);
-        details["scheduler_id"] = json!(job_model.scheduler_id);
+        let details = get_job_details(&job_model);
 
         let bundle_hash_clone = job_model.bundle_hash.clone();
         let details_clone = details.clone();
@@ -657,9 +660,7 @@ pub fn handle_job_delete(mut msg: Message) {
             }
         }
 
-        let mut details = get_default_job_details();
-        details["job_id"] = json!(job_model.job_id);
-        details["scheduler_id"] = json!(job_model.scheduler_id);
+        let details = get_job_details(&job_model);
 
         let bundle_hash_clone = job_model.bundle_hash.clone();
         let details_clone = details.clone();
