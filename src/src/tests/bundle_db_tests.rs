@@ -254,6 +254,93 @@ fn test_delete_job_failure() {
 }
 
 #[test]
+fn test_create_or_update_job_json_dumps_failure_raises_bundledb_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        // A self-referential dict makes json.dumps raise ValueError. The FFI
+        // callback must surface this as `_bundledb.error`, not return NULL
+        // without an exception set (which CPython reports as SystemError).
+        fixture.write_raw_script(
+            &bundle_hash,
+            r#"
+import _bundledb
+
+def submit(details, job_data):
+    job = {}
+    job["self"] = job
+    try:
+        _bundledb.create_or_update_job(job)
+        return {"error": "no exception raised"}
+    except Exception as e:
+        return {"error": type(e).__module__ + "." + type(e).__name__}
+"#,
+        );
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+
+        assert_eq!(result["error"], "_bundledb.error");
+    }
+    inner();
+}
+
+#[test]
+fn test_delete_job_json_dumps_failure_raises_bundledb_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        fixture.write_raw_script(
+            &bundle_hash,
+            r#"
+import _bundledb
+
+def submit(details, job_data):
+    job = {}
+    job["self"] = job
+    try:
+        _bundledb.delete_job(job)
+        return {"error": "no exception raised"}
+    except Exception as e:
+        return {"error": type(e).__module__ + "." + type(e).__name__}
+"#,
+        );
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+
+        assert_eq!(result["error"], "_bundledb.error");
+    }
+    inner();
+}
+
+#[test]
 fn test_delete_job_failure_job_id_must_be_provided() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
