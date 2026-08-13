@@ -1,4 +1,4 @@
-use crate::bundle_manager::BundleManager;
+use crate::bundle_manager::resolve_working_directory;
 use crate::db;
 use crate::messaging::{
     Message, Priority, FILE_CHUNK, FILE_DOWNLOAD_DETAILS, FILE_DOWNLOAD_ERROR, FILE_LIST,
@@ -77,21 +77,13 @@ pub fn handle_file_list(mut msg: Message) {
                 }
             }
         } else {
-            let bundle_hash_clone = bundle_hash.clone();
-            let dir_path_clone = dir_path.clone();
-            tokio::task::spawn_blocking(move || {
-                BundleManager::singleton().run_bundle_string(
-                    "working_directory",
-                    &bundle_hash_clone,
-                    &json!(dir_path_clone),
-                    "file_list",
-                )
-            })
+            resolve_working_directory(
+                &bundle_hash,
+                json!(dir_path.clone()),
+                "file_list",
+                "handle_file_list",
+            )
             .await
-            .unwrap_or_else(|e| {
-                error!("handle_file_list: spawn_blocking error: {}", e);
-                String::new()
-            })
         };
 
         let full_path = Path::new(&working_directory).join(&dir_path);
@@ -277,21 +269,13 @@ pub fn handle_file_download(mut msg: Message) {
             }
         } else {
             debug!("handle_file_download: Using bundle manager for working_directory");
-            let bundle_hash_clone = bundle_hash.clone();
-            let file_path_clone = file_path.clone();
-            tokio::task::spawn_blocking(move || {
-                BundleManager::singleton().run_bundle_string(
-                    "working_directory",
-                    &bundle_hash_clone,
-                    &json!(file_path_clone),
-                    "file_download",
-                )
-            })
+            resolve_working_directory(
+                &bundle_hash,
+                json!(file_path.clone()),
+                "file_download",
+                "handle_file_download",
+            )
             .await
-            .unwrap_or_else(|e| {
-                error!("handle_file_download: spawn_blocking error: {}", e);
-                String::new()
-            })
         };
 
         debug!(
@@ -595,22 +579,13 @@ fn handle_file_upload_internal(
                 }
             }
         } else {
-            let bundle_hash_clone = bundle_hash.clone();
-            let target_path_clone = target_path.clone();
-            let working_dir_result = tokio::task::spawn_blocking(move || {
-                BundleManager::singleton().run_bundle_string(
-                    "working_directory",
-                    &bundle_hash_clone,
-                    &json!(target_path_clone),
-                    "file_upload",
-                )
-            })
+            resolve_working_directory(
+                &bundle_hash,
+                json!(target_path.clone()),
+                "file_upload",
+                "handle_file_upload_internal",
+            )
             .await
-            .unwrap_or_else(|e| {
-                error!("handle_file_upload_internal: spawn_blocking error: {}", e);
-                String::new()
-            });
-            working_dir_result
         };
 
         target_path = target_path.trim_start_matches('/').to_string();

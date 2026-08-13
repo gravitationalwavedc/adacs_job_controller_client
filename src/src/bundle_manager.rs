@@ -404,6 +404,32 @@ impl BundleManager {
     }
 }
 
+/// Resolve a job's working directory by running the bundle's `working_directory`
+/// function off the async executor. Mirrors the C++ daemon's behaviour.
+pub async fn resolve_working_directory(
+    bundle_hash: &str,
+    details: Value,
+    job_data: &str,
+    context: &str,
+) -> String {
+    let bundle_hash = bundle_hash.to_string();
+    let job_data = job_data.to_string();
+    let context = context.to_string();
+    tokio::task::spawn_blocking(move || {
+        BundleManager::singleton().run_bundle_string(
+            "working_directory",
+            &bundle_hash,
+            &details,
+            &job_data,
+        )
+    })
+    .await
+    .unwrap_or_else(|e| {
+        error!("{}: spawn_blocking error: {}", context, e);
+        String::new()
+    })
+}
+
 pub fn get_executable_path() -> PathBuf {
     std::env::current_exe().unwrap_or_default()
 }
