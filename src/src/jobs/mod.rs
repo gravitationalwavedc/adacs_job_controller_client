@@ -21,6 +21,8 @@ static SUBMIT_MUTEX: std::sync::LazyLock<TokioMutex<()>> =
 
 pub const MAX_SUBMIT_COUNT: i32 = 60;
 
+pub const ARCHIVE_FILE_NAME: &str = "archive.tar.gz";
+
 fn get_default_job_details() -> Value {
     json!({
         "cluster": read_client_config()["cluster"]
@@ -435,7 +437,7 @@ pub async fn archive_job(job: &job::Model) -> Result<(), String> {
 
     let result = tokio::task::spawn_blocking(move || {
         let dir = Path::new(&working_dir);
-        let archive_path = dir.join("archive.tar.gz");
+        let archive_path = dir.join(ARCHIVE_FILE_NAME);
         archive_dir(dir, &archive_path)
     })
     .await;
@@ -465,7 +467,7 @@ pub fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String> {
 
     for entry in WalkDir::new(dir)
         .into_iter()
-        .filter_entry(|e| e.file_name() != "archive.tar.gz")
+        .filter_entry(|e| e.file_name() != ARCHIVE_FILE_NAME)
         .skip(1)
     {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
