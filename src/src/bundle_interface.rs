@@ -272,7 +272,7 @@ impl BundleInterface {
         let call_start = std::time::Instant::now();
         let p_result = PyObject_CallObject(p_func, p_args);
         let call_time = call_start.elapsed();
-        if !PyErr_Occurred().is_null() {
+        if p_result.is_null() || !PyErr_Occurred().is_null() {
             error!(
                 "Error calling bundle function {} after {:?} for hash {}",
                 func, call_time, self.inner.bundle_hash
