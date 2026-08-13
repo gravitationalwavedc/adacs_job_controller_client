@@ -750,28 +750,7 @@ fn handle_file_upload_internal(
                         .await;
                         return;
                     }
-                    if let Err(e) = file.flush().await {
-                        warn!("Failed to flush uploaded file: {}", e);
-                        let _ = fs::remove_file(&full_path).await;
-                        send_file_error(
-                            &mut ws_sender,
-                            &uuid,
-                            "Failed to finalize uploaded file",
-                            FILE_UPLOAD_ERROR,
-                        )
-                        .await;
-                        return;
-                    }
-                    if let Err(e) = file.sync_all().await {
-                        warn!("Failed to sync uploaded file: {}", e);
-                        let _ = fs::remove_file(&full_path).await;
-                        send_file_error(
-                            &mut ws_sender,
-                            &uuid,
-                            "Failed to finalize uploaded file",
-                            FILE_UPLOAD_ERROR,
-                        )
-                        .await;
+                    if !finalize_upload_file(&mut file, &full_path, &mut ws_sender, &uuid).await {
                         return;
                     }
                     drop(file);
@@ -895,6 +874,46 @@ async fn validate_path_is_within(target_path: &Path, working_directory: &str) ->
         }
     }
 
+    true
+}
+
+/// Flush and sync the uploaded file to disk. On failure, removes the partial
+/// file and sends the upload error, returning `false`.
+async fn finalize_upload_file(
+    file: &mut File,
+    full_path: &Path,
+    ws_sender: &mut futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        WsMessage,
+    >,
+    uuid: &str,
+) -> bool {
+    if let Err(e) = file.flush().await {
+        warn!("Failed to flush uploaded file: {}", e);
+        let _ = fs::remove_file(full_path).await;
+        send_file_error(
+            ws_sender,
+            uuid,
+            "Failed to finalize uploaded file",
+            FILE_UPLOAD_ERROR,
+        )
+        .await;
+        return false;
+    }
+    if let Err(e) = file.sync_all().await {
+        warn!("Failed to sync uploaded file: {}", e);
+        let _ = fs::remove_file(full_path).await;
+        send_file_error(
+            ws_sender,
+            uuid,
+            "Failed to finalize uploaded file",
+            FILE_UPLOAD_ERROR,
+        )
+        .await;
+        return false;
+    }
     true
 }
 
