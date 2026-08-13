@@ -445,8 +445,8 @@ impl BundleInterface {
         // Always log the raw type and value first so that even if every
         // traceback formatting call below fails we still have a record.
         let type_name = extract_type_name(extype);
-        let value_str = extract_value_repr(value);
-        let value_display = extract_value_display(value);
+        let value_str = extract_value_string(value, PyObject_Repr);
+        let value_display = extract_value_string(value, crate::python_interface::PyObject_Str);
         error!(
             "Python exception: type={} value=\"{}\"",
             type_name, value_str
@@ -573,40 +573,20 @@ unsafe fn extract_type_name(extype: *mut PyObject) -> String {
     name
 }
 
-/// Extract the `repr()` of a Python object as a Rust `String`. Returns
-/// `""` if `value` is NULL or `repr()` fails. Any Python error raised by
+/// Convert a Python object to a Rust `String` using the given converter
+/// (`PyObject_Repr` for `repr()`, `PyObject_Str` for `str()`). Returns `""`
+/// if `value` is NULL or the conversion fails. Any Python error raised by
 /// the conversion is fetched and discarded.
 // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
 // `value` is NULL or a live object from `PyErr_Fetch` on this thread.
-unsafe fn extract_value_repr(value: *mut PyObject) -> String {
+unsafe fn extract_value_string(
+    value: *mut PyObject,
+    converter: unsafe fn(*mut PyObject) -> *mut PyObject,
+) -> String {
     if value.is_null() {
         return String::new();
     }
-    let str_obj = PyObject_Repr(value);
-    if str_obj.is_null() {
-        swallow_python_error();
-        return String::new();
-    }
-    let c_str = PyUnicode_AsUTF8(str_obj);
-    let s = if c_str.is_null() {
-        String::new()
-    } else {
-        CStr::from_ptr(c_str).to_string_lossy().into_owned()
-    };
-    Py_DecRef(str_obj);
-    s
-}
-
-/// Extract the `str()` of a Python object as a Rust `String`. Returns `""`
-/// if `value` is NULL or `str()` fails. Any Python error raised by the
-/// conversion is fetched and discarded.
-// SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
-// `value` is NULL or a live object from `PyErr_Fetch` on this thread.
-unsafe fn extract_value_display(value: *mut PyObject) -> String {
-    if value.is_null() {
-        return String::new();
-    }
-    let str_obj = crate::python_interface::PyObject_Str(value);
+    let str_obj = converter(value);
     if str_obj.is_null() {
         swallow_python_error();
         return String::new();
