@@ -201,6 +201,14 @@ pub unsafe fn my_py_none_struct() -> *mut PyObject {
     *symbol
 }
 
+// SAFETY: Caller holds PYTHON_MUTEX; returns a new reference to the `None`
+// singleton, mirroring the C++ `Py_None` INCREF return pattern.
+pub unsafe fn return_py_none() -> *mut PyObject {
+    let result = my_py_none_struct();
+    Py_IncRef(result);
+    result
+}
+
 // SAFETY: Python library is loaded; `_Py_TrueStruct` is a process-wide singleton.
 pub unsafe fn my_py_true_struct() -> *mut PyObject {
     let lib = get_python_lib();
