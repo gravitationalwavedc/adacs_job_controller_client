@@ -216,14 +216,22 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // bundle_logging. The Python shared library was loaded above; init_python() has
         // not yet been called.
         unsafe {
-            python_interface::PyImport_AppendInittab(
+            if python_interface::PyImport_AppendInittab(
                 c"_bundledb".as_ptr(),
                 Some(bundle_db::PyInit_bundledb),
-            );
-            python_interface::PyImport_AppendInittab(
+            ) != 0
+            {
+                error!("Failed to register '_bundledb' built-in module");
+                std::process::exit(1);
+            }
+            if python_interface::PyImport_AppendInittab(
                 c"_bundlelogging".as_ptr(),
                 Some(bundle_logging::PyInit_bundlelogging),
-            );
+            ) != 0
+            {
+                error!("Failed to register '_bundlelogging' built-in module");
+                std::process::exit(1);
+            }
         }
         python_interface::init_python();
 
