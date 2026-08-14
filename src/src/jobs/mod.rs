@@ -492,6 +492,30 @@ async fn reload_job_or_abort(job_model: &mut job::Model, job_id: i64, context: &
     }
 }
 
+async fn run_bundle_bool_for_job(
+    context: &str,
+    function_name: &str,
+    bundle_hash: &str,
+    details: &Value,
+) -> bool {
+    let function_name = function_name.to_string();
+    let bundle_hash_clone = bundle_hash.to_string();
+    let details_clone = details.clone();
+    tokio::task::spawn_blocking(move || {
+        BundleManager::singleton().run_bundle_bool(
+            &function_name,
+            &bundle_hash_clone,
+            &details_clone,
+            "",
+        )
+    })
+    .await
+    .unwrap_or_else(|e| {
+        error!("{}: spawn_blocking error: {}", context, e);
+        false
+    })
+}
+
 pub fn handle_job_cancel(mut msg: Message) {
     tokio::spawn(async move {
         let job_id = i64::from(msg.pop_uint());
@@ -554,21 +578,13 @@ pub fn handle_job_cancel(mut msg: Message) {
 
         let details = get_job_details(&job_model);
 
-        let bundle_hash_clone = job_model.bundle_hash.clone();
-        let details_clone = details.clone();
-        let cancelled = tokio::task::spawn_blocking(move || {
-            BundleManager::singleton().run_bundle_bool(
-                "cancel",
-                &bundle_hash_clone,
-                &details_clone,
-                "",
-            )
-        })
-        .await
-        .unwrap_or_else(|e| {
-            error!("handle_job_cancel: spawn_blocking error: {}", e);
-            false
-        });
+        let cancelled = run_bundle_bool_for_job(
+            "handle_job_cancel",
+            "cancel",
+            &job_model.bundle_hash,
+            &details,
+        )
+        .await;
 
         if !cancelled {
             warn!("Job {} could not be cancelled by the bundle.", job_id);
@@ -649,21 +665,13 @@ pub fn handle_job_delete(mut msg: Message) {
 
         let details = get_job_details(&job_model);
 
-        let bundle_hash_clone = job_model.bundle_hash.clone();
-        let details_clone = details.clone();
-        let deleted = tokio::task::spawn_blocking(move || {
-            BundleManager::singleton().run_bundle_bool(
-                "delete",
-                &bundle_hash_clone,
-                &details_clone,
-                "",
-            )
-        })
-        .await
-        .unwrap_or_else(|e| {
-            error!("handle_job_delete: spawn_blocking error: {}", e);
-            false
-        });
+        let deleted = run_bundle_bool_for_job(
+            "handle_job_delete",
+            "delete",
+            &job_model.bundle_hash,
+            &details,
+        )
+        .await;
 
         if !deleted {
             job_model.deleting = false;
