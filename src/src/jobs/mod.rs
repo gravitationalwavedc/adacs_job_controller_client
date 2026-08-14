@@ -50,6 +50,16 @@ fn get_job_details(job: &job::Model) -> Value {
     details
 }
 
+async fn save_job_or_abort(job_model: job::Model, context: &str) -> Option<job::Model> {
+    match db::save_job(job_model).await {
+        Ok(j) => Some(j),
+        Err(e) => {
+            error!("Failed to save job {}: {}", context, e);
+            None
+        }
+    }
+}
+
 pub fn handle_job_submit(mut msg: Message) {
     let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
@@ -119,13 +129,10 @@ pub fn handle_job_submit(mut msg: Message) {
             job_model.bundle_hash = bundle_hash.clone();
             job_model.submitting = true;
             job_model.working_directory = String::new();
-            match db::save_job(job_model).await {
-                Ok(j) => job_model = j,
-                Err(e) => {
-                    error!("Failed to save job during submit: {}", e);
-                    return;
-                }
-            }
+            job_model = match save_job_or_abort(job_model, "during submit").await {
+                Some(j) => j,
+                None => return,
+            };
         }
 
         debug!(
@@ -143,13 +150,10 @@ pub fn handle_job_submit(mut msg: Message) {
             job_id, working_dir
         );
         job_model.working_directory = working_dir;
-        match db::save_job(job_model).await {
-            Ok(j) => job_model = j,
-            Err(e) => {
-                error!("Failed to save job working directory: {}", e);
-                return;
-            }
-        }
+        job_model = match save_job_or_abort(job_model, "working directory").await {
+            Some(j) => j,
+            None => return,
+        };
 
         debug!(
             "handle_job_submit: calling bundle submit for ui job id {} through bundle {}",
@@ -639,13 +643,10 @@ pub fn handle_job_delete(mut msg: Message) {
         }
 
         job_model.deleting = true;
-        match db::save_job(job_model).await {
-            Ok(j) => job_model = j,
-            Err(e) => {
-                error!("Failed to save job for delete: {}", e);
-                return;
-            }
-        }
+        job_model = match save_job_or_abort(job_model, "for delete").await {
+            Some(j) => j,
+            None => return,
+        };
 
         let details = get_job_details(&job_model);
 
