@@ -168,7 +168,12 @@ pub fn handle_job_submit(mut msg: Message) {
 
         if scheduler_id == 0 {
             warn!("Job with UI ID {} could not be submitted", job_id);
-            let _ = db::delete_job(job_model.id).await;
+            if let Err(e) = db::delete_job(job_model.id).await {
+                error!(
+                    "handle_job_submit: failed to delete job {} after submit failure: {}",
+                    job_id, e
+                );
+            }
 
             let ws = get_websocket_client();
             let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
