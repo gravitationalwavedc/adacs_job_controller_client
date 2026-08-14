@@ -16,9 +16,9 @@ use crate::messaging::{
     DB_BUNDLE_GET_JOB_BY_ID,
 };
 use crate::python_interface::{
-    return_py_none, PyDict_SetItemString, PyErr_NewException, PyErr_SetString,
-    PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef, PyModuleDef,
-    PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
+    return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException, PyErr_Occurred,
+    PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef,
+    PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
     PyTuple_GetItem, Py_DecRef, Py_IncRef, Py_XDECREF, METH_VARARGS, PYTHON_API_VERSION,
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
@@ -352,9 +352,20 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
         error!("DB: get_job_by_id - invalid arguments");
         return ptr::null_mut();
     }
-    let job_id = PyLong_AsUnsignedLongLong(job_id_obj);
-
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
+
+    let job_id = PyLong_AsUnsignedLongLong(job_id_obj);
+    if !PyErr_Occurred().is_null() {
+        error!(
+            "DB: get_job_by_id error for bundle hash: {} - job ID must be an integer",
+            bundle_hash
+        );
+        PyErr_Clear();
+        let error_obj = get_bundle_db_error(&bundle_hash);
+        PyErr_SetString(error_obj, c"Job ID must be an integer".as_ptr());
+        return ptr::null_mut();
+    }
+
     let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
         Ok(b) => b,
         Err(e) => {

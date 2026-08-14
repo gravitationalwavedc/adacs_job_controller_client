@@ -191,6 +191,38 @@ fn test_get_job_by_id_malformed_json() {
 }
 
 #[test]
+fn test_get_job_by_id_non_integer_job_id() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        fixture.write_bundle_db_get_job_by_id_str(&bundle_hash, "not_an_integer");
+
+        let mut mock_ws = MockWebsocketClient::new();
+        // No DB request expected - validation happens before Websocket call
+        mock_ws.expect_send_db_request().times(0);
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .contains("Job ID must be an integer"));
+    }
+    inner();
+}
+
+#[test]
 fn test_delete_job_success() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
