@@ -310,7 +310,9 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
                 state_item.what = what.to_string();
                 state_item.state = status as i32;
                 debug!("check_job_status: saving status to DB");
-                let _ = db::save_status(state_item).await;
+                if let Err(e) = db::save_status(state_item).await {
+                    error!("Failed to save status for job {}: {}", job_id, e);
+                }
 
                 let ws = get_websocket_client();
                 let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
