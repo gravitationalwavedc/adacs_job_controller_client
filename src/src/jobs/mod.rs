@@ -73,7 +73,9 @@ pub fn handle_job_submit(mut msg: Message) {
                     job_model.job_id = Some(0);
                 } else {
                     debug!("Job with ID {} is being submitted, nothing to do", job_id);
-                    let _ = db::save_job(job_model).await;
+                    if let Err(e) = db::save_job(job_model).await {
+                        error!("Failed to save job {} during submit: {}", job_id, e);
+                    }
                     return;
                 }
             }
@@ -201,7 +203,9 @@ pub fn handle_job_submit(mut msg: Message) {
         } else {
             job_model.submitting = false;
             job_model.running = true;
-            let _ = db::save_job(job_model).await;
+            if let Err(e) = db::save_job(job_model).await {
+                error!("Failed to save job {} after submit: {}", job_id, e);
+            }
 
             info!(
                 "Successfully submitted job with UI ID {}, got scheduler id {}",
@@ -348,7 +352,9 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
         debug!("check_job_status: job complete, saving to DB");
         let mut job_to_save = job.clone();
         job_to_save.running = false;
-        let _ = db::save_job(job_to_save).await;
+        if let Err(e) = db::save_job(job_to_save).await {
+            error!("Failed to save job {} as complete: {}", job_id, e);
+        }
 
         debug!("check_job_status: archiving job");
         if let Err(e) = archive_job(&job).await {
@@ -604,7 +610,9 @@ pub fn handle_job_cancel(mut msg: Message) {
         }
 
         job_model.running = false;
-        let _ = db::save_job(job_model.clone()).await;
+        if let Err(e) = db::save_job(job_model.clone()).await {
+            error!("Failed to save job {} after cancel: {}", job_id, e);
+        }
 
         if let Err(e) = archive_job(&job_model).await {
             warn!("Archive failed for job {}: {}", job_id, e);
@@ -689,14 +697,18 @@ pub fn handle_job_delete(mut msg: Message) {
 
         if !deleted {
             job_model.deleting = false;
-            let _ = db::save_job(job_model).await;
+            if let Err(e) = db::save_job(job_model).await {
+                error!("Failed to save job {} after failed delete: {}", job_id, e);
+            }
             warn!("Job {} could not be deleted by the bundle.", job_id);
             return;
         }
 
         job_model.deleting = false;
         job_model.deleted = true;
-        let _ = db::save_job(job_model.clone()).await;
+        if let Err(e) = db::save_job(job_model.clone()).await {
+            error!("Failed to save job {} as deleted: {}", job_id, e);
+        }
 
         let ws = get_websocket_client();
         let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
