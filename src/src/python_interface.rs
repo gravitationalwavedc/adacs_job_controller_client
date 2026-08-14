@@ -82,6 +82,19 @@ macro_rules! py_wrap {
 // ─── Global state ────────────────────────────────────────────────────────────
 static PY_LIB: OnceLock<Arc<Library>> = OnceLock::new();
 
+// SAFETY: `_Py_NoneStruct`/`_Py_TrueStruct` are process-wide singletons that live
+// for the lifetime of the process; the pointer is never dereferenced from Rust.
+#[derive(Clone, Copy)]
+struct PyObjectPtr(*mut PyObject);
+// SAFETY: The pointed-to object is a process-wide singleton that is never freed
+// while the library is loaded; the pointer is never dereferenced from Rust.
+unsafe impl Send for PyObjectPtr {}
+// SAFETY: Same invariants as Send.
+unsafe impl Sync for PyObjectPtr {}
+
+static PY_NONE_STRUCT: OnceLock<PyObjectPtr> = OnceLock::new();
+static PY_TRUE_STRUCT: OnceLock<PyObjectPtr> = OnceLock::new();
+
 /// Global mutex that serialises ALL Python C-API access from Rust.
 /// Mirrors the C++ `static std::shared_mutex mutex_` used throughout.
 pub static PYTHON_MUTEX: Mutex<()> = Mutex::new(());
@@ -196,16 +209,24 @@ pub unsafe fn Py_XDECREF(obj: *mut PyObject) {
 
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
-    let lib = get_python_lib();
-    let symbol: Symbol<*mut PyObject> = lib.get(b"_Py_NoneStruct\0").unwrap();
-    *symbol
+    PY_NONE_STRUCT
+        .get_or_init(|| {
+            let lib = get_python_lib();
+            let symbol: Symbol<*mut PyObject> = lib.get(b"_Py_NoneStruct\0").unwrap();
+            PyObjectPtr(*symbol)
+        })
+        .0
 }
 
 // SAFETY: Python library is loaded; `_Py_TrueStruct` is a process-wide singleton.
 pub unsafe fn my_py_true_struct() -> *mut PyObject {
-    let lib = get_python_lib();
-    let symbol: Symbol<*mut PyObject> = lib.get(b"_Py_TrueStruct\0").unwrap();
-    *symbol
+    PY_TRUE_STRUCT
+        .get_or_init(|| {
+            let lib = get_python_lib();
+            let symbol: Symbol<*mut PyObject> = lib.get(b"_Py_TrueStruct\0").unwrap();
+            PyObjectPtr(*symbol)
+        })
+        .0
 }
 
 // SAFETY: Caller holds PYTHON_MUTEX; `obj` is a live object on this thread.
