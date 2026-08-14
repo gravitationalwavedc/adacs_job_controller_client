@@ -489,6 +489,26 @@ pub fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+async fn reload_job_or_abort(job_model: &mut job::Model, job_id: i64, context: &str) -> bool {
+    match db::get_job_by_id(job_model.id).await {
+        Ok(Some(j)) => {
+            *job_model = j;
+            false
+        }
+        Ok(None) => {
+            warn!("Cancel: job {} disappeared after {}", job_id, context);
+            true
+        }
+        Err(e) => {
+            warn!(
+                "Cancel: DB error reloading job {} after {}: {}",
+                job_id, context, e
+            );
+            true
+        }
+    }
+}
+
 pub fn handle_job_cancel(mut msg: Message) {
     tokio::spawn(async move {
         let job_id = i64::from(msg.pop_uint());
@@ -534,16 +554,8 @@ pub fn handle_job_cancel(mut msg: Message) {
         // Force a status check
         debug!("Cancel: About to check status for job {}", job_id);
         check_job_status(job_model.clone(), false).await;
-        match db::get_job_by_id(job_model.id).await {
-            Ok(Some(j)) => job_model = j,
-            Ok(None) => {
-                warn!("Cancel: job {} disappeared after status check", job_id);
-                return;
-            }
-            Err(e) => {
-                warn!("Cancel: DB error reloading job {}: {}", job_id, e);
-                return;
-            }
+        if reload_job_or_abort(&mut job_model, job_id, "status check").await {
+            return;
         }
         debug!(
             "Cancel: After status check, job.running = {}",
@@ -583,16 +595,8 @@ pub fn handle_job_cancel(mut msg: Message) {
             return;
         }
 
-        match db::get_job_by_id(job_model.id).await {
-            Ok(Some(j)) => job_model = j,
-            Ok(None) => {
-                warn!("Cancel: job {} disappeared after cancel", job_id);
-                return;
-            }
-            Err(e) => {
-                warn!("Cancel: DB error after cancel for job {}: {}", job_id, e);
-                return;
-            }
+        if reload_job_or_abort(&mut job_model, job_id, "cancel").await {
+            return;
         }
         check_job_status(job_model.clone(), false).await;
 
