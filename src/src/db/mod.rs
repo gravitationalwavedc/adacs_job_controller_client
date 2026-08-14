@@ -187,7 +187,10 @@ pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("DB: delete_status_by_id_list - request failed: {}", e);
+            e.to_string()
+        })?;
     let _resp = parse_response(&raw);
     Ok(())
 }
