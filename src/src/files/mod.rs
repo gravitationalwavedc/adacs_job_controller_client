@@ -24,6 +24,8 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, error, trace, warn};
 
+const SERVER_READY_TIMEOUT_SECONDS: u64 = 10;
+
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
@@ -739,7 +741,11 @@ async fn wait_for_server_ready(
         >,
     >,
 ) -> Option<Message> {
-    let handshake = tokio::time::timeout(Duration::from_secs(10), ws_receiver.next()).await;
+    let handshake = tokio::time::timeout(
+        Duration::from_secs(SERVER_READY_TIMEOUT_SECONDS),
+        ws_receiver.next(),
+    )
+    .await;
     match handshake {
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
             let msg = Message::from_data(data.to_vec());
