@@ -275,6 +275,31 @@ mod tests {
     }
 
     #[test]
+    fn test_db_bridge_propagates_send_db_request_error() {
+        reset_websocket_client_for_test();
+        DbBridge::start();
+
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(false);
+        mock.expect_is_server_ready().return_const(true);
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::<dyn std::error::Error + Send + Sync>::from(
+                    "mock send failure",
+                ))
+            })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
+        let result = DbBridge::global().send(msg);
+
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.contains("DB request error: mock send failure"));
+    }
+
+    #[test]
     fn test_db_bridge_send_from_async_context() {
         #[tokio::main(flavor = "current_thread")]
         async fn inner() {
