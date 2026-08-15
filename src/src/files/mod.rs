@@ -568,9 +568,16 @@ fn handle_file_upload_internal(
         }
 
         let ready_msg = Message::new(SERVER_READY, Priority::Highest, &uuid);
-        let _ = ws_sender
+        if let Err(e) = ws_sender
             .send(WsMessage::Binary(ready_msg.get_data().clone().into()))
-            .await;
+            .await
+        {
+            warn!(
+                "handle_file_upload_internal: Failed to send SERVER_READY ack: {}",
+                e
+            );
+            return;
+        }
 
         let working_directory = if job_id != 0 {
             match db::get_job_by_job_id(job_id).await {
@@ -698,9 +705,15 @@ fn handle_file_upload_internal(
                     }
                     drop(file);
                     let complete_msg = Message::new(FILE_UPLOAD_COMPLETE, Priority::Highest, &uuid);
-                    let _ = ws_sender
+                    if let Err(e) = ws_sender
                         .send(WsMessage::Binary(complete_msg.get_data().clone().into()))
-                        .await;
+                        .await
+                    {
+                        warn!(
+                            "handle_file_upload: Failed to send FILE_UPLOAD_COMPLETE: {}",
+                            e
+                        );
+                    }
                     debug!(
                         "handle_file_upload: uploaded {} bytes in {:?}",
                         received_size,
