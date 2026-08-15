@@ -339,6 +339,10 @@ impl Message {
         &self.data
     }
 
+    pub fn remaining_len(&self) -> usize {
+        self.data.len().saturating_sub(self.index)
+    }
+
     pub fn clone_for_reading(&self) -> Self {
         Self {
             id: self.id,
@@ -479,6 +483,20 @@ mod tests {
         let mut cloned = read_msg.clone_for_payload_reading();
         assert_eq!(cloned.id, 1);
         assert_eq!(cloned.pop_ulong(), 456);
+    }
+
+    #[test]
+    fn remaining_len_tracks_unread_bytes() {
+        let mut msg = Message::new(1, Priority::Highest, "test");
+        msg.push_uint(123);
+        msg.push_ulong(456);
+
+        let mut read_msg = Message::from_data(msg.get_data().clone());
+        let total = read_msg.remaining_len();
+        assert_eq!(read_msg.pop_uint(), 123);
+        assert_eq!(read_msg.remaining_len(), total - 4);
+        assert_eq!(read_msg.pop_ulong(), 456);
+        assert_eq!(read_msg.remaining_len(), 0);
     }
 
     #[test]

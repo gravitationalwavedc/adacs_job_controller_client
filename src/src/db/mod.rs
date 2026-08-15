@@ -55,7 +55,7 @@ pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
         })?;
     let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
-    let count = resp.pop_uint() as usize;
+    let count = (resp.pop_uint() as usize).min(resp.remaining_len());
     debug!(
         "DB: get_running_jobs - received {} jobs in {:?}",
         count, elapsed
@@ -140,7 +140,7 @@ async fn get_job_statuses(msg: Message, context: &str) -> Result<Vec<jobstatus::
         })?;
     let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
-    let count = resp.pop_uint() as usize;
+    let count = (resp.pop_uint() as usize).min(resp.remaining_len());
     debug!(
         "DB: {} - received {} statuses in {:?}",
         context, count, elapsed
@@ -293,6 +293,22 @@ mod tests {
         resp
     }
 
+    fn make_huge_count_job_response() -> Message {
+        let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        resp.push_uint(u32::MAX);
+        resp.push_ulong(11);
+        resp.push_ulong(22);
+        resp.push_ulong(33);
+        resp.push_bool(true);
+        resp.push_uint(4);
+        resp.push_string("bundle-hash");
+        resp.push_string("/tmp/workdir");
+        resp.push_bool(true);
+        resp.push_bool(false);
+        resp.push_bool(false);
+        resp
+    }
+
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -375,6 +391,28 @@ mod tests {
         assert_eq!(jobs[0].job_id, Some(22));
         assert_eq!(jobs[0].scheduler_id, Some(33));
         assert_eq!(jobs[0].bundle_hash, "bundle-hash");
+    }
+
+    #[test]
+    fn get_running_jobs_clamps_count_to_remaining_bytes() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut parsed = Message::from_data(make_huge_count_job_response().get_data().clone());
+        parsed.pop_uint();
+        let expected = parsed.remaining_len();
+
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let resp = make_huge_count_job_response();
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let jobs = rt.block_on(async { get_running_jobs().await }).unwrap();
+
+        assert_eq!(jobs.len(), expected);
+        assert_eq!(jobs[0].id, 11);
     }
 
     #[test]
