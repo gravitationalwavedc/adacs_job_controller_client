@@ -32,6 +32,40 @@ pub(crate) fn close_file_list_semaphore_for_test() {
     FILE_LIST_SEMAPHORE.close();
 }
 
+/// Client-facing error from a working-directory lookup.
+enum JobLookupError {
+    NotSubmitted,
+    NotFound,
+    Database(String),
+}
+
+impl JobLookupError {
+    /// The exact error string sent to the client over the wire.
+    fn client_message(&self) -> String {
+        match self {
+            Self::NotSubmitted => "Job is not submitted".to_string(),
+            Self::NotFound => "Job does not exist".to_string(),
+            Self::Database(e) => format!("Database error: {e}"),
+        }
+    }
+}
+
+/// Looks up a job's working directory in the database, returning the exact
+/// client-facing error message when the lookup fails.
+async fn lookup_job_working_directory(job_id: i64) -> Result<String, JobLookupError> {
+    match db::get_job_by_job_id(job_id).await {
+        Ok(Some(job)) => {
+            if job.submitting {
+                Err(JobLookupError::NotSubmitted)
+            } else {
+                Ok(job.working_directory)
+            }
+        }
+        Ok(None) => Err(JobLookupError::NotFound),
+        Err(e) => Err(JobLookupError::Database(e)),
+    }
+}
+
 /// Caller note: this function spawns internally and does not need to be awaited.
 pub fn handle_file_list(mut msg: Message) {
     let sem = FILE_LIST_SEMAPHORE.clone();
@@ -58,21 +92,13 @@ pub fn handle_file_list(mut msg: Message) {
         );
 
         let working_directory = if job_id != 0 {
-            match db::get_job_by_job_id(job_id).await {
-                Ok(Some(job)) => {
-                    if job.submitting {
-                        send_file_list_error(&uuid, "Job is not submitted");
-                        return;
+            match lookup_job_working_directory(job_id).await {
+                Ok(working_directory) => working_directory,
+                Err(err) => {
+                    if let JobLookupError::Database(e) = &err {
+                        error!("handle_file_list: Database error for job {}: {}", job_id, e);
                     }
-                    job.working_directory
-                }
-                Ok(None) => {
-                    send_file_list_error(&uuid, "Job does not exist");
-                    return;
-                }
-                Err(e) => {
-                    error!("handle_file_list: Database error for job {}: {}", job_id, e);
-                    send_file_list_error(&uuid, &format!("Database error: {e}"));
+                    send_file_list_error(&uuid, &err.client_message());
                     return;
                 }
             }
@@ -247,31 +273,27 @@ pub fn handle_file_download(mut msg: Message) {
                 "handle_file_download: Looking up job {} in database",
                 job_id
             );
-            match db::get_job_by_job_id(job_id).await {
-                Ok(Some(job)) => {
-                    debug!(
-                        "handle_file_download: Job found, submitting={}",
-                        job.submitting
-                    );
-                    if job.submitting {
-                        warn!("handle_file_download: Job is not submitted, sending error");
-                        send_download_error(&mut ws_sender, &uuid, "Job is not submitted").await;
-                        return;
+            match lookup_job_working_directory(job_id).await {
+                Ok(working_directory) => {
+                    debug!("handle_file_download: Job found, submitting=false");
+                    working_directory
+                }
+                Err(err) => {
+                    match &err {
+                        JobLookupError::NotSubmitted => {
+                            warn!("handle_file_download: Job is not submitted, sending error");
+                        }
+                        JobLookupError::NotFound => {
+                            warn!("handle_file_download: Job {} not found in database", job_id);
+                        }
+                        JobLookupError::Database(e) => {
+                            warn!(
+                                "handle_file_download: Database error for job {}: {}",
+                                job_id, e
+                            );
+                        }
                     }
-                    job.working_directory
-                }
-                Ok(None) => {
-                    warn!("handle_file_download: Job {} not found in database", job_id);
-                    send_download_error(&mut ws_sender, &uuid, "Job does not exist").await;
-                    return;
-                }
-                Err(e) => {
-                    warn!(
-                        "handle_file_download: Database error for job {}: {}",
-                        job_id, e
-                    );
-                    send_download_error(&mut ws_sender, &uuid, &format!("Database error: {e}"))
-                        .await;
+                    send_download_error(&mut ws_sender, &uuid, &err.client_message()).await;
                     return;
                 }
             }
@@ -573,24 +595,16 @@ fn handle_file_upload_internal(
             .await;
 
         let working_directory = if job_id != 0 {
-            match db::get_job_by_job_id(job_id).await {
-                Ok(Some(job)) => {
-                    if job.submitting {
-                        send_upload_error(&mut ws_sender, &uuid, "Job is not submitted").await;
-                        return;
+            match lookup_job_working_directory(job_id).await {
+                Ok(working_directory) => working_directory,
+                Err(err) => {
+                    if let JobLookupError::Database(e) = &err {
+                        warn!(
+                            "handle_file_upload_internal: Database error for job {}: {}",
+                            job_id, e
+                        );
                     }
-                    job.working_directory
-                }
-                Ok(None) => {
-                    send_upload_error(&mut ws_sender, &uuid, "Job does not exist").await;
-                    return;
-                }
-                Err(e) => {
-                    warn!(
-                        "handle_file_upload_internal: Database error for job {}: {}",
-                        job_id, e
-                    );
-                    send_upload_error(&mut ws_sender, &uuid, &format!("Database error: {e}")).await;
+                    send_upload_error(&mut ws_sender, &uuid, &err.client_message()).await;
                     return;
                 }
             }
