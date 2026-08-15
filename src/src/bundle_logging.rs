@@ -136,5 +136,10 @@ static mut BUNDLE_LOGGING_MODULE: PyModuleDef = PyModuleDef {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInit_bundlelogging() -> *mut PyObject {
     BUNDLE_LOGGING_MODULE.m_methods = (&raw mut BUNDLE_LOGGING_METHODS).cast::<PyMethodDef>();
-    PyModule_Create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION)
+
+    let module = PyModule_Create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION);
+    if module.is_null() {
+        return std::ptr::null_mut();
+    }
+    module
 }
