@@ -401,6 +401,24 @@ fn test_bundle_load_failure_no_panic() {
             result_str.contains("Failed to load bundle"),
             "result_str: {result_str}"
         );
+
+        // Calling run_bundle_uint64 should return 0 and NOT panic
+        let result_u64 = BundleManager::singleton().run_bundle_uint64(
+            "submit",
+            bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+        assert_eq!(result_u64, 0);
+
+        // Calling run_bundle_bool should return false and NOT panic
+        let result_bool = BundleManager::singleton().run_bundle_bool(
+            "submit",
+            bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+        assert!(!result_bool);
     }
     inner();
 }
