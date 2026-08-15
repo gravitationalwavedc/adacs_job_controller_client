@@ -57,6 +57,7 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
     let c_msg = PyUnicode_AsUTF8(arg_msg);
 
     if c_msg.is_null() {
+        PyErr_Clear();
         // Return Py_None with INCREF like C++
         return return_py_none();
     }
