@@ -137,24 +137,43 @@ pub fn handle_file_list(mut msg: Message) {
         if is_recursive {
             let mut stack = vec![abs_path.clone()];
             while let Some(current_dir) = stack.pop() {
-                if let Ok(mut entries) = fs::read_dir(current_dir).await {
-                    while let Ok(Some(entry)) = entries.next_entry().await {
-                        let path = entry.path();
-                        if let Some((relative_path, is_dir, size)) =
-                            collect_dir_entry(entry, &working_directory).await
-                        {
-                            file_list.push((relative_path, is_dir, size));
-                            if is_dir {
-                                stack.push(path);
+                match fs::read_dir(&current_dir).await {
+                    Ok(mut entries) => {
+                        while let Ok(Some(entry)) = entries.next_entry().await {
+                            let path = entry.path();
+                            if let Some((relative_path, is_dir, size)) =
+                                collect_dir_entry(entry, &working_directory).await
+                            {
+                                file_list.push((relative_path, is_dir, size));
+                                if is_dir {
+                                    stack.push(path);
+                                }
                             }
                         }
                     }
+                    Err(e) => {
+                        warn!(
+                            "handle_file_list: failed to read directory {:?}: {}",
+                            current_dir, e
+                        );
+                    }
                 }
             }
-        } else if let Ok(mut entries) = fs::read_dir(&abs_path).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                if let Some(entry_info) = collect_dir_entry(entry, &working_directory).await {
-                    file_list.push(entry_info);
+        } else {
+            match fs::read_dir(&abs_path).await {
+                Ok(mut entries) => {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        if let Some(entry_info) = collect_dir_entry(entry, &working_directory).await
+                        {
+                            file_list.push(entry_info);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "handle_file_list: failed to read directory {:?}: {}",
+                        abs_path, e
+                    );
                 }
             }
         }
