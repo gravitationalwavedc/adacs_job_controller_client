@@ -95,7 +95,7 @@ unsafe impl Send for ThreadStatePtr {}
 unsafe impl Sync for ThreadStatePtr {}
 
 static MAIN_TS: OnceLock<ThreadStatePtr> = OnceLock::new();
-static INIT_PYTHON: std::sync::Once = std::sync::Once::new();
+static INIT_PYTHON: OnceLock<Result<(), String>> = OnceLock::new();
 
 // ─── Library loading ─────────────────────────────────────────────────────────
 pub fn load_python_library(path: &str) -> Result<(), String> {
@@ -232,14 +232,21 @@ include!(concat!(env!("OUT_DIR"), "/subhook_bindings.rs"));
 
 /// Install subhook-based patches on `PyGILState_Ensure` and `PyGILState_Release`.
 /// Mirrors the C++ `PythonInterface::initPython()` hook installation exactly.
-unsafe fn install_gil_hooks() {
+///
+/// Returns an error instead of panicking if the symbols cannot be found or a
+/// subhook fails to install, so startup can fail cleanly with a logged message.
+unsafe fn install_gil_hooks() -> Result<(), String> {
     debug!("Installing GIL hooks via subhook");
     let lib = get_python_lib();
 
     debug!("Looking up PyGILState_Ensure symbol");
-    let p_ensure: Symbol<*mut c_void> = lib.get(b"PyGILState_Ensure").unwrap();
+    let p_ensure: Symbol<*mut c_void> = lib
+        .get(b"PyGILState_Ensure")
+        .map_err(|e| format!("Failed to look up PyGILState_Ensure symbol: {e}"))?;
     debug!("Looking up PyGILState_Release symbol");
-    let p_release: Symbol<*mut c_void> = lib.get(b"PyGILState_Release").unwrap();
+    let p_release: Symbol<*mut c_void> = lib
+        .get(b"PyGILState_Release")
+        .map_err(|e| format!("Failed to look up PyGILState_Release symbol: {e}"))?;
 
     debug!("Creating subhook for PyGILState_Ensure");
     let hook_ensure = subhook_new(
@@ -248,10 +255,9 @@ unsafe fn install_gil_hooks() {
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
     let result = subhook_install(hook_ensure);
-    assert!(
-        result >= 0,
-        "PyGILState_Ensure redirection failed to install"
-    );
+    if result < 0 {
+        return Err("PyGILState_Ensure redirection failed to install".to_string());
+    }
     debug!("PyGILState_Ensure hook installed");
 
     debug!("Creating subhook for PyGILState_Release");
@@ -261,13 +267,13 @@ unsafe fn install_gil_hooks() {
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
     let result = subhook_install(hook_release);
-    assert!(
-        result >= 0,
-        "myPyGILState_Release redirection failed to install"
-    );
+    if result < 0 {
+        return Err("myPyGILState_Release redirection failed to install".to_string());
+    }
     debug!("PyGILState_Release hook installed");
 
     info!("GIL hooks installed successfully");
+    Ok(())
 }
 
 // ─── Python initialisation ───────────────────────────────────────────────────
@@ -281,33 +287,36 @@ unsafe fn install_gil_hooks() {
 //
 // NOTE: PyImport_AppendInittab calls must happen BEFORE this function is called,
 // and the library must already be loaded.
-pub fn init_python() {
+pub fn init_python() -> Result<(), String> {
     info!("Initializing Python interpreter");
-    INIT_PYTHON.call_once(|| {
-        // SAFETY: Runs once before worker threads; GIL hooks install before
-        // Py_Initialize and the main thread state is saved before GIL release.
-        unsafe {
-            // Install GIL hooks (subhook patches)
-            debug!("Installing GIL hooks");
-            install_gil_hooks();
+    INIT_PYTHON
+        .get_or_init(|| {
+            // SAFETY: Runs once before worker threads; GIL hooks install before
+            // Py_Initialize and the main thread state is saved before GIL release.
+            unsafe {
+                // Install GIL hooks (subhook patches)
+                debug!("Installing GIL hooks");
+                install_gil_hooks()?;
 
-            // Initialise the interpreter
-            debug!("Calling Py_Initialize");
-            Py_Initialize();
-            debug!("Py_Initialize complete");
+                // Initialise the interpreter
+                debug!("Calling Py_Initialize");
+                Py_Initialize();
+                debug!("Py_Initialize complete");
 
-            debug!("Calling PyEval_InitThreads");
-            PyEval_InitThreads();
-            debug!("PyEval_InitThreads complete");
+                debug!("Calling PyEval_InitThreads");
+                PyEval_InitThreads();
+                debug!("PyEval_InitThreads complete");
 
-            // Save the main thread state and release the GIL so worker threads can
-            // restore it before creating sub-interpreters.
-            debug!("Saving main thread state and releasing GIL");
-            let ts = PyEval_SaveThread();
-            let _ = MAIN_TS.set(ThreadStatePtr(ts));
-            info!("Python interpreter initialized successfully");
-        }
-    });
+                // Save the main thread state and release the GIL so worker threads can
+                // restore it before creating sub-interpreters.
+                debug!("Saving main thread state and releasing GIL");
+                let ts = PyEval_SaveThread();
+                let _ = MAIN_TS.set(ThreadStatePtr(ts));
+                info!("Python interpreter initialized successfully");
+                Ok(())
+            }
+        })
+        .clone()
 }
 
 // ─── SubInterpreter ──────────────────────────────────────────────────────────

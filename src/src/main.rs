@@ -225,7 +225,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Some(bundle_logging::PyInit_bundlelogging),
             );
         }
-        python_interface::init_python();
+        if let Err(e) = python_interface::init_python() {
+            error!("Failed to initialize Python: {e}");
+            std::process::exit(1);
+        }
 
         let bundle_path = crate::bundle_manager::get_default_bundle_path();
         BundleManager::initialize(bundle_path);
