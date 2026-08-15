@@ -696,6 +696,7 @@ unsafe fn extract_type_name(extype: *mut PyObject) -> String {
     }
     let c_str = PyUnicode_AsUTF8(type_str);
     let name = if c_str.is_null() {
+        PyErr_Clear();
         "unknown".to_string()
     } else {
         CStr::from_ptr(c_str).to_string_lossy().into_owned()
@@ -724,6 +725,7 @@ unsafe fn extract_value_string(
     }
     let c_str = PyUnicode_AsUTF8(str_obj);
     let s = if c_str.is_null() {
+        PyErr_Clear();
         String::new()
     } else {
         CStr::from_ptr(c_str).to_string_lossy().into_owned()
