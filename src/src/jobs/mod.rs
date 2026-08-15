@@ -287,7 +287,12 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
 
             if v_status.len() > 1 {
                 let ids: Vec<i64> = v_status.iter().map(|s| s.id).collect();
-                let _ = db::delete_status_by_id_list(ids).await;
+                if let Err(e) = db::delete_status_by_id_list(ids).await {
+                    error!(
+                        "check_job_status: failed to delete duplicate statuses for job_id={}: {}",
+                        job_id, e
+                    );
+                }
                 v_status = vec![];
             }
 
