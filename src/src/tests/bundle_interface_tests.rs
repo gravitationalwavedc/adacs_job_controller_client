@@ -11,6 +11,7 @@
 
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
+use crate::python_interface::PYTHON_MUTEX;
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::io::Write;
@@ -401,6 +402,186 @@ fn test_bundle_load_failure_no_panic() {
             result_str.contains("Failed to load bundle"),
             "result_str: {result_str}"
         );
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST for `BundleInterface::run` — reviewer request on
+/// MR !189 ("Coverage?").
+///
+/// Success path: a bundle function that returns a dict round-trips through
+/// `run` and `json_dumps` unchanged.
+#[test]
+fn test_run_success() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {\"ok\": True, \"job_data\": job_data}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let result = bundle
+                .run("submit", &serde_json::json!({"a": 1}), "job-data")
+                .unwrap_or_else(|_| panic!("run should succeed"));
+            assert!(!result.is_null(), "run should return a non-null PyObject");
+            let dumped = bundle
+                .json_dumps(result)
+                .expect("json_dumps should succeed");
+            bundle.dispose_object(result);
+            let parsed: serde_json::Value = serde_json::from_str(&dumped).unwrap();
+            assert_eq!(parsed["ok"], true);
+            assert_eq!(parsed["job_data"], "job-data");
+        }
+    }
+    inner();
+}
+
+/// A NUL byte in `func` makes `CString::new` fail, so `run` must return
+/// `Err(NoneException)` instead of panicking.
+#[test]
+fn test_run_returns_err_for_nul_byte_func() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let result = bundle.run("sub\0mit", &serde_json::json!({}), "");
+            assert!(
+                result.is_err(),
+                "NUL byte in func should make run return Err"
+            );
+        }
+    }
+    inner();
+}
+
+/// A NUL byte in `job_data` makes `CString::new` fail, so `run` must return
+/// `Err(NoneException)` instead of panicking. This is the branch immediately
+/// before the new `PyUnicode_FromString` null guard.
+#[test]
+fn test_run_returns_err_for_nul_byte_job_data() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let result = bundle.run("submit", &serde_json::json!({}), "job\0data");
+            assert!(
+                result.is_err(),
+                "NUL byte in job_data should make run return Err"
+            );
+        }
+    }
+    inner();
+}
+
+/// A missing bundle function makes `PyObject_GetAttrString` return NULL, so
+/// `run` must return `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_for_missing_function() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let result = bundle.run("does_not_exist", &serde_json::json!({}), "");
+            assert!(
+                result.is_err(),
+                "missing function should make run return Err"
+            );
+        }
+    }
+    inner();
+}
+
+/// A bundle function that returns `None` makes `run` return
+/// `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_when_function_returns_none() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return None\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let result = bundle.run("submit", &serde_json::json!({}), "");
+            assert!(
+                result.is_err(),
+                "function returning None should make run return Err"
+            );
+        }
     }
     inner();
 }
