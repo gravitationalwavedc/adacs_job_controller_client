@@ -318,7 +318,12 @@ impl BundleInterface {
         if obj.is_null() {
             return 0;
         }
-        PyLong_AsUnsignedLongLong(obj)
+        let result = PyLong_AsUnsignedLongLong(obj);
+        if !PyErr_Occurred().is_null() {
+            PyErr_Clear();
+            return 0;
+        }
+        result
     }
 
     /// Convert a `PyObject` to bool. Mirrors C++ `BundleInterface::toBool()`.
