@@ -24,8 +24,12 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, error, trace, warn};
 
+const FILE_LIST_CONCURRENCY_LIMIT: usize = 4;
+const DOWNLOAD_CHUNK_SIZE: usize = 64 * 1024;
+const SERVER_READY_TIMEOUT_SECS: u64 = 10;
+
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(4)));
+    LazyLock::new(|| Arc::new(Semaphore::new(FILE_LIST_CONCURRENCY_LIMIT)));
 
 #[cfg(test)]
 pub(crate) fn close_file_list_semaphore_for_test() {
@@ -393,7 +397,7 @@ pub fn handle_file_download(mut msg: Message) {
                 return;
             }
         };
-        let mut buffer = vec![0u8; 64 * 1024];
+        let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
         let download_start = std::time::Instant::now();
         let mut total_bytes = 0;
 
@@ -748,7 +752,11 @@ async fn wait_for_server_ready(
         >,
     >,
 ) -> Option<Message> {
-    let handshake = tokio::time::timeout(Duration::from_secs(10), ws_receiver.next()).await;
+    let handshake = tokio::time::timeout(
+        Duration::from_secs(SERVER_READY_TIMEOUT_SECS),
+        ws_receiver.next(),
+    )
+    .await;
     match handshake {
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
             let msg = Message::from_data(data.to_vec());
@@ -771,7 +779,7 @@ async fn wait_for_server_ready(
             None
         }
         Err(_) => {
-            warn!("Timeout waiting for SERVER_READY");
+            warn!("Timeout waiting for SERVER_READY after {SERVER_READY_TIMEOUT_SECS}s");
             None
         }
     }
