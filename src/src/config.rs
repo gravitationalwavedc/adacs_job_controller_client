@@ -40,49 +40,32 @@ pub fn read_client_config() -> Value {
 pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
 
-    match config.get("pythonLibrary") {
-        None | Some(Value::Null) => {
-            errors.push("pythonLibrary is missing or null".to_string());
-        }
-        Some(Value::String(s)) => {
-            if s.trim().is_empty() {
-                errors.push("pythonLibrary is empty".to_string());
-            }
-        }
-        Some(_) => {
-            errors.push("pythonLibrary must be a string".to_string());
-        }
-    }
-
-    match config.get("websocketEndpoint") {
-        None | Some(Value::Null) => {
-            errors.push("websocketEndpoint is missing or null".to_string());
-        }
-        Some(Value::String(s)) => {
-            if s.trim().is_empty() {
-                errors.push("websocketEndpoint is empty".to_string());
-            }
-        }
-        Some(_) => {
-            errors.push("websocketEndpoint must be a string".to_string());
-        }
-    }
-
-    // Optional: validate logLevel if present
-    if let Some(log_level) = config.get("logLevel") {
-        if let Some(s) = log_level.as_str() {
-            if s.trim().is_empty() {
-                errors.push("logLevel is empty".to_string());
-            }
-        } else if !log_level.is_null() {
-            errors.push("logLevel must be a string".to_string());
-        }
-    }
+    validate_string_field(config, "pythonLibrary", &mut errors, true);
+    validate_string_field(config, "websocketEndpoint", &mut errors, true);
+    validate_string_field(config, "logLevel", &mut errors, false);
 
     if errors.is_empty() {
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+fn validate_string_field(config: &Value, key: &str, errors: &mut Vec<String>, required: bool) {
+    match config.get(key) {
+        None | Some(Value::Null) => {
+            if required {
+                errors.push(format!("{key} is missing or null"));
+            }
+        }
+        Some(Value::String(s)) => {
+            if s.trim().is_empty() {
+                errors.push(format!("{key} is empty"));
+            }
+        }
+        Some(_) => {
+            errors.push(format!("{key} must be a string"));
+        }
     }
 }
 
