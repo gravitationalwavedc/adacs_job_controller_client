@@ -230,16 +230,8 @@ impl BundleInterface {
 
         // Check if function exists
         if p_func.is_null() || PyCallable_Check(p_func) == 0 {
-            if !PyErr_Occurred().is_null() {
-                // Clear the AttributeError
-                let mut extype: *mut PyObject = std::ptr::null_mut();
-                let mut value: *mut PyObject = std::ptr::null_mut();
-                let mut tb: *mut PyObject = std::ptr::null_mut();
-                PyErr_Fetch(&raw mut extype, &raw mut value, &raw mut tb);
-                Py_XDECREF(extype);
-                Py_XDECREF(value);
-                Py_XDECREF(tb);
-            }
+            // Clear the AttributeError
+            swallow_python_error();
             Py_XDECREF(p_func);
             Py_DecRef(json_obj);
             return Err(NoneException);
