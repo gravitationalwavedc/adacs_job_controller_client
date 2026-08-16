@@ -16,7 +16,7 @@ use crate::messaging::{
     DB_BUNDLE_GET_JOB_BY_ID,
 };
 use crate::python_interface::{
-    my_py_none_struct, PyDict_SetItemString, PyErr_NewException, PyErr_SetString,
+    return_py_none, PyDict_SetItemString, PyErr_NewException, PyErr_SetString,
     PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef, PyModuleDef,
     PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
     PyTuple_GetItem, Py_DecRef, Py_IncRef, Py_XDECREF, METH_VARARGS, PYTHON_API_VERSION,
@@ -240,9 +240,7 @@ unsafe extern "C" fn create_or_update_job(
 
             debug!("DB: create_or_update_job res - jobId: {}", new_job_id);
 
-            let result = my_py_none_struct();
-            Py_IncRef(result);
-            result
+            return_py_none()
         }
         Err(e) => {
             error!(
@@ -383,9 +381,7 @@ unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *m
         Ok(_) => {
             debug!("DB: delete_job res - success");
 
-            let result = my_py_none_struct();
-            Py_IncRef(result);
-            result
+            return_py_none()
         }
         Err(e) => {
             error!(
