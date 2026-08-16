@@ -223,16 +223,21 @@ pub fn handle_file_download(mut msg: Message) {
             }
         };
 
-        let (ws_stream, _) = match connect_async(request).await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(
-                    "handle_file_download: Failed to connect for file download: {}",
-                    e
-                );
-                return;
-            }
-        };
+        let (ws_stream, _) =
+            match tokio::time::timeout(Duration::from_secs(10), connect_async(request)).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    warn!(
+                        "handle_file_download: Failed to connect for file download: {}",
+                        e
+                    );
+                    return;
+                }
+                Err(_) => {
+                    warn!("handle_file_download: Timed out connecting for file download");
+                    return;
+                }
+            };
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
@@ -553,13 +558,18 @@ fn handle_file_upload_internal(
             }
         };
 
-        let (ws_stream, _) = match connect_async(request).await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Failed to connect for file upload: {}", e);
-                return;
-            }
-        };
+        let (ws_stream, _) =
+            match tokio::time::timeout(Duration::from_secs(10), connect_async(request)).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    warn!("Failed to connect for file upload: {}", e);
+                    return;
+                }
+                Err(_) => {
+                    warn!("Timed out connecting for file upload");
+                    return;
+                }
+            };
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
