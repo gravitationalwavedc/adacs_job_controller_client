@@ -346,8 +346,17 @@ impl BundleInterface {
             Py_XDECREF(p_func);
             return Err("Failed to allocate argument tuple".to_string());
         }
-        Py_IncRef(obj); // INCREF before SetItem (which steals a ref) – matches C++
-        PyTuple_SetItem(p_args, 0, obj);
+        // INCREF before SetItem (which steals a ref) – matches C++
+        Py_IncRef(obj);
+        // On failure PyTuple_SetItem releases the item reference itself, so we
+        // must not Py_DecRef the item again here.
+        if PyTuple_SetItem(p_args, 0, obj) < 0 {
+            error!("Error setting object in args tuple");
+            PyErr_Print();
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return Err("Error calling json.dumps".to_string());
+        }
 
         let p_value = PyObject_CallObject(p_func, p_args);
         if p_value.is_null() || !PyErr_Occurred().is_null() {
