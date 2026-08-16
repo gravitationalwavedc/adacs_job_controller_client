@@ -346,6 +346,7 @@ impl BundleInterface {
             self.print_last_python_exception();
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
+            Py_XDECREF(p_value);
             return Err("Error calling json.dumps".to_string());
         }
 
