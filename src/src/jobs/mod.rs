@@ -27,6 +27,20 @@ fn get_default_job_details() -> Value {
     })
 }
 
+fn queue_job_update(job_id: i64, source: &str, status: u32, message: &str) {
+    let ws = get_websocket_client();
+    let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
+    result.push_uint(job_id as u32);
+    result.push_string(source);
+    result.push_uint(status);
+    result.push_string(message);
+    ws.queue_message(
+        job_id.to_string(),
+        result.get_data().clone(),
+        Priority::Medium,
+    );
+}
+
 pub fn handle_job_submit(mut msg: Message) {
     let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
@@ -170,33 +184,17 @@ pub fn handle_job_submit(mut msg: Message) {
             warn!("Job with UI ID {} could not be submitted", job_id);
             let _ = db::delete_job(job_model.id).await;
 
-            let ws = get_websocket_client();
-            let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-            result.push_uint(job_id as u32);
-            result.push_string(SYSTEM_SOURCE);
-            result.push_uint(ERROR);
-            result.push_string("Unable to submit job. Please check the logs as to why.");
-            debug!(
-                "handle_job_submit: queueing ERROR message for job_id={} ({} bytes)",
+            queue_job_update(
                 job_id,
-                result.get_data().len()
+                SYSTEM_SOURCE,
+                ERROR,
+                "Unable to submit job. Please check the logs as to why.",
             );
-            ws.queue_message(
-                job_id.to_string(),
-                result.get_data().clone(),
-                Priority::Medium,
-            );
-            debug!("handle_job_submit: ERROR message queued");
-
-            let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-            result.push_uint(job_id as u32);
-            result.push_string(JOB_COMPLETION_SOURCE);
-            result.push_uint(ERROR);
-            result.push_string("Unable to submit job. Please check the logs as to why.");
-            ws.queue_message(
-                job_id.to_string(),
-                result.get_data().clone(),
-                Priority::Medium,
+            queue_job_update(
+                job_id,
+                JOB_COMPLETION_SOURCE,
+                ERROR,
+                "Unable to submit job. Please check the logs as to why.",
             );
         } else {
             job_model.submitting = false;
