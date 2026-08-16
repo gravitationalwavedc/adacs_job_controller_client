@@ -384,7 +384,7 @@ impl BundleInterface {
         PyTuple_SetItem(p_args, 0, p_value);
 
         let result = PyObject_CallObject(p_func, p_args);
-        if !PyErr_Occurred().is_null() {
+        if result.is_null() || !PyErr_Occurred().is_null() {
             self.print_last_python_exception();
             error!("Error calling json.loads - returning NULL");
             Py_DecRef(p_args);
