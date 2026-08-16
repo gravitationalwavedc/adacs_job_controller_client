@@ -8,9 +8,9 @@
 //! We use thread-local storage for safety.
 
 use crate::python_interface::{
-    my_py_none_struct, my_py_true_struct, PyMethodDef, PyModuleDef, PyModuleDef_Base,
-    PyModule_Create2, PyObject, PyObject_Head, PyTuple_GetItem, PyUnicode_AsUTF8, Py_IncRef,
-    METH_VARARGS, PYTHON_API_VERSION,
+    my_py_true_struct, return_py_none, PyMethodDef, PyModuleDef, PyModuleDef_Base,
+    PyModule_Create2, PyObject, PyObject_Head, PyTuple_GetItem, PyUnicode_AsUTF8, METH_VARARGS,
+    PYTHON_API_VERSION,
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
 use std::ffi::CStr;
@@ -48,17 +48,13 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
     let arg_msg = PyTuple_GetItem(args, 1);
     if arg_msg.is_null() {
         // Return Py_None with INCREF like C++
-        let result = my_py_none_struct();
-        Py_IncRef(result);
-        return result;
+        return return_py_none();
     }
     let c_msg = PyUnicode_AsUTF8(arg_msg);
 
     if c_msg.is_null() {
         // Return Py_None with INCREF like C++
-        let result = my_py_none_struct();
-        Py_IncRef(result);
-        return result;
+        return return_py_none();
     }
 
     let msg = CStr::from_ptr(c_msg).to_string_lossy();
@@ -91,9 +87,7 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
     }
 
     // Return Py_None with INCREF (matches C++ exactly)
-    let result = my_py_none_struct();
-    Py_IncRef(result);
-    result
+    return_py_none()
 }
 
 static mut BUNDLE_LOGGING_METHODS: [PyMethodDef; 2] = [
