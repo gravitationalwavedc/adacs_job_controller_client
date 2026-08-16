@@ -162,6 +162,45 @@ fn err_cstring(msg: &str) -> CString {
     })
 }
 
+/// Load the current thread's bundle and extract the job's `job_id` from the
+/// job data dict.
+///
+/// Shared prologue of the `create_or_update_job` and `delete_job` FFI
+/// callbacks: resolve the bundle hash, load the bundle (logging and returning
+/// `None` on failure), dump the job dict to JSON, and parse the `job_id`
+/// field (defaulting to `0` when absent).
+///
+/// Returns `(bundle_hash, job_id, job_data)` on success.
+///
+/// # Safety
+/// `dict` must be a valid `PyObject` pointer obtained from the `args` tuple.
+unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, serde_json::Value)> {
+    let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
+    let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
+        Ok(b) => b,
+        Err(e) => {
+            error!(
+                "DB: Bundle {} not found in cache during FFI callback: {}",
+                bundle_hash, e
+            );
+            return None;
+        }
+    };
+
+    let Ok(json_str) = bundle.json_dumps(dict) else {
+        return None;
+    };
+    let job_data: serde_json::Value =
+        serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+
+    let job_id = job_data
+        .get("job_id")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    Some((bundle_hash, job_id, job_data))
+}
+
 // SAFETY: Called by Python C API with a valid `args` tuple pointer.
 // All FFI calls (PyTuple_GetItem, PyDict_SetItemString, PyLong_*, etc.)
 // operate on pointers derived from `args` or freshly created Python objects.
@@ -172,29 +211,9 @@ unsafe extern "C" fn create_or_update_job(
 ) -> *mut PyObject {
     let dict = PyTuple_GetItem(args, 0);
 
-    let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
-    let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
-        Ok(b) => b,
-        Err(e) => {
-            error!(
-                "DB: Bundle {} not found in cache during FFI callback: {}",
-                bundle_hash, e
-            );
-            return std::ptr::null_mut();
-        }
+    let Some((bundle_hash, job_id, job_data)) = load_bundle_and_job_id(dict) else {
+        return ptr::null_mut();
     };
-
-    let Ok(json_str) = bundle.json_dumps(dict) else {
-        return std::ptr::null_mut();
-    };
-    let job_data: serde_json::Value =
-        serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
-
-    // Try to get the job_id from the job data
-    let job_id = job_data
-        .get("job_id")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0);
 
     // Remove job_id from the data
     let mut job_data_clean = job_data.clone();
@@ -339,28 +358,9 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let dict = PyTuple_GetItem(args, 0);
 
-    let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
-    let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
-        Ok(b) => b,
-        Err(e) => {
-            error!(
-                "DB: Bundle {} not found in cache during FFI callback: {}",
-                bundle_hash, e
-            );
-            return std::ptr::null_mut();
-        }
+    let Some((bundle_hash, job_id, _)) = load_bundle_and_job_id(dict) else {
+        return ptr::null_mut();
     };
-
-    let Ok(json_str) = bundle.json_dumps(dict) else {
-        return std::ptr::null_mut();
-    };
-    let job_data: serde_json::Value =
-        serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
-
-    let job_id = job_data
-        .get("job_id")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0);
 
     if job_id == 0 {
         warn!(
