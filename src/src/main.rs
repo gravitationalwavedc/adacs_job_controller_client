@@ -192,7 +192,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             std::process::exit(1);
         }
-        info!("Python library: {}", get_python_library_path());
+        let python_library_path = get_python_library_path();
+        info!("Python library: {}", python_library_path);
         let (ws_token, reconnectable) = match resolve_websocket_token(&args, &config) {
             Ok((token, is_ltk)) => {
                 IS_LTK.store(is_ltk, Ordering::SeqCst);
@@ -211,7 +212,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             info!("Using one-shot WebSocket token from command line argument");
         }
 
-        if let Err(e) = python_interface::load_python_library(&get_python_library_path()) {
+        if let Err(e) = python_interface::load_python_library(&python_library_path) {
             error!("Failed to load Python library: {e}");
             std::process::exit(1);
         }
