@@ -32,10 +32,8 @@ pub const LOGGING_WRONG_ARITY_SCRIPT: &str = r"
 import _bundlelogging
 
 def logging_test(details, job_data):
-    try:
-        _bundlelogging.write(True)
-    except Exception:
-        pass
+    result = _bundlelogging.write(True)
+    assert result is None
     return True
 ";
 

@@ -151,7 +151,7 @@ fn test_stderr_during_load() {
 }
 
 #[test]
-fn test_wrong_arity_write_does_not_crash() {
+fn test_wrong_arity_write_returns_none_cleanly() {
     setup();
     let fixture = BundleFixture::new();
     let bundle_hash = Uuid::new_v4().to_string();

@@ -8,7 +8,7 @@
 //! We use thread-local storage for safety.
 
 use crate::python_interface::{
-    my_py_true_struct, return_py_none, PyMethodDef, PyModuleDef, PyModuleDef_Base,
+    my_py_true_struct, return_py_none, PyErr_Clear, PyMethodDef, PyModuleDef, PyModuleDef_Base,
     PyModule_Create2, PyObject, PyObject_Head, PyTuple_GetItem, PyUnicode_AsUTF8, METH_VARARGS,
     PYTHON_API_VERSION,
 };
@@ -47,6 +47,10 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
     // Convert the second argument to a string
     let arg_msg = PyTuple_GetItem(args, 1);
     if arg_msg.is_null() {
+        // PyTuple_GetItem set an IndexError for the missing argument; clear it
+        // so returning Py_None doesn't trip CPython's _Py_CheckFunctionResult
+        // into a spurious "returned a result with an exception set" SystemError.
+        PyErr_Clear();
         // Return Py_None with INCREF like C++
         return return_py_none();
     }
