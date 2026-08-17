@@ -729,8 +729,10 @@ mod tests {
     use crate::websocket::{
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
+    use flate2::read::GzDecoder;
     use serde_json::json;
     use std::sync::Arc;
+    use tar::Archive;
 
     #[test]
     #[serial_test::serial]
@@ -1054,5 +1056,65 @@ mod tests {
         let result = rt.block_on(archive_job(&job_model));
 
         assert!(result.is_err());
+    }
+
+    fn archive_entry_names(archive_path: &Path) -> Vec<String> {
+        let file = std::fs::File::open(archive_path).unwrap();
+        let decoder = GzDecoder::new(file);
+        let mut archive = Archive::new(decoder);
+        archive
+            .entries()
+            .unwrap()
+            .map(|entry| {
+                entry
+                    .unwrap()
+                    .path()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn archive_dir_produces_valid_tar_gz_with_files_and_subdirs() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
+        std::fs::write(src.join("root.txt"), b"root").unwrap();
+        std::fs::write(src.join("subdir").join("nested.txt"), b"nested").unwrap();
+
+        let archive_path = temp_dir.path().join("out.tar.gz");
+        archive_dir(&src, &archive_path).unwrap();
+
+        let names = archive_entry_names(&archive_path);
+        assert!(names.iter().any(|n| n == "root.txt"));
+        assert!(names.iter().any(|n| n == "subdir"));
+        assert!(names.iter().any(|n| n == "subdir/nested.txt"));
+    }
+
+    #[test]
+    fn archive_dir_excludes_pre_existing_archive_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("keep.txt"), b"keep").unwrap();
+        std::fs::write(src.join(ARCHIVE_FILE_NAME), b"stale archive").unwrap();
+
+        let archive_path = src.join(ARCHIVE_FILE_NAME);
+        archive_dir(&src, &archive_path).unwrap();
+
+        let names = archive_entry_names(&archive_path);
+        assert!(names.iter().any(|n| n == "keep.txt"));
+        assert!(!names.iter().any(|n| n == ARCHIVE_FILE_NAME));
+    }
+
+    #[test]
+    fn archive_dir_returns_error_for_missing_source_dir() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let missing = temp_dir.path().join("does-not-exist");
+        let archive_path = missing.join(ARCHIVE_FILE_NAME);
+
+        assert!(archive_dir(&missing, &archive_path).is_err());
     }
 }
