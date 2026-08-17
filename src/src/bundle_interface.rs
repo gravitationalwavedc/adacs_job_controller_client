@@ -327,6 +327,12 @@ impl BundleInterface {
             return Err(NoneException);
         };
         let p_job_data = PyUnicode_FromString(c_job_data.as_ptr());
+        if p_job_data.is_null() {
+            swallow_python_error();
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return Err(NoneException);
+        }
         PyTuple_SetItem(p_args, 1, p_job_data);
 
         // Set up the thread bundle hash map (RAII guard clears on drop)
