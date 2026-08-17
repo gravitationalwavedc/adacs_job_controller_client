@@ -497,9 +497,15 @@ async fn send_download_error(
 ) {
     let mut result = Message::new(FILE_DOWNLOAD_ERROR, Priority::Highest, uuid);
     result.push_string(error_msg);
-    let _ = ws_sender
+    if let Err(e) = ws_sender
         .send(WsMessage::Binary(result.get_data().clone().into()))
-        .await;
+        .await
+    {
+        warn!(
+            "send_download_error: Failed to send FILE_DOWNLOAD_ERROR: {}",
+            e
+        );
+    }
 }
 
 struct UploadFields {
@@ -857,9 +863,12 @@ async fn send_upload_error(
 ) {
     let mut result = Message::new(FILE_UPLOAD_ERROR, Priority::Highest, uuid);
     result.push_string(error_msg);
-    let _ = ws_sender
+    if let Err(e) = ws_sender
         .send(WsMessage::Binary(result.get_data().clone().into()))
-        .await;
+        .await
+    {
+        warn!("send_upload_error: Failed to send FILE_UPLOAD_ERROR: {}", e);
+    }
 }
 
 #[cfg(test)]
