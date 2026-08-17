@@ -126,8 +126,8 @@ pub fn load_python_library(path: &str) -> Result<(), String> {
         debug!("dlopen {} with flags RTLD_NOW|RTLD_GLOBAL", path);
         let handle = libc::dlopen(c_path.as_ptr(), flags);
         if handle.is_null() {
-            let err = std::ffi::CStr::from_ptr(libc::dlerror());
-            let err_msg = format!("Failed to dlopen libpython: {}", err.to_string_lossy());
+            let detail = dlopen_error_detail(libc::dlerror());
+            let err_msg = format!("Failed to dlopen libpython: {detail}");
             error!("{}", err_msg);
             return Err(err_msg);
         }
@@ -138,6 +138,23 @@ pub fn load_python_library(path: &str) -> Result<(), String> {
     let _ = PY_LIB.set(Arc::new(lib));
     info!("Python library loaded successfully");
     Ok(())
+}
+
+/// Formats the dlopen error detail from the `dlerror()` result pointer.
+///
+/// `dlerror()` returns either NULL (no error string available) or a pointer to
+/// a static, null-terminated error string. The NULL case is handled before
+/// `CStr::from_ptr` dereferences the pointer.
+fn dlopen_error_detail(err_ptr: *const c_char) -> String {
+    if err_ptr.is_null() {
+        "unknown dlopen error".to_string()
+    } else {
+        // SAFETY: `err_ptr` is non-NULL and, per the POSIX `dlerror()` contract,
+        // points to a static, null-terminated error string.
+        unsafe { std::ffi::CStr::from_ptr(err_ptr) }
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 pub fn get_python_lib() -> Arc<Library> {
@@ -498,6 +515,30 @@ mod tests {
         assert!(
             second.is_ok(),
             "second load should be idempotent: {second:?}"
+        );
+    }
+
+    /// DIRECT UNIT TEST for `dlopen_error_detail` — reviewer request on
+    /// MR !208 ("Needs coverage." / "Please test the new branches.").
+    ///
+    /// When `dlerror()` returns NULL, the helper must fall back to the
+    /// "unknown dlopen error" detail instead of dereferencing a null pointer.
+    #[test]
+    fn dlopen_error_detail_returns_unknown_when_dlerror_is_null() {
+        assert_eq!(
+            dlopen_error_detail(std::ptr::null()),
+            "unknown dlopen error"
+        );
+    }
+
+    /// When `dlerror()` returns a non-NULL pointer, the helper must read the
+    /// static, null-terminated error string.
+    #[test]
+    fn dlopen_error_detail_reads_c_string_when_non_null() {
+        let msg = c"cannot open shared object file";
+        assert_eq!(
+            dlopen_error_detail(msg.as_ptr()),
+            "cannot open shared object file"
         );
     }
 }
