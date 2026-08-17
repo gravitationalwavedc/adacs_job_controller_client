@@ -756,3 +756,49 @@ fn test_json_loads_returns_null_when_loads_lookup_fails() {
     }
     inner();
 }
+
+/// DIRECT UNIT TEST for `BundleManager::run_bundle_json`'s `json_dumps`
+/// failure path.
+///
+/// A bundle function returning a non-JSON-serializable object (a set)
+/// makes `json.dumps` raise `TypeError`. `BundleInterface::json_dumps`
+/// returns `Err`, and `run_bundle_json` must return an `{"error": ...}`
+/// object instead of panicking or returning `Value::Null`.
+#[test]
+fn test_run_bundle_json_returns_error_object_for_non_serializable_result() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {1, 2, 3}\n",
+        );
+
+        // No DB calls expected — the failure happens during serialization.
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+
+        assert!(
+            result.get("error").is_some(),
+            "expected an {{\"error\": ...}} object, got: {result}"
+        );
+        assert!(
+            result["error"]
+                .as_str()
+                .is_some_and(|s| s.contains("Failed to serialize result")),
+            "expected serialization-failure message, got: {result}"
+        );
+    }
+    inner();
+}
