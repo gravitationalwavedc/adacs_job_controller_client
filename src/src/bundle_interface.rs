@@ -272,6 +272,7 @@ impl BundleInterface {
             self.print_last_python_exception();
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
+            Py_XDECREF(p_result);
             return Err(NoneException);
         }
         debug!(
@@ -408,6 +409,7 @@ impl BundleInterface {
             error!("Error calling json.loads - returning NULL");
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
+            Py_XDECREF(result);
             return std::ptr::null_mut();
         }
 
