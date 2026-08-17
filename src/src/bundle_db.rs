@@ -236,11 +236,15 @@ unsafe fn set_job_id_in_dict(
 // All FFI calls (PyTuple_GetItem, PyDict_SetItemString, PyLong_*, etc.)
 // operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn create_or_update_job(
+pub unsafe extern "C" fn create_or_update_job(
     _self: *mut PyObject,
     args: *mut PyObject,
 ) -> *mut PyObject {
     let dict = PyTuple_GetItem(args, 0);
+    if dict.is_null() {
+        error!("DB: create_or_update_job - invalid arguments");
+        return ptr::null_mut();
+    }
 
     let Some((bundle_hash, job_id, job_data)) = load_bundle_and_job_id(dict) else {
         return ptr::null_mut();
@@ -316,8 +320,12 @@ unsafe extern "C" fn create_or_update_job(
 // All FFI calls (PyTuple_GetItem, PyLong_AsUnsignedLongLong, PyDict_SetItemString,
 // etc.) operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
+pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let job_id_obj = PyTuple_GetItem(args, 0);
+    if job_id_obj.is_null() {
+        error!("DB: get_job_by_id - invalid arguments");
+        return ptr::null_mut();
+    }
     let job_id = PyLong_AsUnsignedLongLong(job_id_obj);
 
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
@@ -400,8 +408,12 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 // All FFI calls (PyTuple_GetItem, PyLong_FromUnsignedLongLong, PyDict_SetItemString,
 // etc.) operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
+pub unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let dict = PyTuple_GetItem(args, 0);
+    if dict.is_null() {
+        error!("DB: delete_job - invalid arguments");
+        return ptr::null_mut();
+    }
 
     let Some((bundle_hash, job_id, _)) = load_bundle_and_job_id(dict) else {
         return ptr::null_mut();
