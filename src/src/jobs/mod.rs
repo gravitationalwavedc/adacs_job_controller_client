@@ -206,23 +206,12 @@ pub fn handle_job_submit(mut msg: Message) {
                 job_id, scheduler_id
             );
 
-            let ws = get_websocket_client();
-            let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-            result.push_uint(job_id as u32);
-            result.push_string(SYSTEM_SOURCE);
-            result.push_uint(SUBMITTED);
-            result.push_string("Job submitted successfully");
-            debug!(
-                "handle_job_submit: queueing SUBMITTED message for job_id={} ({} bytes)",
+            queue_job_update(
                 job_id,
-                result.get_data().len()
+                SYSTEM_SOURCE,
+                SUBMITTED,
+                "Job submitted successfully",
             );
-            ws.queue_message(
-                job_id.to_string(),
-                result.get_data().clone(),
-                Priority::Medium,
-            );
-            debug!("handle_job_submit: SUBMITTED message queued");
         }
     });
 }
