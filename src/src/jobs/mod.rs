@@ -317,21 +317,7 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
                     error!("Failed to save status for job {}: {}", job_id, e);
                 }
 
-                let ws = get_websocket_client();
-                let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-                result.push_uint(job_id as u32);
-                result.push_string(what);
-                result.push_uint(status);
-                result.push_string(info);
-                debug!(
-                    "check_job_status: queueing UPDATE_JOB message ({} bytes)",
-                    result.get_data().len()
-                );
-                ws.queue_message(
-                    job_id.to_string(),
-                    result.get_data().clone(),
-                    Priority::Medium,
-                );
+                queue_job_update(job_id, what, status, info);
                 debug!("check_job_status: update message queued on ws");
             }
         }
