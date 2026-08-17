@@ -202,7 +202,8 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
 }
 
 /// Set `job_id` in a Python dict, handling a failed `PyLong_FromUnsignedLongLong`
-/// allocation. Returns `false` (and sets the Python error) when `value` is NULL.
+/// allocation and a failed `PyDict_SetItemString`. Returns `false` (and sets the
+/// Python error) when `value` is NULL or the dict insertion fails.
 ///
 /// `context` names the caller for the error log (e.g. `"create_or_update_job"`).
 ///
@@ -227,7 +228,16 @@ unsafe fn set_job_id_in_dict(
         PyErr_SetString(error_obj, err_msg.as_ptr());
         return false;
     }
-    PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
+    if PyDict_SetItemString(dict, c"job_id".as_ptr(), value) < 0 {
+        Py_DecRef(value);
+        error!(
+            "DB: {} failed to set job_id in dict for bundle hash: {}, jobId: {}",
+            context, bundle_hash, job_id
+        );
+        let err_msg = err_cstring("Failed to set job_id in dict");
+        PyErr_SetString(error_obj, err_msg.as_ptr());
+        return false;
+    }
     Py_DecRef(value);
     true
 }
@@ -674,6 +684,42 @@ mod tests {
             );
             crate::python_interface::PyErr_Clear();
             crate::python_interface::Py_DecRef(dict);
+        }
+    }
+
+    #[test]
+    fn set_job_id_in_dict_returns_false_and_sets_error_on_dict_insertion_failure() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_set_job_id_dict_fail";
+        fixture.write_bundle_db_create_or_update_job(bundle_hash, r#"{"test": 1}"#);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        let bundle = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            // A tuple is not a dict, so PyDict_SetItemString fails deterministically.
+            let not_a_dict = crate::python_interface::PyTuple_New(0);
+            let value = PyLong_FromUnsignedLongLong(42);
+            let error_obj = get_bundle_db_error(bundle_hash);
+            let ok = set_job_id_in_dict(
+                not_a_dict,
+                value,
+                "create_or_update_job",
+                bundle_hash,
+                42,
+                error_obj,
+            );
+            assert!(!ok, "failed dict insertion should report failure");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "Python error should be set"
+            );
+            crate::python_interface::PyErr_Clear();
+            crate::python_interface::Py_DecRef(not_a_dict);
         }
     }
 
