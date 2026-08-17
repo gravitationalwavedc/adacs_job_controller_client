@@ -195,8 +195,15 @@ async fn collect_dir_entry(
     working_directory: &str,
 ) -> Option<(String, bool, u64)> {
     let path = entry.path();
-    let Ok(metadata) = entry.metadata().await else {
-        return None;
+    let metadata = match entry.metadata().await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            warn!(
+                "collect_dir_entry: failed to read metadata for {:?}: {}",
+                path, e
+            );
+            return None;
+        }
     };
     if metadata.is_symlink() {
         return None;
