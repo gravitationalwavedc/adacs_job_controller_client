@@ -6,7 +6,7 @@ use crate::messaging::{
     PAUSE_FILE_CHUNK_STREAM, RESUME_FILE_CHUNK_STREAM, SERVER_READY,
 };
 use crate::websocket::get_websocket_client;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use serde_json::json;
 use std::path::{Component, Path};
 use std::sync::{Arc, LazyLock};
@@ -536,17 +536,11 @@ pub fn handle_file_download(mut msg: Message) {
     });
 }
 
-async fn send_file_error(
-    ws_sender: &mut futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        WsMessage,
-    >,
-    uuid: &str,
-    error_msg: &str,
-    msg_id: u32,
-) {
+async fn send_file_error<S, E>(ws_sender: &mut S, uuid: &str, error_msg: &str, msg_id: u32)
+where
+    S: Sink<WsMessage, Error = E> + Unpin,
+    E: std::fmt::Display,
+{
     let mut result = Message::new(msg_id, Priority::Highest, uuid);
     result.push_string(error_msg);
     if let Err(e) = ws_sender
@@ -1123,5 +1117,83 @@ mod tests {
         assert_eq!(fields.bundle_hash, "bundle-hash");
         assert_eq!(fields.target_path, "/data/out.txt");
         assert_eq!(fields.file_size, 1024);
+    }
+
+    struct TestSink {
+        sent: Vec<WsMessage>,
+        fail_next: bool,
+    }
+
+    impl TestSink {
+        fn new() -> Self {
+            Self {
+                sent: Vec::new(),
+                fail_next: false,
+            }
+        }
+    }
+
+    impl Sink<WsMessage> for TestSink {
+        type Error = std::io::Error;
+
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: std::pin::Pin<&mut Self>, item: WsMessage) -> Result<(), Self::Error> {
+            let this = self.get_mut();
+            if this.fail_next {
+                return Err(std::io::Error::other("mock send failure"));
+            }
+            this.sent.push(item);
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[test]
+    fn test_send_file_error_sends_message() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut sink = TestSink::new();
+            send_file_error(&mut sink, "uuid-123", "boom", FILE_DOWNLOAD_ERROR).await;
+
+            assert_eq!(sink.sent.len(), 1);
+            let WsMessage::Binary(data) = &sink.sent[0] else {
+                panic!("expected a binary message");
+            };
+            let mut resp = Message::from_data(data.to_vec());
+            assert_eq!(resp.id, FILE_DOWNLOAD_ERROR);
+            assert_eq!(resp.source, "uuid-123");
+            assert_eq!(resp.pop_string(), "boom");
+        });
+    }
+
+    #[test]
+    fn test_send_file_error_send_failure_does_not_panic() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut sink = TestSink::new();
+            sink.fail_next = true;
+            send_file_error(&mut sink, "uuid-123", "boom", FILE_UPLOAD_ERROR).await;
+
+            assert!(sink.sent.is_empty());
+        });
     }
 }
