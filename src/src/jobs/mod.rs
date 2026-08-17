@@ -362,20 +362,11 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
             warn!("Archive failed for job {}: {}", job.job_id.unwrap_or(0), e);
         }
 
-        let ws = get_websocket_client();
-        let mut result = Message::new(
-            UPDATE_JOB,
-            Priority::Medium,
-            &job.job_id.unwrap_or(0).to_string(),
-        );
-        result.push_uint(job.job_id.unwrap_or(0) as u32);
-        result.push_string(JOB_COMPLETION_SOURCE);
-        result.push_uint(if job_error != 0 { job_error } else { COMPLETED });
-        result.push_string("Job has completed");
-        ws.queue_message(
-            job.job_id.unwrap_or(0).to_string(),
-            result.get_data().clone(),
-            Priority::Medium,
+        queue_job_update(
+            job_id,
+            JOB_COMPLETION_SOURCE,
+            if job_error != 0 { job_error } else { COMPLETED },
+            "Job has completed",
         );
         trace!("check_job_status: job completion message queued on ws");
     }
@@ -538,16 +529,11 @@ pub fn handle_job_cancel(mut msg: Message) {
             );
 
             if !job_model.submitting {
-                let ws = get_websocket_client();
-                let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-                result.push_uint(job_id as u32);
-                result.push_string(JOB_COMPLETION_SOURCE);
-                result.push_uint(CANCELLED);
-                result.push_string("Job has been cancelled");
-                ws.queue_message(
-                    job_id.to_string(),
-                    result.get_data().clone(),
-                    Priority::Medium,
+                queue_job_update(
+                    job_id,
+                    JOB_COMPLETION_SOURCE,
+                    CANCELLED,
+                    "Job has been cancelled",
                 );
             }
             return;
@@ -630,16 +616,11 @@ pub fn handle_job_cancel(mut msg: Message) {
             warn!("Archive failed for job {}: {}", job_id, e);
         }
 
-        let ws = get_websocket_client();
-        let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-        result.push_uint(job_id as u32);
-        result.push_string(JOB_COMPLETION_SOURCE);
-        result.push_uint(CANCELLED);
-        result.push_string("Job has been cancelled");
-        ws.queue_message(
-            job_id.to_string(),
-            result.get_data().clone(),
-            Priority::Medium,
+        queue_job_update(
+            job_id,
+            JOB_COMPLETION_SOURCE,
+            CANCELLED,
+            "Job has been cancelled",
         );
     });
 }
@@ -659,16 +640,11 @@ pub fn handle_job_delete(mut msg: Message) {
             );
 
             if job_model.id == 0 || job_model.deleted {
-                let ws = get_websocket_client();
-                let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-                result.push_uint(job_id as u32);
-                result.push_string(JOB_COMPLETION_SOURCE);
-                result.push_uint(DELETED);
-                result.push_string("Job has been deleted");
-                ws.queue_message(
-                    job_id.to_string(),
-                    result.get_data().clone(),
-                    Priority::Medium,
+                queue_job_update(
+                    job_id,
+                    JOB_COMPLETION_SOURCE,
+                    DELETED,
+                    "Job has been deleted",
                 );
             }
             return;
@@ -722,16 +698,11 @@ pub fn handle_job_delete(mut msg: Message) {
             error!("Failed to save job {} as deleted: {}", job_id, e);
         }
 
-        let ws = get_websocket_client();
-        let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-        result.push_uint(job_id as u32);
-        result.push_string(JOB_COMPLETION_SOURCE);
-        result.push_uint(DELETED);
-        result.push_string("Job has been deleted");
-        ws.queue_message(
-            job_id.to_string(),
-            result.get_data().clone(),
-            Priority::Medium,
+        queue_job_update(
+            job_id,
+            JOB_COMPLETION_SOURCE,
+            DELETED,
+            "Job has been deleted",
         );
     });
 }
