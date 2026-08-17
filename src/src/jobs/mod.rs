@@ -504,8 +504,12 @@ pub fn handle_job_cancel(mut msg: Message) {
     tokio::spawn(async move {
         let job_id = i64::from(msg.pop_uint());
 
-        let Ok(mut job_model) = db::get_or_create_by_job_id(job_id).await else {
-            return;
+        let mut job_model = match db::get_or_create_by_job_id(job_id).await {
+            Ok(j) => j,
+            Err(e) => {
+                error!("DB Error in handle_job_cancel: {}", e);
+                return;
+            }
         };
 
         if job_model.id == 0 || !job_model.running || job_model.submitting {
@@ -615,8 +619,12 @@ pub fn handle_job_delete(mut msg: Message) {
     tokio::spawn(async move {
         let job_id = i64::from(msg.pop_uint());
 
-        let Ok(mut job_model) = db::get_or_create_by_job_id(job_id).await else {
-            return;
+        let mut job_model = match db::get_or_create_by_job_id(job_id).await {
+            Ok(j) => j,
+            Err(e) => {
+                error!("DB Error in handle_job_delete: {}", e);
+                return;
+            }
         };
 
         if job_model.id == 0 || job_model.running || job_model.submitting || job_model.deleted {
