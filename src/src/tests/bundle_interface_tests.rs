@@ -11,7 +11,10 @@
 
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
-use crate::python_interface::{PyImport_ImportModule, PyObject_SetAttrString, PYTHON_MUTEX};
+use crate::python_interface::{
+    PyErr_Occurred, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject_SetAttrString,
+    Py_DecRef, PYTHON_MUTEX,
+};
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
@@ -752,6 +755,46 @@ fn test_json_loads_returns_null_when_loads_lookup_fails() {
                 obj.is_null(),
                 "json_loads should return NULL when json.loads is unavailable"
             );
+        }
+    }
+    inner();
+}
+
+/// A non-string `PyObject` (e.g. an int) makes `PyUnicode_AsUTF8` fail and set
+/// a `TypeError`. `to_string_py` must clear that stale error so it can't poison
+/// later `PyErr_Occurred` checks on the same sub-interpreter (e.g. in
+/// `bundle.run` / `json_loads`).
+#[test]
+fn test_to_string_py_clears_stale_error_for_non_string_object() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let int_obj = PyLong_FromUnsignedLongLong(42);
+            assert!(!int_obj.is_null(), "int object should be created");
+            let s = bundle.to_string_py(int_obj);
+            assert_eq!(s, "", "non-string object should convert to empty string");
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale TypeError from PyUnicode_AsUTF8 must be cleared"
+            );
+            Py_DecRef(int_obj);
         }
     }
     inner();
