@@ -710,7 +710,12 @@ pub fn handle_job_delete(mut msg: Message) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::messaging::DB_RESPONSE;
+    use crate::websocket::{
+        reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
+    };
     use serde_json::json;
+    use std::sync::Arc;
 
     #[test]
     #[serial_test::serial]
@@ -726,5 +731,100 @@ mod tests {
         assert_eq!(details["cluster"], "ozstar");
 
         *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+
+    fn make_job_model() -> job::Model {
+        job::Model {
+            id: 7,
+            job_id: Some(1234),
+            scheduler_id: Some(4321),
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: "old-hash".to_string(),
+            working_directory: "/old".to_string(),
+            running: true,
+            deleting: false,
+            deleted: false,
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reload_job_or_abort_reloads_job_when_found() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_uint(1);
+            resp.push_ulong(99);
+            resp.push_ulong(1234);
+            resp.push_ulong(4321);
+            resp.push_bool(false);
+            resp.push_uint(0);
+            resp.push_string("bundle-hash");
+            resp.push_string("/tmp/workdir");
+            resp.push_bool(false);
+            resp.push_bool(false);
+            resp.push_bool(false);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let mut job_model = make_job_model();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let aborted = rt.block_on(async { reload_job_or_abort(&mut job_model, 7, "cancel").await });
+
+        assert!(!aborted);
+        assert_eq!(job_model.id, 99);
+        assert_eq!(job_model.job_id, Some(1234));
+        assert_eq!(job_model.scheduler_id, Some(4321));
+        assert_eq!(job_model.bundle_hash, "bundle-hash");
+        assert_eq!(job_model.working_directory, "/tmp/workdir");
+        assert!(!job_model.running);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reload_job_or_abort_aborts_when_job_disappeared() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_uint(0);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let mut job_model = make_job_model();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let aborted = rt.block_on(async { reload_job_or_abort(&mut job_model, 7, "cancel").await });
+
+        assert!(aborted);
+        assert_eq!(job_model.id, 7);
+        assert_eq!(job_model.job_id, Some(1234));
+        assert!(job_model.running);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reload_job_or_abort_aborts_on_db_error() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::new(std::io::Error::other("db connection failed"))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let mut job_model = make_job_model();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let aborted = rt.block_on(async { reload_job_or_abort(&mut job_model, 7, "cancel").await });
+
+        assert!(aborted);
+        assert_eq!(job_model.id, 7);
+        assert_eq!(job_model.job_id, Some(1234));
+        assert!(job_model.running);
     }
 }
