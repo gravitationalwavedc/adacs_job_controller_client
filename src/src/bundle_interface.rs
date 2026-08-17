@@ -127,7 +127,11 @@ impl BundleInterface {
 
         // Create a new globals dict and enable the python builtins
         let p_global = PyDict_New();
-        PyDict_SetItemString(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
+        if PyDict_SetItemString(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins()) < 0 {
+            error!("Error setting __builtins__ in globals dict");
+            PyErr_Print();
+            return Err("Failed to set __builtins__ in globals dict".to_string());
+        }
 
         // Set up logging so print() works as expected (run the redirection script)
         let p_local = PyDict_New();
@@ -157,7 +161,11 @@ impl BundleInterface {
             PyErr_Print();
             return Err("Failed to import json module".to_string());
         }
-        PyDict_SetItemString(p_global, c"json".as_ptr(), json_module);
+        if PyDict_SetItemString(p_global, c"json".as_ptr(), json_module) < 0 {
+            error!("Error setting json module in globals dict");
+            PyErr_Print();
+            return Err("Failed to set json module in globals dict".to_string());
+        }
 
         // Load the traceback module
         debug!("BundleInterface::new importing traceback");

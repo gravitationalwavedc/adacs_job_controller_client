@@ -9,6 +9,7 @@
 //! bundle scripts and capture the structured log output to verify that
 //! the full stack trace is printed to the console.
 
+use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{PyImport_ImportModule, PyObject_SetAttrString, PYTHON_MUTEX};
@@ -798,6 +799,78 @@ fn test_run_bundle_json_returns_error_object_for_non_serializable_result() {
                 .as_str()
                 .is_some_and(|s| s.contains("Failed to serialize result")),
             "expected serialization-failure message, got: {result}"
+        );
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST for `BundleInterface::new` — reviewer request on
+/// MR !220 ("Needs coverage." / "Please test the new branches.").
+///
+/// Success path: a valid bundle script on disk loads and `new` returns a
+/// `BundleInterface` whose hash matches the requested bundle. This runs
+/// through both new `PyDict_SetItemString` branches (setting `__builtins__`
+/// and the `json` module in the globals dict).
+#[test]
+fn test_bundle_interface_new_success() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle =
+            unsafe { BundleInterface::new(&bundle_hash, &path_root) }.expect("bundle should load");
+        assert_eq!(bundle.bundle_hash(), bundle_hash);
+    }
+    inner();
+}
+
+/// A NUL byte in the bundle path root makes `CString::new` fail, so
+/// `BundleInterface::new` must return the "Bundle path contains NUL byte"
+/// error instead of panicking. The constructor runs all the way through the
+/// globals dict creation (including the new `PyDict_SetItemString`
+/// `__builtins__` branch) before hitting this error.
+#[test]
+fn test_bundle_interface_new_nul_byte_in_path_root() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let bundle_hash = Uuid::new_v4().to_string();
+
+        let result = unsafe { BundleInterface::new(&bundle_hash, "bad\0path") };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Bundle path contains NUL byte"),
+            "NUL byte in the bundle path root should be rejected"
+        );
+    }
+    inner();
+}
+
+/// A bundle hash with no `bundle.py` on disk makes the bundle module import
+/// fail, so `BundleInterface::new` must return the "Failed to load bundle
+/// module" error. This runs through both new `PyDict_SetItemString` branches
+/// (setting `__builtins__` and the `json` module) before the import fails.
+#[test]
+fn test_bundle_interface_new_missing_bundle_module() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to load bundle module"),
+            "missing bundle module should fail with 'Failed to load bundle module'"
         );
     }
     inner();
