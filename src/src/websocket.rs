@@ -1897,4 +1897,106 @@ mod tests {
             () = tokio::time::sleep(Duration::from_millis(50)) => panic!("Current connection should have been notified"),
         }
     }
+
+    #[tokio::test]
+    async fn test_handle_disconnect_tears_down_state_and_clears_queues() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(7, Ordering::SeqCst);
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+        client.reconnectable.store(true, Ordering::SeqCst);
+        client.queue_message("db".to_string(), vec![1, 2, 3], Priority::Highest);
+        client.queue_message("src".to_string(), vec![4, 5], Priority::Medium);
+
+        let disconnect_notify = Arc::new(Notify::new());
+        let notified = disconnect_notify.notified();
+
+        client.handle_disconnect(7, &disconnect_notify);
+
+        assert!(
+            client.is_connection_closed(),
+            "connection_closed should be set"
+        );
+        assert!(!client.is_server_ready(), "server_ready should be cleared");
+        for priority in &client.queue {
+            let map = priority.lock();
+            assert!(
+                map.values().all(VecDeque::is_empty),
+                "queued messages should be cleared on disconnect"
+            );
+        }
+        tokio::time::timeout(Duration::from_millis(100), notified)
+            .await
+            .expect("disconnect waiters should be notified");
+    }
+
+    #[tokio::test]
+    async fn test_handle_disconnect_drops_pending_db_request_promises() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(7, Ordering::SeqCst);
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+        client.reconnectable.store(true, Ordering::SeqCst);
+
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut promises = client.db_request_promises.write();
+            promises.insert(1, tx);
+            promises.insert(2, oneshot::channel().0);
+        }
+
+        client.handle_disconnect(7, &Arc::new(Notify::new()));
+
+        assert!(
+            client.db_request_promises.read().is_empty(),
+            "pending DB request promises should be dropped on disconnect"
+        );
+        assert!(
+            rx.await.is_err(),
+            "caller should observe a closed oneshot channel"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_disconnect_ignores_stale_connection_id() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(7, Ordering::SeqCst);
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+        client.queue_message("db".to_string(), vec![1], Priority::Highest);
+        let (tx, _rx) = oneshot::channel();
+        {
+            let mut promises = client.db_request_promises.write();
+            promises.insert(1, tx);
+        }
+
+        let disconnect_notify = Arc::new(Notify::new());
+        let notified = disconnect_notify.notified();
+
+        client.handle_disconnect(6, &disconnect_notify);
+
+        assert!(
+            !client.is_connection_closed(),
+            "stale connection id must not close the connection"
+        );
+        assert!(
+            client.is_server_ready(),
+            "stale connection id must not clear server_ready"
+        );
+        assert_eq!(
+            client.db_request_promises.read().len(),
+            1,
+            "stale connection id must not drop pending promises"
+        );
+        assert!(
+            client.queue[Priority::Highest as usize]
+                .lock()
+                .get("db")
+                .is_some(),
+            "stale connection id must not clear queued messages"
+        );
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .expect_err("stale connection id must not notify disconnect waiters");
+    }
 }
