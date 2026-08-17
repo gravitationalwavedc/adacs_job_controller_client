@@ -572,27 +572,35 @@ impl BundleInterface {
                         type_name
                     );
                 } else {
-                    PyTuple_SetItem(tb_args, 0, traceback); // steals the ref
-                    let tb_lines = PyObject_CallObject(tb_func, tb_args);
-                    let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
-                    if tb_ok {
-                        error!("Traceback (most recent call last):");
-                        log_python_lines(tb_lines);
-                        Py_DecRef(tb_lines);
+                    // On failure PyTuple_SetItem releases the item reference itself, so we
+                    // must not Py_DecRef the item again here.
+                    if PyTuple_SetItem(tb_args, 0, traceback) < 0 {
+                        error!("Error setting traceback in args tuple");
+                        PyErr_Print();
+                        Py_DecRef(tb_args);
+                        Py_XDECREF(tb_func);
                     } else {
-                        error!(
-                            "Error formatting python traceback frames (type was {})",
-                            type_name
-                        );
-                        if !tb_lines.is_null() {
+                        let tb_lines = PyObject_CallObject(tb_func, tb_args);
+                        let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
+                        if tb_ok {
+                            error!("Traceback (most recent call last):");
+                            log_python_lines(tb_lines);
                             Py_DecRef(tb_lines);
+                        } else {
+                            error!(
+                                "Error formatting python traceback frames (type was {})",
+                                type_name
+                            );
+                            if !tb_lines.is_null() {
+                                Py_DecRef(tb_lines);
+                            }
+                            swallow_python_error();
                         }
-                        swallow_python_error();
+                        // tb_args stole the `traceback` ref; releasing the tuple
+                        // decrefs traceback too. Safe in both success and failure.
+                        Py_DecRef(tb_args);
+                        Py_XDECREF(tb_func);
                     }
-                    // tb_args stole the `traceback` ref; releasing the tuple
-                    // decrefs traceback too. Safe in both success and failure.
-                    Py_DecRef(tb_args);
-                    Py_XDECREF(tb_func);
                 }
             }
         }
@@ -630,17 +638,44 @@ impl BundleInterface {
                     fallback_value_text(&value_display, &value_str)
                 );
             } else {
-                PyTuple_SetItem(eo_args, 0, extype); // steals the ref
-                                                     // `format_exception_only` still expects an exception-like object
-                                                     // on modern Python, so raw-string values may make it fail. We
-                                                     // keep a manual fallback below. Pass `Py_None` only when the
-                                                     // fetched value is literally NULL.
+                // On failure PyTuple_SetItem releases the item reference itself, so we
+                // must not Py_DecRef the item again here.
+                if PyTuple_SetItem(eo_args, 0, extype) < 0 {
+                    error!("Error setting exception type in args tuple");
+                    PyErr_Print();
+                    Py_DecRef(eo_args);
+                    // `value` has not been consumed by any SetItem yet; release it
+                    // so it is not leaked.
+                    Py_XDECREF(value);
+                    Py_XDECREF(eo_func);
+                    return;
+                }
+                // `format_exception_only` still expects an exception-like object
+                // on modern Python, so raw-string values may make it fail. We
+                // keep a manual fallback below. Pass `Py_None` only when the
+                // fetched value is literally NULL.
                 if value.is_null() {
                     let none = my_py_none_struct();
                     Py_IncRef(none);
-                    PyTuple_SetItem(eo_args, 1, none);
+                    // On failure PyTuple_SetItem releases the item reference itself, so we
+                    // must not Py_DecRef the item again here.
+                    if PyTuple_SetItem(eo_args, 1, none) < 0 {
+                        error!("Error setting exception value in args tuple");
+                        PyErr_Print();
+                        Py_DecRef(eo_args);
+                        Py_XDECREF(eo_func);
+                        return;
+                    }
                 } else {
-                    PyTuple_SetItem(eo_args, 1, value); // steals the ref
+                    // On failure PyTuple_SetItem releases the item reference itself, so we
+                    // must not Py_DecRef the item again here.
+                    if PyTuple_SetItem(eo_args, 1, value) < 0 {
+                        error!("Error setting exception value in args tuple");
+                        PyErr_Print();
+                        Py_DecRef(eo_args);
+                        Py_XDECREF(eo_func);
+                        return;
+                    }
                 }
                 let eo_lines = PyObject_CallObject(eo_func, eo_args);
                 let eo_ok = !eo_lines.is_null() && PyErr_Occurred().is_null();
