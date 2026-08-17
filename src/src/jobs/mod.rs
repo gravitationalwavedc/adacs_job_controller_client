@@ -426,7 +426,14 @@ pub async fn check_all_jobs_status() {
     );
     let total = handles.len();
     for (idx, handle) in handles.into_iter().enumerate() {
-        let _ = handle.await;
+        if let Err(e) = handle.await {
+            warn!(
+                "check_all_jobs_status: status check {}/{} panicked: {}",
+                idx + 1,
+                total,
+                e
+            );
+        }
         debug!(
             "check_all_jobs_status: status check {}/{} completed after {:?}",
             idx + 1,
