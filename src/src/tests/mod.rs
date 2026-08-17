@@ -62,6 +62,8 @@ pub fn init_python_global() {
                 Some(crate::bundle_logging::PyInit_bundlelogging),
             );
         }
-        crate::python_interface::init_python();
+        if let Err(e) = crate::python_interface::init_python() {
+            panic!("Failed to initialize Python: {e}");
+        }
     });
 }
