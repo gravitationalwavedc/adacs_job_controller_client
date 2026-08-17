@@ -1733,6 +1733,34 @@ mod tests {
     }
 
     #[test]
+    fn test_does_higher_priority_data_exist_scan_window() {
+        let client = TungsteniteWebsocketClient::new();
+
+        // Empty queues: nothing is higher than any window.
+        assert!(!client.does_higher_priority_data_exist(1));
+        assert!(!client.does_higher_priority_data_exist(2));
+
+        // Data at priority 1 is only visible when the scan window includes it.
+        {
+            let mut map = client.queue[1].lock();
+            map.insert("p1".to_string(), VecDeque::from(vec![vec![1]]));
+        }
+        assert!(
+            !client.does_higher_priority_data_exist(1),
+            "window 1 scans only priority 0, so p1 is invisible"
+        );
+        assert!(
+            client.does_higher_priority_data_exist(2),
+            "window 2 scans priorities 0 and 1, so p1 is visible"
+        );
+
+        // Highest-priority data is visible to any window > 0.
+        client.queue_message("p0".to_string(), vec![0], Priority::Highest);
+        assert!(client.does_higher_priority_data_exist(1));
+        assert!(client.does_higher_priority_data_exist(2));
+    }
+
+    #[test]
     fn test_does_higher_priority_data_exist_skips_contended_priorities() {
         let client = TungsteniteWebsocketClient::new();
 
