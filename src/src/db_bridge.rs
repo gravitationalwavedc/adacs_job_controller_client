@@ -44,9 +44,16 @@ impl DbBridge {
                         let ws_client = get_websocket_client();
                         if ws_client.is_connection_closed() || !ws_client.is_server_ready() {
                             warn!("DbBridge: WebSocket disconnected - rejecting request #{} (msg_id={})", request_count, msg_id);
-                            let _ = req.response_tx.send(Err(
-                                "DB request error: WebSocket is disconnected".to_string(),
-                            ));
+                            if req
+                                .response_tx
+                                .send(Err("DB request error: WebSocket is disconnected".to_string()))
+                                .is_err()
+                            {
+                                warn!(
+                                    "DbBridge: failed to deliver error response for request #{} (msg_id={}) - caller dropped receiver",
+                                    request_count, msg_id
+                                );
+                            }
                             continue;
                         }
 
@@ -75,7 +82,12 @@ impl DbBridge {
                         if let Err(ref e) = result {
                             warn!("DbBridge: sending error response for request #{}: {}", request_count, e);
                         }
-                        let _ = req.response_tx.send(result);
+                        if req.response_tx.send(result).is_err() {
+                            warn!(
+                                "DbBridge: failed to deliver response for request #{} (msg_id={}) - caller dropped receiver",
+                                request_count, msg_id
+                            );
+                        }
                         trace!("DbBridge: response sent for request #{}", request_count);
                     } else {
                         debug!("DbBridge: channel closed, exiting");
