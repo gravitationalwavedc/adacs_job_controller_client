@@ -730,6 +730,7 @@ mod tests {
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
     use flate2::read::GzDecoder;
+    use mockall::predicate::{always, eq};
     use serde_json::json;
     use std::sync::Arc;
     use tar::Archive;
@@ -1116,5 +1117,28 @@ mod tests {
         let archive_path = missing.join(ARCHIVE_FILE_NAME);
 
         assert!(archive_dir(&missing, &archive_path).is_err());
+    }
+
+    #[test]
+    fn queue_job_update_queues_update_job_wire_format() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_queue_message()
+            .with(always(), always(), eq(Priority::Medium))
+            .times(1)
+            .returning(|source, data, priority| {
+                assert_eq!(source, "42");
+                assert_eq!(priority, Priority::Medium);
+                let mut msg = Message::from_data(data);
+                assert_eq!(msg.id, UPDATE_JOB);
+                assert_eq!(msg.source, "42");
+                assert_eq!(msg.pop_uint(), 42);
+                assert_eq!(msg.pop_string(), SYSTEM_SOURCE);
+                assert_eq!(msg.pop_uint(), ERROR);
+                assert_eq!(msg.pop_string(), "Job has failed");
+            });
+        set_websocket_client(Arc::new(mock));
+
+        queue_job_update(42, SYSTEM_SOURCE, ERROR, "Job has failed");
     }
 }
