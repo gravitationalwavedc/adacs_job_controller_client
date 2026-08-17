@@ -642,7 +642,12 @@ fn handle_file_upload_internal(
 
         // Create parent directories if needed
         if let Some(parent) = full_path.parent() {
-            let _ = fs::create_dir_all(parent).await;
+            if let Err(e) = fs::create_dir_all(parent).await {
+                warn!(
+                    "handle_file_upload_internal: Failed to create parent directory {:?}: {}",
+                    parent, e
+                );
+            }
         }
 
         let mut file = match File::create(&full_path).await {
