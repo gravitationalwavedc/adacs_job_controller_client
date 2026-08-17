@@ -558,10 +558,16 @@ impl TungsteniteWebsocketClient {
             let last = self.last_update_check.load(Ordering::SeqCst);
             if now.saturating_sub(last) >= UPDATE_CHECK_INTERVAL_MS {
                 self.last_update_check.store(now, Ordering::SeqCst);
-                let _ = tokio::task::spawn_blocking(move || {
+                tokio::task::spawn_blocking(move || {
                     crate::update_check::check_for_updates();
                 })
-                .await;
+                .await
+                .unwrap_or_else(|e| {
+                    warn!(
+                        "check_for_updates_on_reconnect: spawn_blocking error: {}",
+                        e
+                    );
+                });
             }
         }
     }
