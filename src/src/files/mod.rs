@@ -899,10 +899,32 @@ async fn validate_path_is_within(target_path: &Path, working_directory: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::messaging::UPLOAD_FILE;
+    use crate::messaging::{DB_RESPONSE, UPLOAD_FILE};
+    use crate::websocket::{
+        reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
+    };
     use std::fs;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
     use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn make_job_lookup_response(submitting: bool, working_directory: &str) -> Message {
+        let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        resp.push_uint(1);
+        resp.push_ulong(11);
+        resp.push_ulong(22);
+        resp.push_ulong(33);
+        resp.push_bool(submitting);
+        resp.push_uint(4);
+        resp.push_string("bundle-hash");
+        resp.push_string(working_directory);
+        resp.push_bool(true);
+        resp.push_bool(false);
+        resp.push_bool(false);
+        resp
+    }
 
     fn run_validate(target: &Path, working_dir: &str) -> bool {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1177,5 +1199,88 @@ mod tests {
 
             assert!(sink.sent.is_empty());
         });
+    }
+
+    #[test]
+    fn lookup_job_working_directory_returns_dir_for_submitted_job() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let resp = make_job_lookup_response(false, "/data/workdir");
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = rt.block_on(async { lookup_job_working_directory(22).await });
+
+        match dir {
+            Ok(dir) => assert_eq!(dir, "/data/workdir"),
+            Err(err) => panic!("expected working directory, got: {}", err.client_message()),
+        }
+    }
+
+    #[test]
+    fn lookup_job_working_directory_rejects_submitting_job() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let resp = make_job_lookup_response(true, "/data/workdir");
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(async { lookup_job_working_directory(22).await })
+            .unwrap_err();
+
+        assert!(matches!(err, JobLookupError::NotSubmitted));
+        assert_eq!(err.client_message(), "Job is not submitted");
+    }
+
+    #[test]
+    fn lookup_job_working_directory_reports_missing_job() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_uint(0);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(async { lookup_job_working_directory(22).await })
+            .unwrap_err();
+
+        assert!(matches!(err, JobLookupError::NotFound));
+        assert_eq!(err.client_message(), "Job does not exist");
+    }
+
+    #[test]
+    fn lookup_job_working_directory_maps_db_error() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::new(std::io::Error::other("db connection failed"))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(async { lookup_job_working_directory(22).await })
+            .unwrap_err();
+
+        assert!(matches!(err, JobLookupError::Database(_)));
+        assert_eq!(err.client_message(), "Database error: db connection failed");
     }
 }
