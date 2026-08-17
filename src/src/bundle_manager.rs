@@ -68,6 +68,21 @@ impl BundleManager {
         }
     }
 
+    /// Reset the test singleton to the uninitialized state so a test can exercise
+    /// the `BundleManager::singleton()` panic path (tests run --test-threads=1).
+    #[cfg(test)]
+    pub fn reset_singleton_for_test() {
+        let ptr = SINGLETON_TEST.swap(std::ptr::null_mut(), std::sync::atomic::Ordering::SeqCst);
+        if !ptr.is_null() {
+            // SAFETY: `ptr` was set by a previous `initialize` call in this same test
+            // process and is no longer accessible to any other thread (tests run
+            // --test-threads=1).
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
+        }
+    }
+
     /// Load (or return cached) `BundleInterface` for a given hash.
     /// Mirrors C++ `BundleManager::loadBundle()`.
     pub fn load_bundle(&self, bundle_hash: &str) -> Result<BundleInterface, String> {
@@ -404,6 +419,32 @@ impl BundleManager {
     }
 }
 
+/// Resolve a job's working directory by running the bundle's `working_directory`
+/// function off the async executor. Mirrors the C++ daemon's behaviour.
+pub async fn resolve_working_directory(
+    bundle_hash: &str,
+    details: Value,
+    job_data: &str,
+    context: &str,
+) -> String {
+    let bundle_hash = bundle_hash.to_string();
+    let job_data = job_data.to_string();
+    let context = context.to_string();
+    tokio::task::spawn_blocking(move || {
+        BundleManager::singleton().run_bundle_string(
+            "working_directory",
+            &bundle_hash,
+            &details,
+            &job_data,
+        )
+    })
+    .await
+    .unwrap_or_else(|e| {
+        error!("{}: spawn_blocking error: {}", context, e);
+        String::new()
+    })
+}
+
 pub fn get_executable_path() -> PathBuf {
     std::env::current_exe().unwrap_or_default()
 }
@@ -459,5 +500,44 @@ mod load_bundle_tests {
 
         // Both should reference the same inner Arc (cache hit, not re-loaded)
         assert_eq!(first.bundle_hash(), second.bundle_hash());
+    }
+}
+
+#[cfg(test)]
+mod resolve_working_directory_tests {
+    use super::*;
+    use crate::tests::fixtures::bundle_fixture::{BundleFixture, JOB_SUBMIT_SCRIPT};
+    use serde_json::json;
+
+    #[test]
+    fn resolve_working_directory_returns_bundle_working_directory() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = "test_resolve_working_directory";
+        fixture.write_script(bundle_hash, JOB_SUBMIT_SCRIPT, &[]);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(resolve_working_directory(
+            bundle_hash,
+            json!({}),
+            "",
+            "test",
+        ));
+        assert_eq!(result, "WORKING_DIR");
+    }
+
+    #[test]
+    fn resolve_working_directory_returns_empty_string_on_spawn_blocking_failure() {
+        BundleManager::reset_singleton_for_test();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(resolve_working_directory(
+            "uninitialized_hash",
+            json!({}),
+            "",
+            "test",
+        ));
+        assert_eq!(result, "");
     }
 }
