@@ -133,7 +133,10 @@ impl DbBridge {
                 msg,
                 response_tx: tx,
             })
-            .map_err(|_| "DbBridge channel closed — bridge thread may have panicked".to_string())?;
+            .map_err(|_| {
+                self.queue_depth.fetch_sub(1, Ordering::SeqCst);
+                "DbBridge channel closed — bridge thread may have panicked".to_string()
+            })?;
         trace!("DbBridge: request sent to channel");
         let result_start = std::time::Instant::now();
         let result = rx
@@ -313,6 +316,32 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(err.contains("DB request error: mock send failure"));
+    }
+
+    #[test]
+    fn test_db_bridge_decrements_queue_depth_when_channel_closed() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<DbRequest>(1);
+        drop(rx);
+        let queue_depth = Arc::new(AtomicUsize::new(0));
+        let bridge = DbBridge {
+            request_tx: tx,
+            queue_depth: Arc::clone(&queue_depth),
+        };
+
+        let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
+        let result = bridge.send(msg);
+
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.contains("DbBridge channel closed"),
+            "expected channel-closed error, got: {err}"
+        );
+        assert_eq!(
+            queue_depth.load(Ordering::SeqCst),
+            0,
+            "queue_depth should be decremented back to 0 after a failed send"
+        );
     }
 
     #[test]
