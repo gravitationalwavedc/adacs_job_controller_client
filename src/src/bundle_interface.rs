@@ -217,7 +217,12 @@ impl BundleInterface {
         let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
             .map_err(|_| "Bundle path contains NUL byte".to_string())?;
         let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
-        PyList_Append(p_path, p_bundle_path);
+        if PyList_Append(p_path, p_bundle_path) == -1 {
+            error!("Error appending bundle path to sys.path");
+            PyErr_Print();
+            Py_DecRef(p_bundle_path);
+            return Err("Failed to append bundle path to sys.path".to_string());
+        }
         Py_DecRef(p_bundle_path);
         Ok(())
     }
@@ -837,6 +842,26 @@ mod append_bundle_path_to_sys_path_tests {
             assert!(
                 result.is_err(),
                 "NULL sys.path should make append return Err"
+            );
+        }
+    }
+
+    #[test]
+    fn returns_err_when_pylist_append_fails() {
+        let bundle = load_test_bundle();
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let p_not_a_list = PyTuple_New(0);
+            assert!(!p_not_a_list.is_null(), "PyTuple_New should succeed");
+            let result = BundleInterface::append_bundle_path_to_sys_path(
+                p_not_a_list,
+                Path::new("/some/bundle/path"),
+            );
+            Py_DecRef(p_not_a_list);
+            assert!(
+                result.is_err(),
+                "non-list sys.path should make append return Err"
             );
         }
     }
