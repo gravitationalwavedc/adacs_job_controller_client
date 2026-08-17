@@ -371,6 +371,133 @@ def submit(details, job_data):
     inner();
 }
 
+/// REGRESSION TEST (reference-leak fix in `print_last_python_exception`).
+///
+/// Covers the branch where `PyObject_GetAttrString(traceback_module,
+/// "format_tb")` returns NULL (here forced by deleting `traceback.format_tb`
+/// in the bundle). The fix releases the `traceback` ref that `PyErr_Fetch`
+/// returned, since `tb_args` was never created to steal it. Behaviorally the
+/// printer must still emit the exception header via `format_exception_only`
+/// and must NOT emit traceback frames (the formatter is unavailable).
+#[test]
+fn test_print_last_python_exception_releases_traceback_when_format_tb_missing() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        // Delete traceback.format_tb so the attribute lookup inside
+        // print_last_python_exception fails and hits the is_null() branch.
+        let script = r#"
+import traceback
+del traceback.format_tb
+
+def submit(details, job_data):
+    raise RuntimeError("format_tb missing for leak regression test")
+"#;
+        fixture.write_raw_script(&bundle_hash, script);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let logs = capture_logs(|| {
+            let _ = BundleManager::singleton().run_bundle_json(
+                "submit",
+                &bundle_hash,
+                &serde_json::json!({}),
+                "",
+            );
+        });
+
+        // 1. The exception printer was reached.
+        assert!(
+            logs.contains("Python exception: type="),
+            "expected 'Python exception: type=' in logs, got:\n{logs}"
+        );
+
+        // 2. format_tb was unavailable, so no traceback frames are printed.
+        assert!(
+            !logs.contains("Traceback (most recent call last):"),
+            "did not expect traceback header when traceback.format_tb is missing, got:\n{logs}"
+        );
+
+        // 3. The final exception header still comes through via
+        //    format_exception_only (which is untouched by this test).
+        assert!(
+            logs.contains("RuntimeError: format_tb missing for leak regression test"),
+            "expected final exception header in logs, got:\n{logs}"
+        );
+    }
+    inner();
+}
+
+/// REGRESSION TEST (reference-leak fix in `print_last_python_exception`).
+///
+/// Covers the branch where `PyObject_GetAttrString(traceback_module,
+/// "format_exception_only")` returns NULL (here forced by deleting
+/// `traceback.format_exception_only` in the bundle). The fix releases the
+/// `extype` and `value` refs that `PyErr_Fetch` returned, since `eo_args`
+/// was never created to steal them. Behaviorally the printer must still
+/// emit the synthesized `type: value` fallback line.
+#[test]
+fn test_print_last_python_exception_releases_exception_when_format_exception_only_missing() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        // Delete traceback.format_exception_only so the attribute lookup
+        // inside print_last_python_exception fails and hits the is_null()
+        // branch.
+        let script = r#"
+import traceback
+del traceback.format_exception_only
+
+def submit(details, job_data):
+    raise RuntimeError("format_exception_only missing for leak regression test")
+"#;
+        fixture.write_raw_script(&bundle_hash, script);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let logs = capture_logs(|| {
+            let _ = BundleManager::singleton().run_bundle_json(
+                "submit",
+                &bundle_hash,
+                &serde_json::json!({}),
+                "",
+            );
+        });
+
+        // 1. The exception printer was reached.
+        assert!(
+            logs.contains("Python exception: type="),
+            "expected 'Python exception: type=' in logs, got:\n{logs}"
+        );
+
+        // 2. format_tb is untouched, so the traceback frames are printed.
+        assert!(
+            logs.contains("Traceback (most recent call last):"),
+            "expected traceback header in logs, got:\n{logs}"
+        );
+
+        // 3. format_exception_only is unavailable, so the synthesized
+        //    fallback line must be emitted instead.
+        assert!(
+            logs.contains("RuntimeError: format_exception_only missing for leak regression test"),
+            "expected synthesized fallback exception line in logs, got:\n{logs}"
+        );
+    }
+    inner();
+}
+
 #[test]
 fn test_bundle_load_failure_no_panic() {
     #[tokio::main(flavor = "current_thread")]
