@@ -406,6 +406,11 @@ impl BundleInterface {
         }
 
         let p_args = PyTuple_New(1);
+        if p_args.is_null() {
+            error!("json_loads: failed to create arguments tuple");
+            Py_XDECREF(p_func);
+            return std::ptr::null_mut();
+        }
         let c_content = match CString::new(content) {
             Ok(c) => c,
             Err(e) => {
