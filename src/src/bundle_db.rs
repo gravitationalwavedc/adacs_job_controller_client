@@ -201,6 +201,37 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
     Some((bundle_hash, job_id, job_data))
 }
 
+/// Set `job_id` in a Python dict, handling a failed `PyLong_FromUnsignedLongLong`
+/// allocation. Returns `false` (and sets the Python error) when `value` is NULL.
+///
+/// `context` names the caller for the error log (e.g. `"create_or_update_job"`).
+///
+/// # Safety
+/// `dict` must be a valid dict object; `value` is either NULL or a valid
+/// `PyObject` reference owned by the caller; `error_obj` must be a valid
+/// exception object.
+unsafe fn set_job_id_in_dict(
+    dict: *mut PyObject,
+    value: *mut PyObject,
+    context: &str,
+    bundle_hash: &str,
+    job_id: u64,
+    error_obj: *mut PyObject,
+) -> bool {
+    if value.is_null() {
+        error!(
+            "DB: {} failed to allocate job_id for bundle hash: {}, jobId: {}",
+            context, bundle_hash, job_id
+        );
+        let err_msg = err_cstring("Failed to allocate job_id");
+        PyErr_SetString(error_obj, err_msg.as_ptr());
+        return false;
+    }
+    PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
+    Py_DecRef(value);
+    true
+}
+
 // SAFETY: Called by Python C API with a valid `args` tuple pointer.
 // All FFI calls (PyTuple_GetItem, PyDict_SetItemString, PyLong_*, etc.)
 // operate on pointers derived from `args` or freshly created Python objects.
@@ -254,8 +285,16 @@ unsafe extern "C" fn create_or_update_job(
 
             // Set job_id in the original dict (matches C++ exactly)
             let value = PyLong_FromUnsignedLongLong(new_job_id);
-            PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
-            Py_DecRef(value);
+            if !set_job_id_in_dict(
+                dict,
+                value,
+                "create_or_update_job",
+                &bundle_hash,
+                new_job_id,
+                error_obj,
+            ) {
+                return ptr::null_mut();
+            }
 
             debug!("DB: create_or_update_job res - jobId: {}", new_job_id);
 
@@ -332,8 +371,16 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 
             // Set job_id in the dict
             let value = PyLong_FromUnsignedLongLong(job_id);
-            PyDict_SetItemString(dict, c"job_id".as_ptr(), value);
-            Py_DecRef(value);
+            if !set_job_id_in_dict(
+                dict,
+                value,
+                "get_job_by_id",
+                &bundle_hash,
+                job_id,
+                error_obj,
+            ) {
+                return ptr::null_mut();
+            }
 
             dict
         }
@@ -582,5 +629,66 @@ mod tests {
 
         let err = parse_get_job_by_id_response(&response, 9).unwrap_err();
         assert_eq!(err, "Job with ID 9 does not exist.");
+    }
+
+    #[test]
+    fn set_job_id_in_dict_returns_false_and_sets_error_on_null_value() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_set_job_id_null";
+        fixture.write_bundle_db_create_or_update_job(bundle_hash, r#"{"test": 1}"#);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        let bundle = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let dict = crate::python_interface::PyDict_New();
+            let error_obj = get_bundle_db_error(bundle_hash);
+            let ok = set_job_id_in_dict(
+                dict,
+                ptr::null_mut(),
+                "create_or_update_job",
+                bundle_hash,
+                42,
+                error_obj,
+            );
+            assert!(!ok, "null value should report failure");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "Python error should be set"
+            );
+            crate::python_interface::PyErr_Clear();
+            crate::python_interface::Py_DecRef(dict);
+        }
+    }
+
+    #[test]
+    fn set_job_id_in_dict_sets_job_id_on_success() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_set_job_id_success";
+        fixture.write_bundle_db_create_or_update_job(bundle_hash, r#"{"test": 1}"#);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        let bundle = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let dict = crate::python_interface::PyDict_New();
+            let value = PyLong_FromUnsignedLongLong(42);
+            let error_obj = get_bundle_db_error(bundle_hash);
+            let ok = set_job_id_in_dict(dict, value, "get_job_by_id", bundle_hash, 42, error_obj);
+            assert!(ok, "valid value should succeed");
+            assert!(
+                crate::python_interface::PyErr_Occurred().is_null(),
+                "no Python error should be set"
+            );
+            crate::python_interface::Py_DecRef(dict);
+        }
     }
 }
