@@ -1,4 +1,4 @@
-use crate::bundle_manager::BundleManager;
+use crate::bundle_manager::{resolve_working_directory, BundleManager};
 use crate::config::read_client_config;
 use crate::db::{self, job, jobstatus};
 use crate::messaging::{
@@ -129,21 +129,8 @@ pub fn handle_job_submit(mut msg: Message) {
             "handle_job_submit: resolving working directory for ui job id {} via bundle {}",
             job_id, bundle_hash
         );
-        let bundle_hash_clone = bundle_hash.clone();
-        let details_clone = details.clone();
-        let working_dir = tokio::task::spawn_blocking(move || {
-            BundleManager::singleton().run_bundle_string(
-                "working_directory",
-                &bundle_hash_clone,
-                &details_clone,
-                "",
-            )
-        })
-        .await
-        .unwrap_or_else(|e| {
-            error!("handle_job_submit: spawn_blocking error: {}", e);
-            String::new()
-        });
+        let working_dir =
+            resolve_working_directory(&bundle_hash, details.clone(), "", "handle_job_submit").await;
         debug!(
             "handle_job_submit: resolved working directory for ui job id {}: {}",
             job_id, working_dir
