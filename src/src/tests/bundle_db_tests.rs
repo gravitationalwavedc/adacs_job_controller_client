@@ -1,5 +1,8 @@
+use crate::bundle_db::{create_or_update_job, delete_job, get_job_by_id};
+use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
+use crate::python_interface::{PyTuple_New, Py_DecRef, PYTHON_MUTEX};
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::sync::Arc;
@@ -300,6 +303,118 @@ fn test_delete_job_failure_job_id_must_be_provided() {
             .as_str()
             .unwrap()
             .contains("Job ID must be provided."));
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST for the `PyTuple_GetItem` null-guard branches in the
+/// `_bundledb` FFI callbacks — reviewer request on MR !202 ("Please test the
+/// new branches."). Calling `create_or_update_job` with an empty args tuple
+/// makes `PyTuple_GetItem(args, 0)` return NULL, exercising the early-return
+/// guard that prevents a wrong-arity call from segfaulting the daemon.
+#[test]
+fn test_create_or_update_job_rejects_empty_args() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        let bundle =
+            unsafe { BundleInterface::new(&bundle_hash, &path_root) }.expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and the ThreadScope acquires the GIL for
+        // the bundle's sub-interpreter, so the Python C-API calls below are valid.
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let empty_args = PyTuple_New(0);
+            assert!(!empty_args.is_null(), "PyTuple_New(0) should succeed");
+            let result = create_or_update_job(std::ptr::null_mut(), empty_args);
+            Py_DecRef(empty_args);
+            assert!(
+                result.is_null(),
+                "empty args tuple should hit the invalid-arguments guard"
+            );
+        }
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST for the `PyTuple_GetItem` null-guard branch in
+/// `get_job_by_id` — reviewer request on MR !202 ("Please test the new
+/// branches."). An empty args tuple makes `PyTuple_GetItem(args, 0)` return
+/// NULL, so the callback must return null instead of dereferencing the result.
+#[test]
+fn test_get_job_by_id_rejects_empty_args() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        let bundle =
+            unsafe { BundleInterface::new(&bundle_hash, &path_root) }.expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and the ThreadScope acquires the GIL for
+        // the bundle's sub-interpreter, so the Python C-API calls below are valid.
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let empty_args = PyTuple_New(0);
+            assert!(!empty_args.is_null(), "PyTuple_New(0) should succeed");
+            let result = get_job_by_id(std::ptr::null_mut(), empty_args);
+            Py_DecRef(empty_args);
+            assert!(
+                result.is_null(),
+                "empty args tuple should hit the invalid-arguments guard"
+            );
+        }
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST for the `PyTuple_GetItem` null-guard branch in
+/// `delete_job` — reviewer request on MR !202 ("Please test the new branches.").
+/// An empty args tuple makes `PyTuple_GetItem(args, 0)` return NULL, so the
+/// callback must return null instead of dereferencing the result.
+#[test]
+fn test_delete_job_rejects_empty_args() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        let bundle =
+            unsafe { BundleInterface::new(&bundle_hash, &path_root) }.expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and the ThreadScope acquires the GIL for
+        // the bundle's sub-interpreter, so the Python C-API calls below are valid.
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let empty_args = PyTuple_New(0);
+            assert!(!empty_args.is_null(), "PyTuple_New(0) should succeed");
+            let result = delete_job(std::ptr::null_mut(), empty_args);
+            Py_DecRef(empty_args);
+            assert!(
+                result.is_null(),
+                "empty args tuple should hit the invalid-arguments guard"
+            );
+        }
     }
     inner();
 }

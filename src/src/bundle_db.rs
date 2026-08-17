@@ -166,7 +166,7 @@ fn err_cstring(msg: &str) -> CString {
 // All FFI calls (PyTuple_GetItem, PyDict_SetItemString, PyLong_*, etc.)
 // operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn create_or_update_job(
+pub unsafe extern "C" fn create_or_update_job(
     _self: *mut PyObject,
     args: *mut PyObject,
 ) -> *mut PyObject {
@@ -264,7 +264,7 @@ unsafe extern "C" fn create_or_update_job(
 // All FFI calls (PyTuple_GetItem, PyLong_AsUnsignedLongLong, PyDict_SetItemString,
 // etc.) operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
+pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let job_id_obj = PyTuple_GetItem(args, 0);
     if job_id_obj.is_null() {
         error!("DB: get_job_by_id - invalid arguments");
@@ -344,7 +344,7 @@ unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject) ->
 // All FFI calls (PyTuple_GetItem, PyLong_FromUnsignedLongLong, PyDict_SetItemString,
 // etc.) operate on pointers derived from `args` or freshly created Python objects.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
+pub unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     let dict = PyTuple_GetItem(args, 0);
     if dict.is_null() {
         error!("DB: delete_job - invalid arguments");
