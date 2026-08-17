@@ -1118,6 +1118,52 @@ mod tests {
     }
 
     // ============================================================================
+    // handle_message Dispatch Tests
+    // ============================================================================
+
+    #[test]
+    fn test_handle_message_server_ready_sets_ready_flag() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+
+        let message = Message::new(SERVER_READY, Priority::Highest, "server");
+        client.handle_message(1, message);
+
+        assert!(
+            client.is_server_ready(),
+            "SERVER_READY should set the server_ready flag"
+        );
+    }
+
+    #[test]
+    fn test_handle_message_unknown_id_is_ignored() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+
+        let message = Message::new(999_999, Priority::Highest, "server");
+        client.handle_message(1, message);
+
+        assert!(
+            !client.is_server_ready(),
+            "unknown message ID must not set server_ready"
+        );
+    }
+
+    #[test]
+    fn test_handle_message_stale_connection_id_early_returns() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(2, Ordering::SeqCst);
+
+        let message = Message::new(SERVER_READY, Priority::Highest, "server");
+        client.handle_message(1, message);
+
+        assert!(
+            !client.is_server_ready(),
+            "message from a superseded connection must be ignored"
+        );
+    }
+
+    // ============================================================================
     // WebSocket Arc Sharing Tests
     // ============================================================================
 
