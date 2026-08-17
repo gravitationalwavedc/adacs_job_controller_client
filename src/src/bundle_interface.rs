@@ -334,6 +334,9 @@ impl BundleInterface {
         }
         let c_str = PyUnicode_AsUTF8(obj);
         if c_str.is_null() {
+            // PyUnicode_AsUTF8 sets a TypeError when `obj` is not a str;
+            // clear it so the stale error can't poison later FFI calls.
+            PyErr_Clear();
             return String::new();
         }
         CStr::from_ptr(c_str).to_string_lossy().into_owned()
