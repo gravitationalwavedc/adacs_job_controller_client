@@ -485,7 +485,15 @@ impl BundleInterface {
             Py_XDECREF(p_func);
             return std::ptr::null_mut();
         }
-        PyTuple_SetItem(p_args, 0, p_value);
+        // On failure PyTuple_SetItem releases the item reference itself, so we
+        // must not Py_DecRef the item again here.
+        if PyTuple_SetItem(p_args, 0, p_value) < 0 {
+            error!("Error setting object in args tuple");
+            PyErr_Print();
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return std::ptr::null_mut();
+        }
 
         let result = PyObject_CallObject(p_func, p_args);
         if result.is_null() || !PyErr_Occurred().is_null() {
