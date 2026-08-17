@@ -27,6 +27,7 @@ use tracing::{debug, error, trace, warn};
 const FILE_LIST_CONCURRENCY_LIMIT: usize = 4;
 const DOWNLOAD_CHUNK_SIZE: usize = 64 * 1024;
 const SERVER_READY_TIMEOUT_SECS: u64 = 10;
+const FILE_WS_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(FILE_LIST_CONCURRENCY_LIMIT)));
@@ -257,21 +258,25 @@ pub fn handle_file_download(mut msg: Message) {
             }
         };
 
-        let (ws_stream, _) =
-            match tokio::time::timeout(Duration::from_secs(10), connect_async(request)).await {
-                Ok(Ok(s)) => s,
-                Ok(Err(e)) => {
-                    warn!(
-                        "handle_file_download: Failed to connect for file download: {}",
-                        e
-                    );
-                    return;
-                }
-                Err(_) => {
-                    warn!("handle_file_download: Timed out connecting for file download");
-                    return;
-                }
-            };
+        let (ws_stream, _) = match tokio::time::timeout(
+            Duration::from_secs(FILE_WS_CONNECT_TIMEOUT_SECS),
+            connect_async(request),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                warn!(
+                    "handle_file_download: Failed to connect for file download: {}",
+                    e
+                );
+                return;
+            }
+            Err(_) => {
+                warn!("handle_file_download: Timed out connecting for file download");
+                return;
+            }
+        };
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
@@ -599,18 +604,22 @@ fn handle_file_upload_internal(
             }
         };
 
-        let (ws_stream, _) =
-            match tokio::time::timeout(Duration::from_secs(10), connect_async(request)).await {
-                Ok(Ok(s)) => s,
-                Ok(Err(e)) => {
-                    warn!("Failed to connect for file upload: {}", e);
-                    return;
-                }
-                Err(_) => {
-                    warn!("Timed out connecting for file upload");
-                    return;
-                }
-            };
+        let (ws_stream, _) = match tokio::time::timeout(
+            Duration::from_secs(FILE_WS_CONNECT_TIMEOUT_SECS),
+            connect_async(request),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                warn!("Failed to connect for file upload: {}", e);
+                return;
+            }
+            Err(_) => {
+                warn!("Timed out connecting for file upload");
+                return;
+            }
+        };
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
