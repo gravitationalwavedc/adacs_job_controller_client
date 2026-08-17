@@ -526,6 +526,41 @@ mod tests {
     }
 
     #[test]
+    fn append_raw_bytes_appends_after_existing_payload() {
+        let mut msg = Message::new(42, Priority::Medium, "test_source");
+        msg.push_uint(123);
+        msg.push_ulong(456);
+        msg.append_raw_bytes(&[0xAA, 0xBB, 0xCC]);
+
+        let mut read_msg = Message::from_data(msg.get_data().clone());
+
+        assert_eq!(read_msg.id, 42);
+        assert_eq!(read_msg.source, "test_source");
+        assert_eq!(read_msg.pop_uint(), 123);
+        assert_eq!(read_msg.pop_ulong(), 456);
+
+        let remaining = read_msg.get_data()[read_msg.index..].to_vec();
+        assert_eq!(remaining, vec![0xAA, 0xBB, 0xCC]);
+
+        let mut expected_bytes = Vec::new();
+        expected_bytes.extend_from_slice(&123u32.to_le_bytes());
+        expected_bytes.extend_from_slice(&456u64.to_le_bytes());
+        expected_bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+        assert_eq!(msg.clone_payload_bytes(), expected_bytes);
+    }
+
+    #[test]
+    fn append_raw_bytes_with_empty_slice_is_noop() {
+        let mut msg = Message::new(1, Priority::Highest, "test");
+        msg.push_uint(123);
+        let before = msg.get_data().clone();
+
+        msg.append_raw_bytes(&[]);
+
+        assert_eq!(msg.get_data(), &before);
+    }
+
+    #[test]
     fn test_primitive_ubyte() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         msg.push_ubyte(1);
