@@ -165,6 +165,7 @@ py_wrap!(PyDict_New, () -> *mut PyObject);
 py_wrap!(PyDict_SetItemString, (dict: *mut PyObject, key: *const c_char, item: *mut PyObject) -> c_int);
 py_wrap!(PyEval_GetBuiltins, () -> *mut PyObject);
 py_wrap!(PyObject_GetAttrString, (obj: *mut PyObject, name: *const c_char) -> *mut PyObject);
+py_wrap!(PyObject_SetAttrString, (obj: *mut PyObject, name: *const c_char, value: *mut PyObject) -> c_int);
 py_wrap!(PyObject_CallObject, (callable: *mut PyObject, args: *mut PyObject) -> *mut PyObject);
 py_wrap!(PyObject_Repr, (obj: *mut PyObject) -> *mut PyObject);
 py_wrap!(PyObject_GetIter, (obj: *mut PyObject) -> *mut PyObject);
