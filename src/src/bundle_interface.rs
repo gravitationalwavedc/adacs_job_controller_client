@@ -505,6 +505,9 @@ impl BundleInterface {
             let tb_func =
                 PyObject_GetAttrString(self.inner.traceback_module, c"format_tb".as_ptr());
             if tb_func.is_null() {
+                // `tb_args` was never created, so `traceback` was never stolen
+                // into a tuple; release the owned ref from `PyErr_Fetch`.
+                Py_XDECREF(traceback);
                 swallow_python_error();
             } else {
                 let tb_args = PyTuple_New(1);
@@ -538,6 +541,10 @@ impl BundleInterface {
             c"format_exception_only".as_ptr(),
         );
         if eo_func.is_null() {
+            // `eo_args` was never created, so `extype` and `value` were never
+            // stolen into a tuple; release the owned refs from `PyErr_Fetch`.
+            Py_XDECREF(extype);
+            Py_XDECREF(value);
             swallow_python_error();
             // Final fallback so the user is never left with no info.
             error!(
