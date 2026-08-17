@@ -25,6 +25,7 @@ const UPDATE_CHECK_INTERVAL_MS: i64 = 300_000;
 // Priority queue bucket count; must stay in sync with Priority (Highest=0/Medium=10/Lowest=19)
 const PRIORITY_LEVELS: usize = 20;
 const MAX_CONSECUTIVE_PRIORITY_ITEMS: u32 = 16;
+const CONNECT_TIMEOUT_SECONDS: u64 = 10;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -262,12 +263,20 @@ impl TungsteniteWebsocketClient {
                 .map_err(|_| "Invalid token")?,
         );
 
-        let (ws_stream, response) =
-            match timeout(Duration::from_secs(10), connect_async(request)).await {
-                Ok(Ok(r)) => r,
-                Ok(Err(e)) => return Err(format!("WS connection error: {e}").into()),
-                Err(_) => return Err("WS connection timed out after 10s".into()),
-            };
+        let (ws_stream, response) = match timeout(
+            Duration::from_secs(CONNECT_TIMEOUT_SECONDS),
+            connect_async(request),
+        )
+        .await
+        {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return Err(format!("WS connection error: {e}").into()),
+            Err(_) => {
+                return Err(
+                    format!("WS connection timed out after {CONNECT_TIMEOUT_SECONDS}s").into(),
+                )
+            }
+        };
         info!(
             "WS: Connected (status={}, id={})",
             response.status(),
