@@ -11,9 +11,10 @@
 
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
-use crate::python_interface::PYTHON_MUTEX;
+use crate::python_interface::{PyImport_ImportModule, PyObject_SetAttrString, PYTHON_MUTEX};
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
+use std::ffi::CString;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use test_fork::test;
@@ -703,6 +704,54 @@ fn test_json_loads_returns_null_for_invalid_json() {
                 .expect("thread scope should be created");
             let obj = bundle.json_loads("this is not valid json");
             assert!(obj.is_null(), "invalid JSON should return NULL");
+        }
+    }
+    inner();
+}
+
+/// The `json.loads` attribute lookup can fail (e.g. when the `loads`
+/// attribute is removed from the json module), so `json_loads` must return
+/// NULL (the "failed to get json.loads function" branch) instead of
+/// dereferencing a null function pointer.
+#[test]
+fn test_json_loads_returns_null_when_loads_lookup_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            // The json module is cached in the sub-interpreter, so this
+            // returns the same module object `json_loads` reads from.
+            let json_module = PyImport_ImportModule(c"json".as_ptr());
+            assert!(!json_module.is_null(), "json module should import");
+            let c_name = CString::new("loads").unwrap();
+            // PyObject_SetAttrString with a NULL value deletes the attribute
+            // (this is what CPython's PyObject_DelAttrString macro expands to).
+            assert_eq!(
+                PyObject_SetAttrString(json_module, c_name.as_ptr(), std::ptr::null_mut()),
+                0,
+                "deleting json.loads should succeed"
+            );
+            let obj = bundle.json_loads(r#"{"key": "value"}"#);
+            assert!(
+                obj.is_null(),
+                "json_loads should return NULL when json.loads is unavailable"
+            );
         }
     }
     inner();
