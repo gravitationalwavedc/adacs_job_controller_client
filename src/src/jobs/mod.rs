@@ -90,12 +90,9 @@ pub fn handle_job_submit(mut msg: Message) {
         let mut details = get_default_job_details();
         {
             let _lock = SUBMIT_MUTEX.lock().await;
-            job_model = match db::get_or_create_by_job_id(job_id).await {
-                Ok(j) => j,
-                Err(e) => {
-                    error!("DB Error in handle_job_submit: {}", e);
-                    return;
-                }
+            job_model = match get_or_create_job_or_abort(job_id, "handle_job_submit").await {
+                Some(j) => j,
+                None => return,
             };
 
             if job_model.submitting {
@@ -520,16 +517,23 @@ async fn run_bundle_bool_for_job(
     })
 }
 
+async fn get_or_create_job_or_abort(job_id: i64, context: &str) -> Option<job::Model> {
+    match db::get_or_create_by_job_id(job_id).await {
+        Ok(j) => Some(j),
+        Err(e) => {
+            error!("DB Error in {}: {}", context, e);
+            None
+        }
+    }
+}
+
 pub fn handle_job_cancel(mut msg: Message) {
     tokio::spawn(async move {
         let job_id = i64::from(msg.pop_uint());
 
-        let mut job_model = match db::get_or_create_by_job_id(job_id).await {
-            Ok(j) => j,
-            Err(e) => {
-                error!("DB Error in handle_job_cancel: {}", e);
-                return;
-            }
+        let Some(mut job_model) = get_or_create_job_or_abort(job_id, "handle_job_cancel").await
+        else {
+            return;
         };
 
         if job_model.id == 0 || !job_model.running || job_model.submitting {
@@ -629,12 +633,9 @@ pub fn handle_job_delete(mut msg: Message) {
     tokio::spawn(async move {
         let job_id = i64::from(msg.pop_uint());
 
-        let mut job_model = match db::get_or_create_by_job_id(job_id).await {
-            Ok(j) => j,
-            Err(e) => {
-                error!("DB Error in handle_job_delete: {}", e);
-                return;
-            }
+        let Some(mut job_model) = get_or_create_job_or_abort(job_id, "handle_job_delete").await
+        else {
+            return;
         };
 
         if job_model.id == 0 || job_model.running || job_model.submitting || job_model.deleted {
