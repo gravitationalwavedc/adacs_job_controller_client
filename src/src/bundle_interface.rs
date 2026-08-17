@@ -847,6 +847,26 @@ mod append_bundle_path_to_sys_path_tests {
     }
 
     #[test]
+    fn returns_err_when_pylist_append_fails() {
+        let bundle = load_test_bundle();
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let p_not_a_list = PyTuple_New(0);
+            assert!(!p_not_a_list.is_null(), "PyTuple_New should succeed");
+            let result = BundleInterface::append_bundle_path_to_sys_path(
+                p_not_a_list,
+                Path::new("/some/bundle/path"),
+            );
+            Py_DecRef(p_not_a_list);
+            assert!(
+                result.is_err(),
+                "non-list sys.path should make append return Err"
+            );
+        }
+    }
+
+    #[test]
     fn appends_bundle_path_on_success() {
         let bundle = load_test_bundle();
         let _guard = PYTHON_MUTEX.lock();
