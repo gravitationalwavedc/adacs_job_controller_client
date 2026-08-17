@@ -171,11 +171,7 @@ impl BundleInterface {
         // Add the bundle path to the system path
         info!("BundleInterface::new appending bundle path to sys.path");
         let p_path = PySys_GetObject(c"path".as_ptr());
-        let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
-            .map_err(|_| "Bundle path contains NUL byte".to_string())?;
-        let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
-        PyList_Append(p_path, p_bundle_path);
-        Py_DecRef(p_bundle_path);
+        Self::append_bundle_path_to_sys_path(p_path, &bundle_path)?;
 
         // Import the bundle module
         debug!("BundleInterface::new importing bundle module");
@@ -199,6 +195,31 @@ impl BundleInterface {
                 bundle_hash: bundle_hash.to_string(),
             }),
         })
+    }
+
+    /// Append `bundle_path` to the `sys.path` list of the current interpreter.
+    ///
+    /// Returns `Err` when `p_path` is NULL (a missing `sys.path`) or when
+    /// `bundle_path` contains a NUL byte.
+    ///
+    /// # Safety
+    /// `p_path` must be NULL or a valid `sys.path` list on the current
+    /// interpreter, and the GIL must be held by the caller.
+    unsafe fn append_bundle_path_to_sys_path(
+        p_path: *mut PyObject,
+        bundle_path: &Path,
+    ) -> Result<(), String> {
+        if p_path.is_null() {
+            error!("Error getting sys.path");
+            PyErr_Print();
+            return Err("Failed to get sys.path".to_string());
+        }
+        let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
+            .map_err(|_| "Bundle path contains NUL byte".to_string())?;
+        let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
+        PyList_Append(p_path, p_bundle_path);
+        Py_DecRef(p_bundle_path);
+        Ok(())
     }
 
     /// Get a `ThreadScope` for this bundle's interpreter.
@@ -771,6 +792,64 @@ mod bundle_interface_conversion_tests {
         unsafe {
             let result = bundle.json_dumps(std::ptr::null_mut());
             assert_eq!(result.unwrap(), "null");
+        }
+    }
+}
+
+// ─── append_bundle_path_to_sys_path tests ────────────────────────────────────
+
+#[cfg(test)]
+mod append_bundle_path_to_sys_path_tests {
+    use super::*;
+    use crate::bundle_manager::BundleManager;
+    use crate::tests::fixtures::bundle_fixture::BundleFixture;
+    use uuid::Uuid;
+
+    /// Load a real bundle so the sub-interpreter has a live `sys.path`.
+    fn load_test_bundle() -> BundleInterface {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load")
+    }
+
+    #[test]
+    fn returns_err_on_null_sys_path() {
+        let bundle = load_test_bundle();
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let result = BundleInterface::append_bundle_path_to_sys_path(
+                std::ptr::null_mut(),
+                Path::new("/some/bundle/path"),
+            );
+            assert!(
+                result.is_err(),
+                "NULL sys.path should make append return Err"
+            );
+        }
+    }
+
+    #[test]
+    fn appends_bundle_path_on_success() {
+        let bundle = load_test_bundle();
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let p_path = PySys_GetObject(c"path".as_ptr());
+            assert!(!p_path.is_null(), "sys.path should exist");
+            let result = BundleInterface::append_bundle_path_to_sys_path(
+                p_path,
+                Path::new("/some/bundle/path"),
+            );
+            assert!(result.is_ok(), "append should succeed: {result:?}");
         }
     }
 }
