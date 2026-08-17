@@ -681,7 +681,9 @@ unsafe fn log_python_lines(lines: *mut PyObject) {
             break;
         }
         let c_str = PyUnicode_AsUTF8(item);
-        if !c_str.is_null() {
+        if c_str.is_null() {
+            swallow_python_error();
+        } else {
             let s = CStr::from_ptr(c_str).to_string_lossy();
             error!("{}", s);
         }
