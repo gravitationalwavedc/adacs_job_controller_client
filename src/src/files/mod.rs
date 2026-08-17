@@ -539,8 +539,8 @@ where
         .await
     {
         warn!(
-            "send_download_error: Failed to send FILE_DOWNLOAD_ERROR: {}",
-            e
+            "send_file_error: Failed to send error message (msg_id={}): {}",
+            msg_id, e
         );
     }
 }
