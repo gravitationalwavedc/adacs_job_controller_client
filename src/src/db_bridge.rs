@@ -319,6 +319,32 @@ mod tests {
     }
 
     #[test]
+    fn test_db_bridge_decrements_queue_depth_when_channel_closed() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<DbRequest>(1);
+        drop(rx);
+        let queue_depth = Arc::new(AtomicUsize::new(0));
+        let bridge = DbBridge {
+            request_tx: tx,
+            queue_depth: Arc::clone(&queue_depth),
+        };
+
+        let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
+        let result = bridge.send(msg);
+
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.contains("DbBridge channel closed"),
+            "expected channel-closed error, got: {err}"
+        );
+        assert_eq!(
+            queue_depth.load(Ordering::SeqCst),
+            0,
+            "queue_depth should be decremented back to 0 after a failed send"
+        );
+    }
+
+    #[test]
     fn test_db_bridge_send_from_async_context() {
         #[tokio::main(flavor = "current_thread")]
         async fn inner() {
