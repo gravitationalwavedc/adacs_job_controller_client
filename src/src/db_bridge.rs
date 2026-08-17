@@ -75,8 +75,8 @@ impl DbBridge {
                                 Err(format!("DB request error: {e}"))
                             }
                             Err(_) => {
-                                error!("DbBridge: request #{} timed out after 30s", request_count);
-                                Err("DB request timed out after 30s".to_string())
+                                error!("DbBridge: request #{} timed out after {}s", request_count, REQUEST_TIMEOUT.as_secs());
+                                Err(format!("DB request timed out after {}s", REQUEST_TIMEOUT.as_secs()))
                             }
                         };
                         if let Err(ref e) = result {
