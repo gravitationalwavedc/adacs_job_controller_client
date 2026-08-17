@@ -483,7 +483,13 @@ pub fn handle_file_download(mut msg: Message) {
                 }
                 Err(e) => {
                     warn!("Error reading file: {}", e);
-                    send_download_error(&mut ws_sender, &uuid, "Exception reading file").await;
+                    send_file_error(
+                        &mut ws_sender,
+                        &uuid,
+                        "Exception reading file",
+                        FILE_DOWNLOAD_ERROR,
+                    )
+                    .await;
                     return;
                 }
             };
@@ -896,6 +902,7 @@ async fn validate_path_is_within(target_path: &Path, working_directory: &str) ->
 mod tests {
     use super::*;
     use crate::messaging::{DB_RESPONSE, UPLOAD_FILE};
+    use crate::tests::fixtures::websocket_server_fixture::WebsocketServerFixture;
     use crate::websocket::{
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
@@ -1278,5 +1285,34 @@ mod tests {
 
         assert!(matches!(err, JobLookupError::Database(_)));
         assert_eq!(err.client_message(), "Database error: db connection failed");
+    }
+
+    #[tokio::test]
+    async fn test_send_file_error_sends_file_download_error() {
+        let server = WebsocketServerFixture::new().await;
+        let url = format!("ws://127.0.0.1:{}/ws/", server.port);
+        let request = build_file_ws_request(&url, "test-token").unwrap();
+        let (ws_stream, _) = connect_async(request).await.unwrap();
+        let (mut ws_sender, _ws_receiver) = ws_stream.split();
+
+        let test_uuid = "test-uuid-download-error";
+        send_file_error(
+            &mut ws_sender,
+            test_uuid,
+            "Exception reading file",
+            FILE_DOWNLOAD_ERROR,
+        )
+        .await;
+
+        let mut server = server;
+        let response = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_ERROR")
+            .expect("No response");
+
+        assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
+        let mut response_msg = response;
+        assert_eq!(response_msg.pop_string(), "Exception reading file");
+        assert_eq!(response_msg.source, test_uuid);
     }
 }
