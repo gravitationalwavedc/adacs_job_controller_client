@@ -187,7 +187,10 @@ pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("DB: delete_status_by_id_list - request failed: {}", e);
+            e.to_string()
+        })?;
     let _resp = parse_response(&raw);
     Ok(())
 }
@@ -595,6 +598,27 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async { delete_status_by_id_list(vec![11, 22, 33]).await })
             .unwrap();
+    }
+
+    #[test]
+    fn delete_status_by_id_list_propagates_send_error() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request()
+            .times(1)
+            .returning(|_message| {
+                Box::pin(async move {
+                    Err::<Message, Box<dyn std::error::Error + Send + Sync>>(
+                        "mock send failure".into(),
+                    )
+                })
+            });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async { delete_status_by_id_list(vec![11]).await });
+        assert!(result.is_err());
     }
 
     #[test]
