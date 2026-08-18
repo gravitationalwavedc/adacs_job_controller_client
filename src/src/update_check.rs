@@ -136,10 +136,19 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             .timeout_read(Duration::from_secs(DOWNLOAD_READ_TIMEOUT_SECS))
             .build();
 
-        match agent.get(url).call() {
+        let result = match agent.get(url).call() {
             Ok(resp) => {
                 let mut data = Vec::new();
-                resp.into_reader().read_to_end(&mut data)?;
+                resp.into_reader()
+                    .read_to_end(&mut data)
+                    .map_err(ureq::Error::from)
+                    .map(|_| data)
+            }
+            Err(e) => Err(e),
+        };
+
+        match result {
+            Ok(data) => {
                 debug!("Download complete: {} bytes", data.len());
                 return Ok(data);
             }
