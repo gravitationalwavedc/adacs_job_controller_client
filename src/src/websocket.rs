@@ -26,6 +26,12 @@ const UPDATE_CHECK_INTERVAL_MS: i64 = 300_000;
 const PRIORITY_LEVELS: usize = 20;
 const MAX_CONSECUTIVE_PRIORITY_ITEMS: u32 = 16;
 const CONNECT_TIMEOUT_SECONDS: u64 = 10;
+const RECONNECT_DELAY_ATTEMPT_0_SECONDS: u64 = 1;
+const RECONNECT_DELAY_ATTEMPT_1_SECONDS: u64 = 2;
+const RECONNECT_DELAY_ATTEMPT_2_SECONDS: u64 = 4;
+const RECONNECT_DELAY_ATTEMPT_3_SECONDS: u64 = 8;
+const RECONNECT_DELAY_ATTEMPT_4_SECONDS: u64 = 16;
+const RECONNECT_DELAY_MAX_SECONDS: u64 = 30;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -238,12 +244,12 @@ impl TungsteniteWebsocketClient {
 
     fn reconnect_delay(attempt: u32) -> Duration {
         match attempt {
-            0 => Duration::from_secs(1),
-            1 => Duration::from_secs(2),
-            2 => Duration::from_secs(4),
-            3 => Duration::from_secs(8),
-            4 => Duration::from_secs(16),
-            _ => Duration::from_secs(30),
+            0 => Duration::from_secs(RECONNECT_DELAY_ATTEMPT_0_SECONDS),
+            1 => Duration::from_secs(RECONNECT_DELAY_ATTEMPT_1_SECONDS),
+            2 => Duration::from_secs(RECONNECT_DELAY_ATTEMPT_2_SECONDS),
+            3 => Duration::from_secs(RECONNECT_DELAY_ATTEMPT_3_SECONDS),
+            4 => Duration::from_secs(RECONNECT_DELAY_ATTEMPT_4_SECONDS),
+            _ => Duration::from_secs(RECONNECT_DELAY_MAX_SECONDS),
         }
     }
 
