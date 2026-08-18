@@ -779,4 +779,52 @@ mod tests {
 
         assert_eq!(job, job::Model::default());
     }
+
+    #[test]
+    fn save_job_errors_when_saved_id_is_zero() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(0);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let job = job::Model::default();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async { save_job(job).await });
+
+        assert_eq!(result.unwrap_err(), "Database operation failed to save job");
+    }
+
+    #[test]
+    fn save_status_errors_when_saved_id_is_zero() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(0);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let status = jobstatus::Model {
+            id: 0,
+            job_id: 42,
+            what: "scheduler_id".to_string(),
+            state: 500,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async { save_status(status).await });
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Database operation failed to save job status"
+        );
+    }
 }
