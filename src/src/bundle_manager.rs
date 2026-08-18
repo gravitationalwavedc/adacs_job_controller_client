@@ -5,7 +5,7 @@
 //! the bundle function, convert the result, and dispose the `PyObject`.
 
 use crate::bundle_interface::BundleInterface;
-use crate::python_interface::PYTHON_MUTEX;
+use crate::python_interface::{ThreadScope, PYTHON_MUTEX};
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -26,6 +26,32 @@ static SINGLETON: std::sync::OnceLock<BundleManager> = std::sync::OnceLock::new(
 #[cfg(test)]
 static SINGLETON_TEST: std::sync::atomic::AtomicPtr<BundleManager> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Create a `ThreadScope` for the given bundle, tracing the operation.
+/// Shared by all `run_bundle_*` methods. Callers must hold `PYTHON_MUTEX`.
+fn create_thread_scope(
+    method_name: &str,
+    function_name: &str,
+    bundle: &BundleInterface,
+) -> Result<ThreadScope, String> {
+    trace!(
+        "{} creating thread scope for {}",
+        method_name,
+        function_name
+    );
+    // SAFETY: Callers hold PYTHON_MUTEX for the duration of this call.
+    unsafe {
+        let scope = match bundle.thread_scope() {
+            Ok(s) => s,
+            Err(e) => {
+                error!("{}: Failed to create thread scope: {}", function_name, e);
+                return Err(format!("Failed to create thread scope: {e}"));
+            }
+        };
+        trace!("{} created thread scope for {}", method_name, function_name);
+        Ok(scope)
+    }
+}
 
 impl BundleManager {
     pub fn initialize(bundle_path_root: String) {
@@ -81,6 +107,16 @@ impl BundleManager {
                 drop(Box::from_raw(ptr));
             }
         }
+    }
+
+    /// Test-only: insert a bundle directly into the cache so `load_bundle`
+    /// returns it without creating a real sub-interpreter. Used to exercise
+    /// failure branches (e.g. thread-scope errors) that need a loaded bundle.
+    #[cfg(test)]
+    fn insert_bundle_for_test(&self, bundle: BundleInterface) {
+        self.bundles
+            .write()
+            .insert(bundle.bundle_hash().to_string(), bundle);
     }
 
     /// Load (or return cached) `BundleInterface` for a given hash.
@@ -184,24 +220,12 @@ impl BundleManager {
         );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            trace!(
-                "run_bundle_string creating thread scope for {}",
-                function_name
-            );
-            let _scope = match bundle.thread_scope() {
+            let _scope = match create_thread_scope("run_bundle_string", function_name, &bundle) {
                 Ok(s) => s,
                 Err(e) => {
-                    error!("{}: Failed to create thread scope: {}", function_name, e);
-                    return serde_json::json!({
-                        "error": format!("Failed to create thread scope: {}", e)
-                    })
-                    .to_string();
+                    return serde_json::json!({ "error": e }).to_string();
                 }
             };
-            trace!(
-                "run_bundle_string created thread scope for {}",
-                function_name
-            );
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!(
                     "run_bundle_string bundle.run returned for {}",
@@ -255,21 +279,10 @@ impl BundleManager {
         );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            trace!(
-                "run_bundle_uint64 creating thread scope for {}",
-                function_name
-            );
-            let _scope = match bundle.thread_scope() {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("{}: Failed to create thread scope: {}", function_name, e);
-                    return 0;
-                }
+            let Ok(_scope) = create_thread_scope("run_bundle_uint64", function_name, &bundle)
+            else {
+                return 0;
             };
-            trace!(
-                "run_bundle_uint64 created thread scope for {}",
-                function_name
-            );
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!(
                     "run_bundle_uint64 bundle.run returned for {}",
@@ -319,18 +332,9 @@ impl BundleManager {
         trace!("run_bundle_bool: acquired PYTHON_MUTEX in {:?}", mutex_time);
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            trace!(
-                "run_bundle_bool creating thread scope for {}",
-                function_name
-            );
-            let _scope = match bundle.thread_scope() {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("{}: Failed to create thread scope: {}", function_name, e);
-                    return false;
-                }
+            let Ok(_scope) = create_thread_scope("run_bundle_bool", function_name, &bundle) else {
+                return false;
             };
-            trace!("run_bundle_bool created thread scope for {}", function_name);
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!("run_bundle_bool bundle.run returned for {}", function_name);
                 let result = bundle.to_bool(result_obj);
@@ -377,18 +381,9 @@ impl BundleManager {
         trace!("run_bundle_json: acquired PYTHON_MUTEX in {:?}", mutex_time);
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            trace!(
-                "run_bundle_json creating thread scope for {}",
-                function_name
-            );
-            let _scope = match bundle.thread_scope() {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("{}: Failed to create thread scope: {}", function_name, e);
-                    return Value::Null;
-                }
+            let Ok(_scope) = create_thread_scope("run_bundle_json", function_name, &bundle) else {
+                return Value::Null;
             };
-            trace!("run_bundle_json created thread scope for {}", function_name);
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!("run_bundle_json bundle.run returned for {}", function_name);
                 let json_str = match bundle.json_dumps(result_obj) {
@@ -539,5 +534,73 @@ mod resolve_working_directory_tests {
             "test",
         ));
         assert_eq!(result, "");
+    }
+}
+
+#[cfg(test)]
+mod thread_scope_error_tests {
+    use super::*;
+    use serde_json::json;
+
+    const FAIL_HASH: &str = "test_thread_scope_fail";
+
+    fn failing_bundle() -> BundleInterface {
+        BundleInterface::with_thread_scope_error(FAIL_HASH, "boom")
+    }
+
+    #[test]
+    fn create_thread_scope_returns_error_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        let result = create_thread_scope("test_method", "test_func", &failing_bundle());
+        assert!(result.is_err());
+        assert_eq!(
+            result.err(),
+            Some("Failed to create thread scope: boom".to_string())
+        );
+    }
+
+    #[test]
+    fn run_bundle_string_returns_error_json_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        BundleManager::singleton().insert_bundle_for_test(failing_bundle());
+
+        let result =
+            BundleManager::singleton().run_bundle_string("test_func", FAIL_HASH, &json!({}), "");
+        let parsed: Value = serde_json::from_str(&result).expect("result should be valid JSON");
+        assert_eq!(parsed["error"], "Failed to create thread scope: boom");
+    }
+
+    #[test]
+    fn run_bundle_uint64_returns_zero_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        BundleManager::singleton().insert_bundle_for_test(failing_bundle());
+
+        let result =
+            BundleManager::singleton().run_bundle_uint64("test_func", FAIL_HASH, &json!({}), "");
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn run_bundle_bool_returns_false_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        BundleManager::singleton().insert_bundle_for_test(failing_bundle());
+
+        let result =
+            BundleManager::singleton().run_bundle_bool("test_func", FAIL_HASH, &json!({}), "");
+        assert!(!result);
+    }
+
+    #[test]
+    fn run_bundle_json_returns_null_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        BundleManager::singleton().insert_bundle_for_test(failing_bundle());
+
+        let result =
+            BundleManager::singleton().run_bundle_json("test_func", FAIL_HASH, &json!({}), "");
+        assert_eq!(result, Value::Null);
     }
 }
