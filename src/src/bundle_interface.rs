@@ -519,27 +519,39 @@ impl BundleInterface {
                 swallow_python_error();
             } else {
                 let tb_args = PyTuple_New(1);
-                PyTuple_SetItem(tb_args, 0, traceback); // steals the ref
-                let tb_lines = PyObject_CallObject(tb_func, tb_args);
-                let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
-                if tb_ok {
-                    error!("Traceback (most recent call last):");
-                    log_python_lines(tb_lines);
-                    Py_DecRef(tb_lines);
-                } else {
+                if tb_args.is_null() {
+                    // The `traceback` ref is still owned here; release it and
+                    // the function ref before falling through to the header.
+                    Py_XDECREF(traceback);
+                    Py_XDECREF(tb_func);
+                    swallow_python_error();
                     error!(
                         "Error formatting python traceback frames (type was {})",
                         type_name
                     );
-                    if !tb_lines.is_null() {
+                } else {
+                    PyTuple_SetItem(tb_args, 0, traceback); // steals the ref
+                    let tb_lines = PyObject_CallObject(tb_func, tb_args);
+                    let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
+                    if tb_ok {
+                        error!("Traceback (most recent call last):");
+                        log_python_lines(tb_lines);
                         Py_DecRef(tb_lines);
+                    } else {
+                        error!(
+                            "Error formatting python traceback frames (type was {})",
+                            type_name
+                        );
+                        if !tb_lines.is_null() {
+                            Py_DecRef(tb_lines);
+                        }
+                        swallow_python_error();
                     }
-                    swallow_python_error();
+                    // tb_args stole the `traceback` ref; releasing the tuple
+                    // decrefs traceback too. Safe in both success and failure.
+                    Py_DecRef(tb_args);
+                    Py_XDECREF(tb_func);
                 }
-                // tb_args stole the `traceback` ref; releasing the tuple
-                // decrefs traceback too. Safe in both success and failure.
-                Py_DecRef(tb_args);
-                Py_XDECREF(tb_func);
             }
         }
 
@@ -562,43 +574,58 @@ impl BundleInterface {
             );
         } else {
             let eo_args = PyTuple_New(2);
-            PyTuple_SetItem(eo_args, 0, extype); // steals the ref
-                                                 // `format_exception_only` still expects an exception-like object
-                                                 // on modern Python, so raw-string values may make it fail. We
-                                                 // keep a manual fallback below. Pass `Py_None` only when the
-                                                 // fetched value is literally NULL.
-            if value.is_null() {
-                let none = my_py_none_struct();
-                Py_IncRef(none);
-                PyTuple_SetItem(eo_args, 1, none);
-            } else {
-                PyTuple_SetItem(eo_args, 1, value); // steals the ref
-            }
-            let eo_lines = PyObject_CallObject(eo_func, eo_args);
-            let eo_ok = !eo_lines.is_null() && PyErr_Occurred().is_null();
-            if eo_ok {
-                log_python_lines(eo_lines);
-                Py_DecRef(eo_lines);
-            } else {
+            if eo_args.is_null() {
+                // The `extype` and `value` refs are still owned here; release
+                // them and the function ref before the fallback.
+                Py_XDECREF(extype);
+                Py_XDECREF(value);
+                Py_XDECREF(eo_func);
+                swallow_python_error();
                 // Final fallback so the user is never left with no info.
                 error!(
                     "{}: {}",
                     type_name,
                     fallback_value_text(&value_display, &value_str)
                 );
-                debug!(
-                    "Falling back to synthesized python exception header (type was {})",
-                    type_name
-                );
-                if !eo_lines.is_null() {
-                    Py_DecRef(eo_lines);
+            } else {
+                PyTuple_SetItem(eo_args, 0, extype); // steals the ref
+                                                     // `format_exception_only` still expects an exception-like object
+                                                     // on modern Python, so raw-string values may make it fail. We
+                                                     // keep a manual fallback below. Pass `Py_None` only when the
+                                                     // fetched value is literally NULL.
+                if value.is_null() {
+                    let none = my_py_none_struct();
+                    Py_IncRef(none);
+                    PyTuple_SetItem(eo_args, 1, none);
+                } else {
+                    PyTuple_SetItem(eo_args, 1, value); // steals the ref
                 }
-                swallow_python_error();
+                let eo_lines = PyObject_CallObject(eo_func, eo_args);
+                let eo_ok = !eo_lines.is_null() && PyErr_Occurred().is_null();
+                if eo_ok {
+                    log_python_lines(eo_lines);
+                    Py_DecRef(eo_lines);
+                } else {
+                    // Final fallback so the user is never left with no info.
+                    error!(
+                        "{}: {}",
+                        type_name,
+                        fallback_value_text(&value_display, &value_str)
+                    );
+                    debug!(
+                        "Falling back to synthesized python exception header (type was {})",
+                        type_name
+                    );
+                    if !eo_lines.is_null() {
+                        Py_DecRef(eo_lines);
+                    }
+                    swallow_python_error();
+                }
+                // eo_args stole both extype and value refs; releasing the tuple
+                // decrefs both. Safe in both success and failure paths.
+                Py_DecRef(eo_args);
+                Py_XDECREF(eo_func);
             }
-            // eo_args stole both extype and value refs; releasing the tuple
-            // decrefs both. Safe in both success and failure paths.
-            Py_DecRef(eo_args);
-            Py_XDECREF(eo_func);
         }
     }
 
