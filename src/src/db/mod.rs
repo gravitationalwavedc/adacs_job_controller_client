@@ -679,6 +679,39 @@ mod tests {
     }
 
     #[test]
+    fn save_job_propagates_send_db_request_error() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::<dyn std::error::Error + Send + Sync>::from(
+                    "mock send failure",
+                ))
+            })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let job = job::Model {
+            id: 1,
+            job_id: Some(22),
+            scheduler_id: Some(33),
+            submitting: true,
+            submitting_count: 5,
+            bundle_hash: "bundle-hash".to_string(),
+            working_directory: "/tmp/workdir".to_string(),
+            running: true,
+            deleting: false,
+            deleted: false,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async { save_job(job).await });
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "mock send failure");
+    }
+
+    #[test]
     fn delete_job_sends_db_job_delete_with_job_id() {
         let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
