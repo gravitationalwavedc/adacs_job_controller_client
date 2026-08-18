@@ -859,6 +859,48 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn save_job_or_abort_returns_saved_job_on_success() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(99);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let saved = rt.block_on(async { save_job_or_abort(make_job_model(), "test").await });
+
+        let saved = saved.expect("save_job_or_abort should return Some on success");
+        assert_eq!(saved.id, 99);
+        assert_eq!(saved.job_id, Some(1234));
+        assert_eq!(saved.scheduler_id, Some(4321));
+        assert_eq!(saved.bundle_hash, "old-hash");
+        assert_eq!(saved.working_directory, "/old");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn save_job_or_abort_returns_none_on_db_error() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::new(std::io::Error::other("db connection failed"))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let saved = rt.block_on(async { save_job_or_abort(make_job_model(), "test").await });
+
+        assert!(saved.is_none());
+    }
+
+    #[test]
     fn run_bundle_bool_for_job_returns_true_on_success() {
         crate::tests::init_python_global();
         let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
