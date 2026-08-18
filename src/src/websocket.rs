@@ -1060,6 +1060,54 @@ mod tests {
         assert_eq!(parsed.pop_ulong(), 42);
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_send_db_request_returns_error_when_connection_closed() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        client.connection_closed.store(true, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+
+        let mut msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Highest, "database");
+        msg.push_ulong(42);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(client.send_db_request(msg));
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "WebSocket is disconnected"
+        );
+
+        let queue = client.queue[Priority::Highest as usize].lock();
+        assert!(queue.get("db").is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_send_db_request_returns_error_when_server_not_ready() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(false, Ordering::SeqCst);
+
+        let mut msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Highest, "database");
+        msg.push_ulong(42);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(client.send_db_request(msg));
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "WebSocket is disconnected"
+        );
+
+        let queue = client.queue[Priority::Highest as usize].lock();
+        assert!(queue.get("db").is_none());
+    }
+
     #[tokio::test]
     #[serial_test::serial]
     async fn test_handle_db_response_uses_u32_request_id() {
