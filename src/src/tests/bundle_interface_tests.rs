@@ -1487,3 +1487,42 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
         "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
     );
 }
+
+/// DIRECT UNIT TEST for the `CString::new(job_data)` failure branch in
+/// `BundleInterface::run` (reviewer comment on line 265).
+///
+/// Passing `job_data` containing an interior NUL byte makes `CString::new`
+/// fail, so `run` must return `Err(NoneException)` before the bundle function
+/// is called. `run_bundle_json` maps that to `Value::Null`.
+#[test]
+fn test_run_returns_null_when_job_data_contains_nul_byte() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let script = r#"
+def submit(details, job_data):
+    return {"ok": True}
+"#;
+        fixture.write_raw_script(&bundle_hash, script);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        // An interior NUL byte makes CString::new fail, hitting the error
+        // branch in BundleInterface::run before the bundle function runs.
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "job_data_with\0interior_nul",
+        );
+
+        assert_eq!(result, serde_json::Value::Null);
+    }
+    inner();
+}
