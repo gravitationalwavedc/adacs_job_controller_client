@@ -14,7 +14,7 @@ use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
     PyErr_Occurred, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject_SetAttrString,
-    Py_DecRef, PYTHON_MUTEX,
+    PyUnicode_FromString, Py_DecRef, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -923,6 +923,46 @@ fn test_to_string_py_clears_stale_error_for_non_string_object() {
                 "stale TypeError from PyUnicode_AsUTF8 must be cleared"
             );
             Py_DecRef(int_obj);
+        }
+    }
+    inner();
+}
+
+/// A non-integer `PyObject` (e.g. a str) makes `PyLong_AsUnsignedLongLong`
+/// fail and set a `TypeError`. `to_uint64` must clear that stale error so it
+/// can't poison later `PyErr_Occurred` checks on the same sub-interpreter
+/// (e.g. in `bundle.run` / `json_loads`).
+#[test]
+fn test_to_uint64_clears_stale_error_for_non_integer_object() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let str_obj = PyUnicode_FromString(c"not-an-int".as_ptr());
+            assert!(!str_obj.is_null(), "str object should be created");
+            let value = bundle.to_uint64(str_obj);
+            assert_eq!(value, 0, "non-integer object should convert to 0");
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale TypeError from PyLong_AsUnsignedLongLong must be cleared"
+            );
+            Py_DecRef(str_obj);
         }
     }
     inner();
