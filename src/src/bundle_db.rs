@@ -188,6 +188,13 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
     };
 
     let Ok(json_str) = bundle.json_dumps(dict) else {
+        error!(
+            "DB: failed to serialize job data for bundle hash: {}",
+            bundle_hash
+        );
+        let error_obj = get_bundle_db_error(&bundle_hash);
+        let err_msg = err_cstring("Failed to serialize job data");
+        PyErr_SetString(error_obj, err_msg.as_ptr());
         return None;
     };
     let job_data: serde_json::Value =
