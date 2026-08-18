@@ -201,6 +201,19 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
     Some((bundle_hash, job_id, job_data))
 }
 
+/// Set a Python error on `error_obj` and return the null pointer that FFI
+/// callbacks must return on failure.
+fn set_db_error_and_return_null(
+    error_obj: *mut crate::python_interface::PyObject,
+    msg: &str,
+) -> *mut PyObject {
+    let err_msg = err_cstring(msg);
+    // SAFETY: `error_obj` is a valid exception object obtained from
+    // `get_bundle_db_error`, and `err_msg` is a NUL-terminated C string.
+    unsafe { PyErr_SetString(error_obj, err_msg.as_ptr()) };
+    ptr::null_mut()
+}
+
 /// Set `job_id` in a Python dict, handling a failed `PyLong_FromUnsignedLongLong`
 /// allocation and a failed `PyDict_SetItemString`. Returns `false` (and sets the
 /// Python error) when `value` is NULL or the dict insertion fails.
@@ -291,9 +304,7 @@ pub unsafe extern "C" fn create_or_update_job(
                         "DB: create_or_update_job parse error for bundle hash: {}, jobId: {}: {}",
                         bundle_hash, job_id, message
                     );
-                    let err_msg = err_cstring(&message);
-                    PyErr_SetString(error_obj, err_msg.as_ptr());
-                    return ptr::null_mut();
+                    return set_db_error_and_return_null(error_obj, &message);
                 }
             };
 
@@ -319,9 +330,7 @@ pub unsafe extern "C" fn create_or_update_job(
                 "DB: create_or_update_job error for bundle hash: {}, jobId: {}: {}",
                 bundle_hash, job_id, e
             );
-            let err_msg = err_cstring(&format!("DB error: {e}"));
-            PyErr_SetString(error_obj, err_msg.as_ptr());
-            ptr::null_mut()
+            set_db_error_and_return_null(error_obj, &format!("DB error: {e}"))
         }
     }
 }
@@ -367,9 +376,7 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
                         "DB: get_job_by_id parse error for bundle hash: {}, jobId: {}: {}",
                         bundle_hash, job_id, message
                     );
-                    let err_msg = err_cstring(&message);
-                    PyErr_SetString(error_obj, err_msg.as_ptr());
-                    return ptr::null_mut();
+                    return set_db_error_and_return_null(error_obj, &message);
                 }
             };
 
@@ -382,9 +389,7 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
                     "DB: get_job_by_id failed to parse job data JSON for bundle hash: {}, jobId: {}",
                     bundle_hash, job_id
                 );
-                let err_msg = err_cstring("Failed to parse job data JSON");
-                PyErr_SetString(error_obj, err_msg.as_ptr());
-                return ptr::null_mut();
+                return set_db_error_and_return_null(error_obj, "Failed to parse job data JSON");
             }
 
             // Set job_id in the dict
@@ -407,9 +412,7 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
                 "DB: get_job_by_id error for bundle hash: {}, jobId: {}: {}",
                 bundle_hash, job_id, e
             );
-            let err_msg = err_cstring(&format!("DB error: {e}"));
-            PyErr_SetString(error_obj, err_msg.as_ptr());
-            ptr::null_mut()
+            set_db_error_and_return_null(error_obj, &format!("DB error: {e}"))
         }
     }
 }
@@ -435,8 +438,7 @@ pub unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -
             bundle_hash
         );
         let error_obj = get_bundle_db_error(&bundle_hash);
-        PyErr_SetString(error_obj, c"Job ID must be provided.".as_ptr());
-        return ptr::null_mut();
+        return set_db_error_and_return_null(error_obj, "Job ID must be provided.");
     }
 
     let msg = build_bundle_delete_message(job_id);
@@ -457,10 +459,8 @@ pub unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -
                 "DB: delete_job error for bundle hash: {}, jobId: {}: {}",
                 bundle_hash, job_id, e
             );
-            let err_msg = err_cstring(&format!("DB error: {e}"));
             let error_obj = get_bundle_db_error(&bundle_hash);
-            PyErr_SetString(error_obj, err_msg.as_ptr());
-            ptr::null_mut()
+            set_db_error_and_return_null(error_obj, &format!("DB error: {e}"))
         }
     }
 }
