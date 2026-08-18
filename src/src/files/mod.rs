@@ -1907,6 +1907,8 @@ mod tests {
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
     use tracing_subscriber::fmt::MakeWriter;
 
@@ -2579,6 +2581,33 @@ mod tests {
     async fn test_connect_file_ws_returns_none_on_invalid_endpoint() {
         let result = connect_file_ws("not-a-websocket-url", "test-uuid", "", "test").await;
         assert!(result.is_none(), "Expected None for invalid endpoint");
+    }
+
+    #[tokio::test]
+    async fn connect_file_ws_returns_none_when_server_ready_not_received() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws_stream = accept_async(stream).await.unwrap();
+            // Send a non-SERVER_READY message so wait_for_server_ready returns None.
+            let wrong = Message::new(UPLOAD_FILE, Priority::Highest, "test");
+            ws_stream
+                .send(WsMessage::Binary(wrong.get_data().clone().into()))
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+
+        let url = format!("ws://127.0.0.1:{port}/ws/");
+        let result = connect_file_ws(&url, "test-uuid", "", "file upload").await;
+        assert!(
+            result.is_none(),
+            "connect_file_ws should return None when SERVER_READY is not received"
+        );
+
+        server_handle.await.unwrap();
     }
 
     #[test]
