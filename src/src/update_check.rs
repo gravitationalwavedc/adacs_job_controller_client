@@ -24,6 +24,11 @@ const USER_AGENT: &str = "ADACS-Job-Controller-Client-Update-Check";
 const MAX_DOWNLOAD_RETRIES: u32 = 3;
 const INITIAL_RETRY_DELAY_SECS: u64 = 1;
 
+const HTTP_CONNECT_TIMEOUT_SECS: u64 = 10;
+const HTTP_READ_TIMEOUT_SECS: u64 = 10;
+const DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
+const MAX_REDIRECTS: u32 = 3;
+
 fn get_current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
@@ -93,8 +98,8 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
 
     let response = ureq::AgentBuilder::new()
         .user_agent(USER_AGENT)
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(10))
+        .timeout_connect(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECS))
+        .timeout_read(Duration::from_secs(HTTP_READ_TIMEOUT_SECS))
         .build()
         .get(&format!("https://{GITHUB_ENDPOINT}{GITHUB_LATEST_URL}"))
         .call();
@@ -126,9 +131,9 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         debug!("Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES}");
         let agent = ureq::AgentBuilder::new()
             .user_agent(USER_AGENT)
-            .redirects(3)
-            .timeout_connect(Duration::from_secs(10))
-            .timeout_read(Duration::from_secs(30))
+            .redirects(MAX_REDIRECTS)
+            .timeout_connect(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECS))
+            .timeout_read(Duration::from_secs(DOWNLOAD_READ_TIMEOUT_SECS))
             .build();
 
         match agent.get(url).call() {
