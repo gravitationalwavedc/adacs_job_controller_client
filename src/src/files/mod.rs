@@ -209,8 +209,8 @@ async fn collect_dir_entry(
     Some((relative_path, metadata.is_dir(), metadata.len()))
 }
 
-fn send_file_list_error(uuid: &str, error_msg: &str) {
-    let mut result = Message::new(FILE_LIST_ERROR, Priority::Highest, uuid);
+fn send_file_error_on_main_ws(uuid: &str, error_msg: &str, msg_id: u32) {
+    let mut result = Message::new(msg_id, Priority::Highest, uuid);
     result.push_string(uuid);
     result.push_string(error_msg);
     get_websocket_client().queue_message(
@@ -218,6 +218,10 @@ fn send_file_list_error(uuid: &str, error_msg: &str) {
         result.get_data().clone(),
         Priority::Highest,
     );
+}
+
+fn send_file_list_error(uuid: &str, error_msg: &str) {
+    send_file_error_on_main_ws(uuid, error_msg, FILE_LIST_ERROR);
 }
 
 fn get_ws_endpoint_from_config() -> String {
@@ -254,6 +258,12 @@ pub fn handle_file_download(mut msg: Message) {
         )
         .await
         else {
+            warn!("handle_file_download: Failed to connect file websocket, notifying client");
+            send_file_error_on_main_ws(
+                &uuid,
+                "Failed to connect to file websocket",
+                FILE_DOWNLOAD_ERROR,
+            );
             return;
         };
 
@@ -579,6 +589,14 @@ fn handle_file_upload_internal(
         let Some((mut ws_sender, mut ws_receiver)) =
             connect_file_ws(&ws_endpoint, &uuid, "", "file upload").await
         else {
+            warn!(
+                "handle_file_upload_internal: Failed to connect file websocket, notifying client"
+            );
+            send_file_error_on_main_ws(
+                &uuid,
+                "Failed to connect to file websocket",
+                FILE_UPLOAD_ERROR,
+            );
             return;
         };
 
@@ -1240,6 +1258,24 @@ mod tests {
 
             assert!(sink.sent.is_empty());
         });
+    }
+
+    #[test]
+    fn send_file_error_on_main_ws_queues_error_message() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_queue_message()
+            .times(1)
+            .returning(|_, data, _| {
+                let mut resp = Message::from_data(data);
+                assert_eq!(resp.id, FILE_UPLOAD_ERROR);
+                assert_eq!(resp.pop_string(), "uuid-123");
+                assert_eq!(resp.pop_string(), "boom");
+            });
+        set_websocket_client(Arc::new(mock));
+
+        send_file_error_on_main_ws("uuid-123", "boom", FILE_UPLOAD_ERROR);
     }
 
     struct FailingFinalizeFile {
