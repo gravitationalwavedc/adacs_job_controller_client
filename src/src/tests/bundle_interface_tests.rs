@@ -1045,3 +1045,122 @@ fn test_bundle_interface_new_missing_bundle_module() {
     }
     inner();
 }
+
+/// DIRECT UNIT TEST — reviewer request on MR !200 ("Needs coverage." /
+/// "Please test the new branches.").
+///
+/// Forces `traceback.format_tb` to fail by monkey-patching it to raise.
+/// `PyObject_CallObject(tb_func, tb_args)` then returns NULL, so
+/// `print_last_python_exception` takes the failure branch that logs the
+/// "Error formatting python traceback frames" marker and swallows the
+/// error before continuing to the exception-header formatting.
+#[test]
+fn test_print_last_python_exception_handles_format_tb_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let script = r#"
+import traceback
+
+def broken_format_tb(*args, **kwargs):
+    raise RuntimeError("forced format_tb failure for regression test")
+
+traceback.format_tb = broken_format_tb
+
+def submit(details, job_data):
+    raise RuntimeError("intentional failure for format_tb test")
+    return {"ok": True}
+"#;
+        fixture.write_raw_script(&bundle_hash, script);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let logs = capture_logs(|| {
+            let _ = BundleManager::singleton().run_bundle_json(
+                "submit",
+                &bundle_hash,
+                &serde_json::json!({}),
+                "",
+            );
+        });
+
+        // The format_tb failure branch logs this marker.
+        assert!(
+            logs.contains("Error formatting python traceback frames"),
+            "expected 'Error formatting python traceback frames' marker in logs, got:\n{logs}"
+        );
+
+        // The exception header must still be produced via the normal
+        // format_exception_only path after the failure is swallowed.
+        assert!(
+            logs.contains("RuntimeError: intentional failure for format_tb test"),
+            "expected final exception line in logs, got:\n{logs}"
+        );
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST — reviewer request on MR !200.
+///
+/// Forces `traceback.format_exception_only` to fail by monkey-patching it
+/// to raise. `PyObject_CallObject(eo_func, eo_args)` then returns NULL, so
+/// `print_last_python_exception` takes the failure branch that synthesizes
+/// a `type: value` header, ensuring the user is never left with no info.
+#[test]
+fn test_print_last_python_exception_handles_format_exception_only_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let script = r#"
+import traceback
+
+def broken_format_exception_only(*args, **kwargs):
+    raise RuntimeError("forced format_exception_only failure for regression test")
+
+traceback.format_exception_only = broken_format_exception_only
+
+def submit(details, job_data):
+    raise RuntimeError("intentional failure for format_exception_only test")
+    return {"ok": True}
+"#;
+        fixture.write_raw_script(&bundle_hash, script);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let logs = capture_logs(|| {
+            let _ = BundleManager::singleton().run_bundle_json(
+                "submit",
+                &bundle_hash,
+                &serde_json::json!({}),
+                "",
+            );
+        });
+
+        // The format_exception_only failure branch falls back to a
+        // synthesized `type: value` header.
+        assert!(
+            logs.contains("RuntimeError: intentional failure for format_exception_only test"),
+            "expected synthesized final exception line in logs, got:\n{logs}"
+        );
+
+        // The traceback frames must still be printed (format_tb ran before
+        // the format_exception_only failure).
+        assert!(
+            logs.contains("Traceback (most recent call last):"),
+            "expected traceback header in logs, got:\n{logs}"
+        );
+    }
+    inner();
+}
