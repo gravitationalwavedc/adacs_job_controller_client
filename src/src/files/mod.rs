@@ -493,6 +493,13 @@ pub fn handle_file_download(mut msg: Message) {
             warn!(
                 "handle_file_download: File size mismatch: expected {file_size} bytes, got {total_bytes} bytes (file truncated or modified during download)"
             );
+            send_file_error(
+                &mut ws_sender,
+                &uuid,
+                &format!("File size mismatch: expected {file_size}, got {total_bytes}"),
+                FILE_DOWNLOAD_ERROR,
+            )
+            .await;
         }
         debug!(
             "handle_file_download: COMPLETED - downloaded {} bytes in {:?}",
