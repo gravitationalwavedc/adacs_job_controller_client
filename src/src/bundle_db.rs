@@ -67,7 +67,7 @@ fn get_bundle_db_error(bundle_hash: &str) -> *mut crate::python_interface::PyObj
     err
 }
 
-fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
+pub(crate) fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
     let mut errors = BUNDLE_DB_ERRORS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
