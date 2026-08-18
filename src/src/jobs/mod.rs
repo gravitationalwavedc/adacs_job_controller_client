@@ -715,6 +715,45 @@ mod tests {
         *crate::config::TEST_CONFIG.lock().unwrap() = saved;
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn get_job_details_includes_cluster_job_id_and_scheduler_id() {
+        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
+            "cluster": "ozstar",
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://127.0.0.1:0/ws/",
+        }));
+
+        let details = get_job_details(&make_job_model());
+        assert_eq!(details["cluster"], "ozstar");
+        assert_eq!(details["job_id"], 1234);
+        assert_eq!(details["scheduler_id"], 4321);
+
+        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_job_details_serializes_none_ids_as_null() {
+        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
+            "cluster": "ozstar",
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://127.0.0.1:0/ws/",
+        }));
+
+        let mut job_model = make_job_model();
+        job_model.job_id = None;
+        job_model.scheduler_id = None;
+
+        let details = get_job_details(&job_model);
+        assert!(details["job_id"].is_null());
+        assert!(details["scheduler_id"].is_null());
+
+        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+
     fn make_job_model() -> job::Model {
         job::Model {
             id: 7,
