@@ -742,4 +742,39 @@ mod bundle_interface_conversion_tests {
             assert_eq!(result.unwrap(), "null");
         }
     }
+
+    /// Converter stub that always fails (returns NULL) to exercise the
+    /// failure branch of `extract_value_string`.
+    // SAFETY: Test-only; ignores `obj` and returns NULL without touching the
+    // Python error indicator.
+    unsafe fn always_null_converter(_obj: *mut PyObject) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
+
+    #[test]
+    fn extract_value_string_returns_empty_for_null_value() {
+        // SAFETY: The NULL-value branch returns before any Python C-API call,
+        // so no GIL/thread state is required.
+        unsafe {
+            assert_eq!(
+                extract_value_string(std::ptr::null_mut(), PyObject_Repr),
+                ""
+            );
+        }
+    }
+
+    #[test]
+    fn extract_value_string_returns_empty_when_converter_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `extract_value_string` and `swallow_python_error`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let value = my_py_true_struct();
+            assert_eq!(extract_value_string(value, always_null_converter), "");
+        }
+    }
 }
