@@ -60,6 +60,7 @@ pub struct PyMethodDef {
 
 pub const METH_VARARGS: c_int = 0x0001;
 pub const Py_file_input: c_int = 257;
+pub const Py_eval_input: c_int = 258;
 pub const PYTHON_API_VERSION: c_int = 1013;
 
 pub type PyGILState_STATE = c_int;
