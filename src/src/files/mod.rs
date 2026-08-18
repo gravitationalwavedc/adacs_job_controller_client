@@ -246,43 +246,16 @@ pub fn handle_file_download(mut msg: Message) {
         );
 
         let ws_endpoint = get_ws_endpoint_from_config();
-        let request = match build_file_ws_request(&ws_endpoint, &uuid) {
-            Ok(request) => request,
-            Err(e) => {
-                warn!(
-                    "handle_file_download: Failed to build file download request: {}",
-                    e
-                );
-                return;
-            }
-        };
-
-        let (ws_stream, _) = match tokio::time::timeout(
-            Duration::from_secs(FILE_WS_CONNECT_TIMEOUT_SECS),
-            connect_async(request),
+        let Some((mut ws_sender, mut ws_receiver)) = connect_file_ws(
+            &ws_endpoint,
+            &uuid,
+            "handle_file_download: ",
+            "file download",
         )
         .await
-        {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
-                warn!(
-                    "handle_file_download: Failed to connect for file download: {}",
-                    e
-                );
-                return;
-            }
-            Err(_) => {
-                warn!("handle_file_download: Timed out connecting for file download");
-                return;
-            }
-        };
-
-        let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-
-        if wait_for_server_ready(&mut ws_receiver).await.is_none() {
-            warn!("handle_file_download: Failed to receive SERVER_READY");
+        else {
             return;
-        }
+        };
 
         debug!("handle_file_download: SERVER_READY received, resolving working directory for job_id={}", job_id);
         let working_directory = if job_id != 0 {
@@ -603,36 +576,11 @@ fn handle_file_upload_internal(
     ws_endpoint: String,
 ) {
     tokio::spawn(async move {
-        let request = match build_file_ws_request(&ws_endpoint, &uuid) {
-            Ok(request) => request,
-            Err(e) => {
-                warn!("Failed to build file upload request: {}", e);
-                return;
-            }
-        };
-
-        let (ws_stream, _) = match tokio::time::timeout(
-            Duration::from_secs(FILE_WS_CONNECT_TIMEOUT_SECS),
-            connect_async(request),
-        )
-        .await
-        {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
-                warn!("Failed to connect for file upload: {}", e);
-                return;
-            }
-            Err(_) => {
-                warn!("Timed out connecting for file upload");
-                return;
-            }
-        };
-
-        let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-
-        if wait_for_server_ready(&mut ws_receiver).await.is_none() {
+        let Some((mut ws_sender, mut ws_receiver)) =
+            connect_file_ws(&ws_endpoint, &uuid, "", "file upload").await
+        else {
             return;
-        }
+        };
 
         let ready_msg = Message::new(SERVER_READY, Priority::Highest, &uuid);
         if let Err(e) = ws_sender
@@ -833,6 +781,59 @@ async fn wait_for_server_ready(
             None
         }
     }
+}
+
+async fn connect_file_ws(
+    ws_endpoint: &str,
+    uuid: &str,
+    prefix: &str,
+    operation: &str,
+) -> Option<(
+    futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        WsMessage,
+    >,
+    futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+)> {
+    let request = match build_file_ws_request(ws_endpoint, uuid) {
+        Ok(request) => request,
+        Err(e) => {
+            warn!("{prefix}Failed to build {operation} request: {e}");
+            return None;
+        }
+    };
+
+    let (ws_stream, _) = match tokio::time::timeout(
+        Duration::from_secs(FILE_WS_CONNECT_TIMEOUT_SECS),
+        connect_async(request),
+    )
+    .await
+    {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            warn!("{prefix}Failed to connect for {operation}: {e}");
+            return None;
+        }
+        Err(_) => {
+            warn!("{prefix}Timed out connecting for {operation}");
+            return None;
+        }
+    };
+
+    let (ws_sender, mut ws_receiver) = ws_stream.split();
+
+    if wait_for_server_ready(&mut ws_receiver).await.is_none() {
+        warn!("{prefix}Failed to receive SERVER_READY");
+        return None;
+    }
+
+    Some((ws_sender, ws_receiver))
 }
 
 async fn validate_path_is_within(target_path: &Path, working_directory: &str) -> bool {
