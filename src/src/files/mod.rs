@@ -943,6 +943,7 @@ mod tests {
     use crate::websocket::{
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
+    use serde_json::json;
     use std::fs;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
@@ -1460,5 +1461,44 @@ mod tests {
         let mut response_msg = response;
         assert_eq!(response_msg.pop_string(), "Exception reading file");
         assert_eq!(response_msg.source, test_uuid);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_ws_endpoint_from_config_reads_and_normalizes_trailing_slash() {
+        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
+            "websocketEndpoint": "ws://example.com/ws",
+        }));
+
+        assert_eq!(get_ws_endpoint_from_config(), "ws://example.com/ws/");
+
+        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_ws_endpoint_from_config_preserves_existing_trailing_slash() {
+        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
+            "websocketEndpoint": "ws://example.com/ws/",
+        }));
+
+        assert_eq!(get_ws_endpoint_from_config(), "ws://example.com/ws/");
+
+        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_ws_endpoint_from_config_falls_back_to_default_when_key_missing() {
+        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
+            "cluster": "test_cluster",
+        }));
+
+        assert_eq!(get_ws_endpoint_from_config(), "ws://127.0.0.1:8001/ws/");
+
+        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
     }
 }
