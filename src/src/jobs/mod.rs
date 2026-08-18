@@ -856,4 +856,36 @@ mod tests {
         assert_eq!(job_model.job_id, Some(1234));
         assert!(job_model.running);
     }
+
+    #[test]
+    fn run_bundle_bool_for_job_returns_true_on_success() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_run_bundle_bool_for_job";
+        fixture.write_job_cancel(bundle_hash, "True");
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(run_bundle_bool_for_job(
+            "test_context",
+            "cancel",
+            bundle_hash,
+            &json!({}),
+        ));
+        assert!(result);
+    }
+
+    #[test]
+    fn run_bundle_bool_for_job_returns_false_on_spawn_blocking_failure() {
+        BundleManager::reset_singleton_for_test();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(run_bundle_bool_for_job(
+            "test_context",
+            "cancel",
+            "uninitialized_hash",
+            &json!({}),
+        ));
+        assert!(!result);
+    }
 }
