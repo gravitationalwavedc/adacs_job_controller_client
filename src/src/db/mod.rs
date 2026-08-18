@@ -419,6 +419,27 @@ mod tests {
     }
 
     #[test]
+    fn get_running_jobs_propagates_send_db_request_error() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::new(std::io::Error::other("db connection failed"))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(async { get_running_jobs().await })
+            .expect_err("send_db_request failure should propagate as Err");
+
+        assert!(err.contains("db connection failed"));
+    }
+
+    #[test]
     fn parse_job_reads_deleted_flag() {
         let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
         msg.push_ulong(5);
