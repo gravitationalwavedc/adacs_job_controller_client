@@ -750,28 +750,7 @@ fn handle_file_upload_internal(
                         .await;
                         return;
                     }
-                    if let Err(e) = file.flush().await {
-                        warn!("Failed to flush uploaded file: {}", e);
-                        let _ = fs::remove_file(&full_path).await;
-                        send_file_error(
-                            &mut ws_sender,
-                            &uuid,
-                            "Failed to finalize uploaded file",
-                            FILE_UPLOAD_ERROR,
-                        )
-                        .await;
-                        return;
-                    }
-                    if let Err(e) = file.sync_all().await {
-                        warn!("Failed to sync uploaded file: {}", e);
-                        let _ = fs::remove_file(&full_path).await;
-                        send_file_error(
-                            &mut ws_sender,
-                            &uuid,
-                            "Failed to finalize uploaded file",
-                            FILE_UPLOAD_ERROR,
-                        )
-                        .await;
+                    if !finalize_upload_file(&mut file, &full_path, &mut ws_sender, &uuid).await {
                         return;
                     }
                     drop(file);
@@ -895,6 +874,63 @@ async fn validate_path_is_within(target_path: &Path, working_directory: &str) ->
         }
     }
 
+    true
+}
+
+/// Async file-finalization surface required by `finalize_upload_file`.
+/// Abstracted so unit tests can inject flush/sync failures.
+trait FinalizeFile {
+    async fn flush(&mut self) -> std::io::Result<()>;
+    async fn sync_all(&mut self) -> std::io::Result<()>;
+}
+
+impl FinalizeFile for File {
+    async fn flush(&mut self) -> std::io::Result<()> {
+        AsyncWriteExt::flush(self).await
+    }
+
+    async fn sync_all(&mut self) -> std::io::Result<()> {
+        File::sync_all(self).await
+    }
+}
+
+/// Flush and sync the uploaded file to disk. On failure, removes the partial
+/// file and sends the upload error, returning `false`.
+async fn finalize_upload_file<F, S, E>(
+    file: &mut F,
+    full_path: &Path,
+    ws_sender: &mut S,
+    uuid: &str,
+) -> bool
+where
+    F: FinalizeFile,
+    S: Sink<WsMessage, Error = E> + Unpin,
+    E: std::fmt::Display,
+{
+    if let Err(e) = file.flush().await {
+        warn!("Failed to flush uploaded file: {}", e);
+        let _ = fs::remove_file(full_path).await;
+        send_file_error(
+            ws_sender,
+            uuid,
+            "Failed to finalize uploaded file",
+            FILE_UPLOAD_ERROR,
+        )
+        .await;
+        return false;
+    }
+    if let Err(e) = file.sync_all().await {
+        warn!("Failed to sync uploaded file: {}", e);
+        let _ = fs::remove_file(full_path).await;
+        send_file_error(
+            ws_sender,
+            uuid,
+            "Failed to finalize uploaded file",
+            FILE_UPLOAD_ERROR,
+        )
+        .await;
+        return false;
+    }
     true
 }
 
@@ -1201,6 +1237,115 @@ mod tests {
             send_file_error(&mut sink, "uuid-123", "boom", FILE_UPLOAD_ERROR).await;
 
             assert!(sink.sent.is_empty());
+        });
+    }
+
+    struct FailingFinalizeFile {
+        fail_flush: bool,
+        fail_sync_all: bool,
+    }
+
+    impl FinalizeFile for FailingFinalizeFile {
+        async fn flush(&mut self) -> std::io::Result<()> {
+            if self.fail_flush {
+                Err(std::io::Error::other("mock flush failure"))
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn sync_all(&mut self) -> std::io::Result<()> {
+            if self.fail_sync_all {
+                Err(std::io::Error::other("mock sync failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_finalize_upload_file_success_keeps_file_and_sends_no_error() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let tmp = TempDir::new().unwrap();
+            let full_path = tmp.path().join("upload.bin");
+            std::fs::write(&full_path, b"data").unwrap();
+
+            let mut file = FailingFinalizeFile {
+                fail_flush: false,
+                fail_sync_all: false,
+            };
+            let mut sink = TestSink::new();
+
+            let ok = finalize_upload_file(&mut file, &full_path, &mut sink, "uuid-123").await;
+
+            assert!(ok);
+            assert!(full_path.exists(), "successful finalize keeps the file");
+            assert!(sink.sent.is_empty());
+        });
+    }
+
+    #[test]
+    fn test_finalize_upload_file_flush_failure_removes_file_and_sends_error() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let tmp = TempDir::new().unwrap();
+            let full_path = tmp.path().join("upload.bin");
+            std::fs::write(&full_path, b"data").unwrap();
+
+            let mut file = FailingFinalizeFile {
+                fail_flush: true,
+                fail_sync_all: false,
+            };
+            let mut sink = TestSink::new();
+
+            let ok = finalize_upload_file(&mut file, &full_path, &mut sink, "uuid-123").await;
+
+            assert!(!ok);
+            assert!(
+                !full_path.exists(),
+                "partial file should be removed on flush failure"
+            );
+            assert_eq!(sink.sent.len(), 1);
+            let WsMessage::Binary(data) = &sink.sent[0] else {
+                panic!("expected a binary message");
+            };
+            let mut resp = Message::from_data(data.to_vec());
+            assert_eq!(resp.id, FILE_UPLOAD_ERROR);
+            assert_eq!(resp.source, "uuid-123");
+            assert_eq!(resp.pop_string(), "Failed to finalize uploaded file");
+        });
+    }
+
+    #[test]
+    fn test_finalize_upload_file_sync_all_failure_removes_file_and_sends_error() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let tmp = TempDir::new().unwrap();
+            let full_path = tmp.path().join("upload.bin");
+            std::fs::write(&full_path, b"data").unwrap();
+
+            let mut file = FailingFinalizeFile {
+                fail_flush: false,
+                fail_sync_all: true,
+            };
+            let mut sink = TestSink::new();
+
+            let ok = finalize_upload_file(&mut file, &full_path, &mut sink, "uuid-123").await;
+
+            assert!(!ok);
+            assert!(
+                !full_path.exists(),
+                "partial file should be removed on sync failure"
+            );
+            assert_eq!(sink.sent.len(), 1);
+            let WsMessage::Binary(data) = &sink.sent[0] else {
+                panic!("expected a binary message");
+            };
+            let mut resp = Message::from_data(data.to_vec());
+            assert_eq!(resp.id, FILE_UPLOAD_ERROR);
+            assert_eq!(resp.source, "uuid-123");
+            assert_eq!(resp.pop_string(), "Failed to finalize uploaded file");
         });
     }
 
