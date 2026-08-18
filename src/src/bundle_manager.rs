@@ -109,6 +109,16 @@ impl BundleManager {
         }
     }
 
+    /// Test-only: insert a bundle directly into the cache so `load_bundle`
+    /// returns it without creating a real sub-interpreter. Used to exercise
+    /// failure branches (e.g. thread-scope errors) that need a loaded bundle.
+    #[cfg(test)]
+    fn insert_bundle_for_test(&self, bundle: BundleInterface) {
+        self.bundles
+            .write()
+            .insert(bundle.bundle_hash().to_string(), bundle);
+    }
+
     /// Load (or return cached) `BundleInterface` for a given hash.
     /// Mirrors C++ `BundleManager::loadBundle()`.
     pub fn load_bundle(&self, bundle_hash: &str) -> Result<BundleInterface, String> {
@@ -524,5 +534,73 @@ mod resolve_working_directory_tests {
             "test",
         ));
         assert_eq!(result, "");
+    }
+}
+
+#[cfg(test)]
+mod thread_scope_error_tests {
+    use super::*;
+    use serde_json::json;
+
+    const FAIL_HASH: &str = "test_thread_scope_fail";
+
+    fn failing_bundle() -> BundleInterface {
+        BundleInterface::with_thread_scope_error(FAIL_HASH, "boom")
+    }
+
+    #[test]
+    fn create_thread_scope_returns_error_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        let result = create_thread_scope("test_method", "test_func", &failing_bundle());
+        assert!(result.is_err());
+        assert_eq!(
+            result.err(),
+            Some("Failed to create thread scope: boom".to_string())
+        );
+    }
+
+    #[test]
+    fn run_bundle_string_returns_error_json_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        BundleManager::singleton().insert_bundle_for_test(failing_bundle());
+
+        let result =
+            BundleManager::singleton().run_bundle_string("test_func", FAIL_HASH, &json!({}), "");
+        let parsed: Value = serde_json::from_str(&result).expect("result should be valid JSON");
+        assert_eq!(parsed["error"], "Failed to create thread scope: boom");
+    }
+
+    #[test]
+    fn run_bundle_uint64_returns_zero_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        BundleManager::singleton().insert_bundle_for_test(failing_bundle());
+
+        let result =
+            BundleManager::singleton().run_bundle_uint64("test_func", FAIL_HASH, &json!({}), "");
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn run_bundle_bool_returns_false_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        BundleManager::singleton().insert_bundle_for_test(failing_bundle());
+
+        let result =
+            BundleManager::singleton().run_bundle_bool("test_func", FAIL_HASH, &json!({}), "");
+        assert!(!result);
+    }
+
+    #[test]
+    fn run_bundle_json_returns_null_when_thread_scope_fails() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        BundleManager::singleton().insert_bundle_for_test(failing_bundle());
+
+        let result =
+            BundleManager::singleton().run_bundle_json("test_func", FAIL_HASH, &json!({}), "");
+        assert_eq!(result, Value::Null);
     }
 }

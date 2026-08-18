@@ -47,6 +47,8 @@ struct BundleInterfaceInner {
     json_module: *mut PyObject,
     traceback_module: *mut PyObject,
     bundle_hash: String,
+    #[cfg(test)]
+    thread_scope_error: Option<String>,
 }
 
 // SAFETY: All raw pointer fields (p_global, p_bundle_module, json_module,
@@ -66,6 +68,25 @@ impl BundleInterface {
     /// Return the bundle hash for this interface.
     pub fn bundle_hash(&self) -> &str {
         &self.inner.bundle_hash
+    }
+
+    /// Test-only: create a `BundleInterface` whose `thread_scope()` always
+    /// fails with `error`. Used to exercise the thread-scope error branches in
+    /// `BundleManager` without depending on `PyThreadState_New` allocation
+    /// failure (which is not reliably triggerable).
+    #[cfg(test)]
+    pub fn with_thread_scope_error(bundle_hash: &str, error: &str) -> Self {
+        BundleInterface {
+            inner: Arc::new(BundleInterfaceInner {
+                python_interpreter: SubInterpreter::null(),
+                p_global: std::ptr::null_mut(),
+                p_bundle_module: std::ptr::null_mut(),
+                json_module: std::ptr::null_mut(),
+                traceback_module: std::ptr::null_mut(),
+                bundle_hash: bundle_hash.to_string(),
+                thread_scope_error: Some(error.to_string()),
+            }),
+        }
     }
 }
 
@@ -211,6 +232,8 @@ impl BundleInterface {
                 json_module,
                 traceback_module,
                 bundle_hash: bundle_hash.to_string(),
+                #[cfg(test)]
+                thread_scope_error: None,
             }),
         })
     }
@@ -253,6 +276,10 @@ impl BundleInterface {
     /// Get a `ThreadScope` for this bundle's interpreter.
     /// Equivalent to C++ `bundle->threadScope()`.
     pub unsafe fn thread_scope(&self) -> Result<ThreadScope, String> {
+        #[cfg(test)]
+        if let Some(e) = &self.inner.thread_scope_error {
+            return Err(e.clone());
+        }
         ThreadScope::new(self.inner.python_interpreter.interp())
     }
 
@@ -803,6 +830,7 @@ mod bundle_interface_conversion_tests {
                 json_module: std::ptr::null_mut(),
                 traceback_module: std::ptr::null_mut(),
                 bundle_hash: "test-bundle".to_string(),
+                thread_scope_error: None,
             }),
         }
     }
