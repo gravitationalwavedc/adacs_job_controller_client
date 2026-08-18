@@ -1161,6 +1161,31 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_message_db_response_unexpected_request_id_does_not_panic() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+
+        // Register a pending DB request promise so we can verify it is left untouched.
+        let (tx, _rx) = oneshot::channel();
+        client.db_request_promises.write().insert(7, tx);
+
+        // A DB_RESPONSE carrying a request_id with no registered promise.
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_uint(999);
+        client.handle_message(1, response);
+
+        assert_eq!(
+            client.db_request_promises.read().len(),
+            1,
+            "unexpected DB response must not remove registered promises"
+        );
+        assert!(
+            client.db_request_promises.read().contains_key(&7),
+            "unexpected DB response must leave the registered promise in place"
+        );
+    }
+
+    #[test]
     fn test_handle_message_stale_connection_id_early_returns() {
         let client = TungsteniteWebsocketClient::new();
         client.connection_id.store(2, Ordering::SeqCst);
