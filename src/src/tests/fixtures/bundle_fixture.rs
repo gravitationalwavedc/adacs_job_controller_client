@@ -215,6 +215,21 @@ def submit(details, job_data):
         self.write_script(hash, &script, &[]);
     }
 
+    pub fn write_bundle_db_get_job_by_id_str(&self, hash: &str, job_id: &str) {
+        let script = format!(
+            r#"
+import _bundledb
+
+def submit(details, job_data):
+    try:
+        return _bundledb.get_job_by_id("{job_id}")
+    except Exception as e:
+        return {{"error": str(e)}}
+"#
+        );
+        self.write_script(hash, &script, &[]);
+    }
+
     pub fn write_bundle_db_delete_job(&self, hash: &str, job_json: &str) {
         let script = format!(
             r#"
