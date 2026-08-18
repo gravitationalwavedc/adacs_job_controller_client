@@ -128,9 +128,17 @@ pub fn handle_file_list(mut msg: Message) {
             return;
         }
 
-        if !fs::metadata(&abs_path).await.is_ok_and(|m| m.is_dir()) {
-            send_file_list_error(&uuid, "Path to list files is not a directory");
-            return;
+        match fs::metadata(&abs_path).await {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => {
+                send_file_list_error(&uuid, "Path to list files is not a directory");
+                return;
+            }
+            Err(e) => {
+                warn!("handle_file_list: Failed to get file metadata: {}", e);
+                send_file_list_error(&uuid, "Path to list files is not a directory");
+                return;
+            }
         }
 
         let mut file_list = Vec::new();
