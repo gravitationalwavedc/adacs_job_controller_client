@@ -4,7 +4,7 @@ use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
     PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyLong_FromUnsignedLongLong, PyTuple_New,
-    PyTuple_SetItem, Py_DecRef, PYTHON_MUTEX,
+    PyTuple_SetItem, PyUnicode_FromString, Py_DecRef, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::thread_bundle_map::ThreadBundleGuard;
@@ -753,6 +753,115 @@ fn test_delete_job_returns_null_when_error_object_missing_on_send_failure() {
             assert!(
                 result.is_null(),
                 "NULL error object should hit the get_bundle_db_error guard"
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "guard must return NULL without setting a Python error"
+            );
+        }
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST for the `get_bundle_db_error` NULL-guard branch in
+/// `load_bundle_and_job_id`'s `json_dumps` failure path — the guard added to
+/// complete the iter-0240 fix (the `create_or_update_job`/`delete_job` shared
+/// prologue). A self-referential dict makes `json.dumps` fail; with a NULL
+/// error object stored for the bundle hash, `load_bundle_and_job_id` must
+/// return `None` without calling `PyErr_SetString` on a NULL type pointer.
+#[test]
+fn test_create_or_update_job_returns_null_when_error_object_missing_on_json_dumps_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        BundleManager::initialize(path_root.clone());
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and the ThreadScope acquires the GIL for
+        // the bundle's sub-interpreter, so the Python C-API calls below are valid.
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _bundle_guard = ThreadBundleGuard::new(bundle_hash.clone());
+            set_bundle_db_error(&bundle_hash, ptr::null_mut());
+            let dict = PyDict_New();
+            assert_eq!(
+                PyDict_SetItemString(dict, c"self".as_ptr(), dict),
+                0,
+                "self-referential dict set should succeed"
+            );
+            let args = PyTuple_New(1);
+            assert_eq!(
+                PyTuple_SetItem(args, 0, dict),
+                0,
+                "tuple set should succeed"
+            );
+            let result = create_or_update_job(ptr::null_mut(), args);
+            Py_DecRef(args);
+            assert!(
+                result.is_null(),
+                "NULL error object should hit the load_bundle_and_job_id guard"
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "guard must return NULL without setting a Python error"
+            );
+        }
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST for the `get_bundle_db_error` NULL-guard branch in
+/// `get_job_by_id`'s non-integer job ID path — the guard added to complete the
+/// iter-0240 fix. A non-integer argument makes `PyLong_AsUnsignedLongLong`
+/// fail; with a NULL error object stored for the bundle hash, the callback must
+/// return NULL without calling `PyErr_SetString` on a NULL type pointer.
+#[test]
+fn test_get_job_by_id_returns_null_when_error_object_missing_for_non_integer_job_id() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        BundleManager::initialize(path_root.clone());
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and the ThreadScope acquires the GIL for
+        // the bundle's sub-interpreter, so the Python C-API calls below are valid.
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _bundle_guard = ThreadBundleGuard::new(bundle_hash.clone());
+            set_bundle_db_error(&bundle_hash, ptr::null_mut());
+            let job_id_obj = PyUnicode_FromString(c"not-an-int".as_ptr());
+            assert!(!job_id_obj.is_null(), "str object should be created");
+            let args = PyTuple_New(1);
+            assert_eq!(
+                PyTuple_SetItem(args, 0, job_id_obj),
+                0,
+                "tuple set should succeed"
+            );
+            let result = get_job_by_id(ptr::null_mut(), args);
+            Py_DecRef(args);
+            assert!(
+                result.is_null(),
+                "NULL error object should hit the get_job_by_id guard"
             );
             assert!(
                 PyErr_Occurred().is_null(),
