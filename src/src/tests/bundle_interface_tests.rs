@@ -13,13 +13,17 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    PyErr_Occurred, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject_SetAttrString,
-    PyUnicode_FromString, Py_DecRef, PYTHON_MUTEX,
+    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
+    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
+    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
+    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
+    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
 use std::io::Write;
+use std::os::raw::c_int;
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1255,4 +1259,199 @@ def submit(details, job_data):
         );
     }
     inner();
+}
+
+// ─── PyTuple_SetItem failure-branch tests (MR !315 reviewer requests) ────────
+//
+// The four `py_tuple_set_item` failure branches in
+// `BundleInterface::print_last_python_exception` are unreachable through the
+// public API: `PyTuple_SetItem` on a freshly-created tuple with a valid index
+// always succeeds. These tests use the test-only FFI override seam
+// (`set_py_tuple_set_item_override`) to force each branch and verify the
+// defensive error handling.
+
+/// RAII guard that installs a `py_tuple_set_item` override for the duration of
+/// a test and restores the previous override on drop.
+struct TupleSetItemOverrideGuard(Option<PyTupleSetItemFn>);
+
+impl TupleSetItemOverrideGuard {
+    fn install(f: PyTupleSetItemFn) -> Self {
+        Self(set_py_tuple_set_item_override(Some(f)))
+    }
+}
+
+impl Drop for TupleSetItemOverrideGuard {
+    fn drop(&mut self) {
+        set_py_tuple_set_item_override(self.0);
+    }
+}
+
+/// Load a real bundle so the sub-interpreter has a live `traceback_module`,
+/// which `print_last_python_exception` needs for its attribute lookups.
+fn load_bundle_for_exception_printer() -> BundleInterface {
+    crate::tests::init_python_global();
+    let fixture = BundleFixture::new();
+    let bundle_hash = Uuid::new_v4().to_string();
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+    fixture.write_raw_script(
+        &bundle_hash,
+        "def submit(details, job_data):\n    return {}\n",
+    );
+    BundleManager::singleton()
+        .load_bundle(&bundle_hash)
+        .expect("bundle should load")
+}
+
+/// Fetch the `RuntimeError` exception class from the builtins.
+// SAFETY: Caller holds PYTHON_MUTEX and the GIL; the returned object is a new
+// reference owned by the caller.
+unsafe fn runtime_error_type() -> *mut PyObject {
+    let builtins = PyEval_GetBuiltins();
+    let exc = PyDict_GetItemString(builtins, c"RuntimeError".as_ptr());
+    assert!(
+        !exc.is_null(),
+        "RuntimeError should be available in builtins"
+    );
+    Py_IncRef(exc);
+    exc
+}
+
+/// Override that fails `PyTuple_SetItem` only for size-1 tuples (the `tb_args`
+/// tuple in `print_last_python_exception`). Mirrors `CPython`'s failure
+/// behaviour: releases the item reference and returns -1.
+// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
+unsafe fn fail_size_one_tuple(tuple: *mut PyObject, pos: Py_ssize_t, item: *mut PyObject) -> c_int {
+    if PyTuple_Size(tuple) == 1 {
+        Py_DecRef(item);
+        -1
+    } else {
+        PyTuple_SetItem(tuple, pos, item)
+    }
+}
+
+/// Override that fails `PyTuple_SetItem` only for the size-2 `eo_args` tuple at
+/// index 0 (the exception-type slot).
+// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
+unsafe fn fail_eo_args_index_zero(
+    tuple: *mut PyObject,
+    pos: Py_ssize_t,
+    item: *mut PyObject,
+) -> c_int {
+    if PyTuple_Size(tuple) == 2 && pos == 0 {
+        Py_DecRef(item);
+        -1
+    } else {
+        PyTuple_SetItem(tuple, pos, item)
+    }
+}
+
+/// Override that fails `PyTuple_SetItem` only for the size-2 `eo_args` tuple at
+/// index 1 when the item is not `Py_None` (the non-NULL-value slot).
+// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
+unsafe fn fail_eo_args_non_none_item(
+    tuple: *mut PyObject,
+    pos: Py_ssize_t,
+    item: *mut PyObject,
+) -> c_int {
+    if PyTuple_Size(tuple) == 2 && pos == 1 && item != my_py_none_struct() {
+        Py_DecRef(item);
+        -1
+    } else {
+        PyTuple_SetItem(tuple, pos, item)
+    }
+}
+
+/// DIRECT UNIT TEST — reviewer request on MR !315.
+///
+/// Forces `py_tuple_set_item(tb_args, 0, traceback)` to fail. The branch logs
+/// "Error setting traceback in args tuple" and continues to the exception
+/// header, which must still be produced.
+#[test]
+fn test_print_last_python_exception_handles_tb_args_set_item_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = TupleSetItemOverrideGuard::install(fail_size_one_tuple);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            // Raise a Python exception WITH a traceback by running a snippet
+            // that raises; the error indicator is left set.
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "PyDict_New should succeed");
+            PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
+            let code = c"def f():\n    raise RuntimeError('boom')\nf()";
+            let _result = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_file_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            Py_DecRef(globals);
+            bundle.print_last_python_exception();
+        }
+    });
+
+    assert!(
+        logs.contains("Error setting traceback in args tuple"),
+        "expected 'Error setting traceback in args tuple' marker in logs, got:\n{logs}"
+    );
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected exception header after tb_args SetItem failure, got:\n{logs}"
+    );
+}
+
+/// DIRECT UNIT TEST — reviewer request on MR !315.
+///
+/// Forces `py_tuple_set_item(eo_args, 0, extype)` to fail. The branch logs
+/// "Error setting exception type in args tuple" and returns early.
+#[test]
+fn test_print_last_python_exception_handles_eo_args_type_set_item_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = TupleSetItemOverrideGuard::install(fail_eo_args_index_zero);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let exc = runtime_error_type();
+            PyErr_SetString(exc, c"boom".as_ptr());
+            Py_DecRef(exc);
+            bundle.print_last_python_exception();
+        }
+    });
+
+    assert!(
+        logs.contains("Error setting exception type in args tuple"),
+        "expected 'Error setting exception type in args tuple' marker in logs, got:\n{logs}"
+    );
+}
+
+/// DIRECT UNIT TEST — reviewer request on MR !315.
+///
+/// Forces `py_tuple_set_item(eo_args, 1, value)` to fail when the exception has
+/// a non-NULL value. The branch logs "Error setting exception value in args
+/// tuple" and returns early.
+#[test]
+fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = TupleSetItemOverrideGuard::install(fail_eo_args_non_none_item);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let exc = runtime_error_type();
+            PyErr_SetString(exc, c"boom".as_ptr());
+            Py_DecRef(exc);
+            bundle.print_last_python_exception();
+        }
+    });
+
+    assert!(
+        logs.contains("Error setting exception value in args tuple"),
+        "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
+    );
 }
