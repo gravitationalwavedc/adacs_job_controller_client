@@ -767,4 +767,26 @@ mod tests {
             crate::python_interface::Py_DecRef(dict);
         }
     }
+
+    #[test]
+    fn get_bundle_db_error_creates_and_caches_fallback_runtime_error() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of get_bundle_db_error (which calls PyErr_NewException).
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let bundle_hash = "test_get_bundle_db_error_fallback";
+            let first = get_bundle_db_error(bundle_hash);
+            assert!(!first.is_null(), "fallback RuntimeError should be non-null");
+            let second = get_bundle_db_error(bundle_hash);
+            assert_eq!(
+                first, second,
+                "fallback exception should be cached for the bundle hash"
+            );
+        }
+    }
 }
