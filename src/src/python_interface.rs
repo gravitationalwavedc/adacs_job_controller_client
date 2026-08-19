@@ -301,6 +301,9 @@ unsafe fn install_gil_hooks() -> Result<(), String> {
         myPyGILState_Ensure as *mut c_void,
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
+    if hook_ensure.is_null() {
+        return Err("Failed to create subhook for PyGILState_Ensure".to_string());
+    }
     let result = subhook_install(hook_ensure);
     if result < 0 {
         return Err("PyGILState_Ensure redirection failed to install".to_string());
@@ -313,6 +316,9 @@ unsafe fn install_gil_hooks() -> Result<(), String> {
         myPyGILState_Release as *mut c_void,
         subhook_flags_SUBHOOK_64BIT_OFFSET,
     );
+    if hook_release.is_null() {
+        return Err("Failed to create subhook for PyGILState_Release".to_string());
+    }
     let result = subhook_install(hook_release);
     if result < 0 {
         return Err("myPyGILState_Release redirection failed to install".to_string());
