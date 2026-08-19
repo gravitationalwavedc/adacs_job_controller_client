@@ -67,7 +67,7 @@ fn get_bundle_db_error(bundle_hash: &str) -> *mut crate::python_interface::PyObj
     err
 }
 
-fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
+pub(crate) fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
     let mut errors = BUNDLE_DB_ERRORS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -302,6 +302,13 @@ pub unsafe extern "C" fn create_or_update_job(
     );
 
     let error_obj = get_bundle_db_error(&bundle_hash);
+    if error_obj.is_null() {
+        error!(
+            "DB: create_or_update_job failed to get error object for bundle hash: {}",
+            bundle_hash
+        );
+        return ptr::null_mut();
+    }
     match send_and_wait(msg) {
         Ok(response) => {
             let new_job_id = match parse_create_or_update_response(&response) {
@@ -385,6 +392,13 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
     );
 
     let error_obj = get_bundle_db_error(&bundle_hash);
+    if error_obj.is_null() {
+        error!(
+            "DB: get_job_by_id failed to get error object for bundle hash: {}",
+            bundle_hash
+        );
+        return ptr::null_mut();
+    }
     match send_and_wait(msg) {
         Ok(response) => {
             let job_data_json = match parse_get_job_by_id_response(&response, job_id) {
@@ -456,6 +470,13 @@ pub unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -
             bundle_hash
         );
         let error_obj = get_bundle_db_error(&bundle_hash);
+        if error_obj.is_null() {
+            error!(
+                "DB: delete_job failed to get error object for bundle hash: {}",
+                bundle_hash
+            );
+            return ptr::null_mut();
+        }
         return set_db_error_and_return_null(error_obj, "Job ID must be provided.");
     }
 
@@ -478,6 +499,13 @@ pub unsafe extern "C" fn delete_job(_self: *mut PyObject, args: *mut PyObject) -
                 bundle_hash, job_id, e
             );
             let error_obj = get_bundle_db_error(&bundle_hash);
+            if error_obj.is_null() {
+                error!(
+                    "DB: delete_job failed to get error object for bundle hash: {}",
+                    bundle_hash
+                );
+                return ptr::null_mut();
+            }
             set_db_error_and_return_null(error_obj, &format!("DB error: {e}"))
         }
     }
