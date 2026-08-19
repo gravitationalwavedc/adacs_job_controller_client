@@ -910,7 +910,12 @@ where
 {
     if let Err(e) = file.flush().await {
         warn!("Failed to flush uploaded file: {}", e);
-        let _ = fs::remove_file(full_path).await;
+        if let Err(e) = fs::remove_file(full_path).await {
+            warn!(
+                "Failed to remove partial upload file {:?}: {}",
+                full_path, e
+            );
+        }
         send_file_error(
             ws_sender,
             uuid,
@@ -922,7 +927,12 @@ where
     }
     if let Err(e) = file.sync_all().await {
         warn!("Failed to sync uploaded file: {}", e);
-        let _ = fs::remove_file(full_path).await;
+        if let Err(e) = fs::remove_file(full_path).await {
+            warn!(
+                "Failed to remove partial upload file {:?}: {}",
+                full_path, e
+            );
+        }
         send_file_error(
             ws_sender,
             uuid,
