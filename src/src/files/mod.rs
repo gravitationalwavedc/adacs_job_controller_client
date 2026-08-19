@@ -956,7 +956,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::messaging::{DB_RESPONSE, UPLOAD_FILE};
+    use crate::messaging::{DB_RESPONSE, FILE_DOWNLOAD, UPLOAD_FILE};
     use crate::tests::fixtures::websocket_server_fixture::WebsocketServerFixture;
     use crate::websocket::{
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
@@ -1276,6 +1276,82 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         send_file_error_on_main_ws("uuid-123", "boom", FILE_UPLOAD_ERROR);
+    }
+
+    #[test]
+    fn handle_file_download_connect_failure_queues_file_download_error() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
+            "cluster": "test_cluster",
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://127.0.0.1:1/ws/",
+            "ltk": "test_token",
+        }));
+
+        let mut mock = MockWebsocketClient::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        mock.expect_queue_message()
+            .times(1)
+            .returning(move |_, data, _| {
+                let mut resp = Message::from_data(data);
+                assert_eq!(resp.id, FILE_DOWNLOAD_ERROR);
+                assert_eq!(resp.pop_string(), "uuid-123");
+                assert_eq!(resp.pop_string(), "Failed to connect to file websocket");
+                let _ = tx.send(());
+            });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, "client");
+            msg_raw.push_uint(0);
+            msg_raw.push_string("uuid-123");
+            msg_raw.push_string("bundle-hash");
+            msg_raw.push_string("/data/file.txt");
+            let msg = Message::from_data(msg_raw.get_data().clone());
+            handle_file_download(msg);
+            tokio::time::timeout(Duration::from_secs(10), rx.recv())
+                .await
+                .expect("Timeout waiting for FILE_DOWNLOAD_ERROR queue");
+        });
+
+        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+
+    #[test]
+    fn handle_file_upload_connect_failure_queues_file_upload_error() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+
+        let mut mock = MockWebsocketClient::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        mock.expect_queue_message()
+            .times(1)
+            .returning(move |_, data, _| {
+                let mut resp = Message::from_data(data);
+                assert_eq!(resp.id, FILE_UPLOAD_ERROR);
+                assert_eq!(resp.pop_string(), "uuid-123");
+                assert_eq!(resp.pop_string(), "Failed to connect to file websocket");
+                let _ = tx.send(());
+            });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, "client");
+            msg_raw.push_string("uuid-123");
+            msg_raw.push_uint(42);
+            msg_raw.push_string("bundle-hash");
+            msg_raw.push_string("/data/out.txt");
+            msg_raw.push_ulong(1024);
+            let msg = Message::from_data(msg_raw.get_data().clone());
+            handle_file_upload_with_url(msg, "ws://127.0.0.1:1/ws/".to_string());
+            tokio::time::timeout(Duration::from_secs(10), rx.recv())
+                .await
+                .expect("Timeout waiting for FILE_UPLOAD_ERROR queue");
+        });
     }
 
     struct FailingFinalizeFile {
