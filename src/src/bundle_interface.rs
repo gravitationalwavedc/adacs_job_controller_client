@@ -415,12 +415,14 @@ impl BundleInterface {
 
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"dumps".as_ptr());
         if p_func.is_null() {
+            PyErr_Clear();
             return Err("Failed to get json.dumps function".to_string());
         }
 
         let p_args = PyTuple_New(1);
         if p_args.is_null() {
             Py_XDECREF(p_func);
+            PyErr_Clear();
             return Err("Failed to allocate argument tuple".to_string());
         }
         // INCREF before SetItem (which steals a ref) – matches C++
@@ -460,6 +462,7 @@ impl BundleInterface {
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"loads".as_ptr());
         if p_func.is_null() {
             error!("json_loads: failed to get json.loads function");
+            PyErr_Clear();
             return std::ptr::null_mut();
         }
 
@@ -467,6 +470,7 @@ impl BundleInterface {
         if p_args.is_null() {
             error!("json_loads: failed to create arguments tuple");
             Py_XDECREF(p_func);
+            PyErr_Clear();
             return std::ptr::null_mut();
         }
         let c_content = match CString::new(content) {
@@ -483,6 +487,7 @@ impl BundleInterface {
             error!("json_loads: failed to create python string");
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
+            PyErr_Clear();
             return std::ptr::null_mut();
         }
         PyTuple_SetItem(p_args, 0, p_value);
