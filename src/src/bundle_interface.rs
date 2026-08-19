@@ -750,11 +750,15 @@ unsafe fn log_python_lines(lines: *mut PyObject) {
     }
     let iter = PyObject_GetIter(lines);
     if iter.is_null() {
+        swallow_python_error();
         return;
     }
     loop {
         let item = PyIter_Next(iter);
         if item.is_null() {
+            if !PyErr_Occurred().is_null() {
+                swallow_python_error();
+            }
             break;
         }
         let c_str = PyUnicode_AsUTF8(item);
