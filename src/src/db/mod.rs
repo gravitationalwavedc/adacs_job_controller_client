@@ -195,6 +195,29 @@ pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     Ok(())
 }
 
+async fn send_save_request(msg: Message, context: &str, error_string: &str) -> Result<i64, String> {
+    let send_start = std::time::Instant::now();
+    let raw = get_websocket_client()
+        .send_db_request(msg)
+        .await
+        .map_err(|e| {
+            error!("DB: {} - request failed: {}", context, e);
+            e.to_string()
+        })?;
+    let elapsed = send_start.elapsed();
+    let mut resp = parse_response(&raw);
+    let saved_id = resp.pop_ulong() as i64;
+    if saved_id == 0 {
+        error!("DB: {} - database returned saved_id=0", context);
+        return Err(error_string.to_string());
+    }
+    debug!(
+        "DB: {} - saved with new id={} in {:?}",
+        context, saved_id, elapsed
+    );
+    Ok(saved_id)
+}
+
 pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
     debug!(
         "DB: save_job - saving job id={:?}, job_id={:?}",
@@ -211,25 +234,8 @@ pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
     msg.push_bool(job.running);
     msg.push_bool(job.deleting);
     msg.push_bool(job.deleted);
-    let send_start = std::time::Instant::now();
-    let raw = get_websocket_client()
-        .send_db_request(msg)
-        .await
-        .map_err(|e| {
-            error!("DB: save_job - request failed: {}", e);
-            e.to_string()
-        })?;
-    let elapsed = send_start.elapsed();
-    let mut resp = parse_response(&raw);
-    let saved_id = resp.pop_ulong() as i64;
-    if saved_id == 0 {
-        error!("DB: save_job - database returned saved_id=0");
-        return Err("Database operation failed to save job".to_string());
-    }
-    debug!(
-        "DB: save_job - saved with new id={} in {:?}",
-        saved_id, elapsed
-    );
+    let saved_id =
+        send_save_request(msg, "save_job", "Database operation failed to save job").await?;
     Ok(job::Model {
         id: saved_id,
         ..job
@@ -246,25 +252,12 @@ pub async fn save_status(status: jobstatus::Model) -> Result<jobstatus::Model, S
     msg.push_ulong(status.job_id as u64);
     msg.push_string(&status.what);
     msg.push_uint(status.state as u32);
-    let send_start = std::time::Instant::now();
-    let raw = get_websocket_client()
-        .send_db_request(msg)
-        .await
-        .map_err(|e| {
-            error!("DB: save_status - request failed: {}", e);
-            e.to_string()
-        })?;
-    let elapsed = send_start.elapsed();
-    let mut resp = parse_response(&raw);
-    let saved_id = resp.pop_ulong() as i64;
-    if saved_id == 0 {
-        error!("DB: save_status - database returned saved_id=0");
-        return Err("Database operation failed to save job status".to_string());
-    }
-    debug!(
-        "DB: save_status - saved with new id={} in {:?}",
-        saved_id, elapsed
-    );
+    let saved_id = send_save_request(
+        msg,
+        "save_status",
+        "Database operation failed to save job status",
+    )
+    .await?;
     Ok(jobstatus::Model {
         id: saved_id,
         ..status
@@ -729,6 +722,39 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let saved = rt.block_on(async { save_job(job).await }).unwrap();
         assert_eq!(saved.id, 99);
+    }
+
+    #[test]
+    fn save_job_propagates_send_db_request_error() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::<dyn std::error::Error + Send + Sync>::from(
+                    "mock send failure",
+                ))
+            })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let job = job::Model {
+            id: 1,
+            job_id: Some(22),
+            scheduler_id: Some(33),
+            submitting: true,
+            submitting_count: 5,
+            bundle_hash: "bundle-hash".to_string(),
+            working_directory: "/tmp/workdir".to_string(),
+            running: true,
+            deleting: false,
+            deleted: false,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async { save_job(job).await });
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "mock send failure");
     }
 
     #[test]
