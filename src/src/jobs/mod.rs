@@ -931,4 +931,52 @@ mod tests {
         ));
         assert!(!result);
     }
+
+    #[test]
+    fn archive_job_creates_archive_in_working_dir_on_success() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp_dir.path().join("test.txt"), "content").unwrap();
+
+        let job_model = job::Model {
+            id: 1,
+            job_id: Some(1234),
+            scheduler_id: Some(4321),
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: "hash".to_string(),
+            working_directory: temp_dir.path().to_string_lossy().to_string(),
+            running: false,
+            deleted: false,
+            deleting: false,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(archive_job(&job_model));
+
+        assert!(result.is_ok());
+        assert!(temp_dir.path().join(ARCHIVE_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn archive_job_returns_err_when_working_dir_missing() {
+        let missing_dir = "/not/a/real/path/that/exists/archive_job_test";
+
+        let job_model = job::Model {
+            id: 1,
+            job_id: Some(1234),
+            scheduler_id: Some(4321),
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: "hash".to_string(),
+            working_directory: missing_dir.to_string(),
+            running: false,
+            deleted: false,
+            deleting: false,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(archive_job(&job_model));
+
+        assert!(result.is_err());
+    }
 }
