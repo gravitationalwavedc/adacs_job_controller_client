@@ -277,7 +277,13 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
             let status = json_status.as_u64().unwrap_or(0) as u32;
             let mut v_status = db::get_job_status_by_job_id_and_what(job.id, what)
                 .await
-                .unwrap_or_default();
+                .unwrap_or_else(|e| {
+                    error!(
+                        "check_job_status: failed to read status for job_id={}, what={}: {}",
+                        job_id, what, e
+                    );
+                    Vec::new()
+                });
 
             if v_status.len() > 1 {
                 let ids: Vec<i64> = v_status.iter().map(|s| s.id).collect();
@@ -321,7 +327,13 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
 
     let v_status = db::get_job_status_by_job_id(job.id)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            error!(
+                "check_job_status: failed to read status for job_id={}: {}",
+                job_id, e
+            );
+            Vec::new()
+        });
     let job_error = v_status
         .iter()
         .filter(|state| state.state as u32 > RUNNING && state.state as u32 != COMPLETED)
