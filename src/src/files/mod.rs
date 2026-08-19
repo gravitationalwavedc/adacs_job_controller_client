@@ -1081,6 +1081,23 @@ mod tests {
         rt.block_on(validate_path_is_within(target, working_dir))
     }
 
+    fn run_collect(entry: tokio::fs::DirEntry, working_dir: &str) -> Option<(String, bool, u64)> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(collect_dir_entry(entry, working_dir))
+    }
+
+    fn collect_entries(dir: &Path) -> Vec<tokio::fs::DirEntry> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut entries = tokio::fs::read_dir(dir).await.unwrap();
+            let mut out = Vec::new();
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                out.push(entry);
+            }
+            out
+        })
+    }
+
     #[test]
     fn test_path_within_working_dir() {
         let tmp = TempDir::new().unwrap();
@@ -1702,5 +1719,68 @@ mod tests {
         assert_eq!(get_ws_endpoint_from_config(), "ws://127.0.0.1:8001/ws/");
 
         *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+
+    #[test]
+    fn test_collect_dir_entry_regular_file() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        std::fs::write(tmp.path().join("data.txt"), "hello").unwrap();
+
+        let entries = collect_entries(tmp.path());
+        assert_eq!(entries.len(), 1);
+        let (relative, is_dir, size) =
+            run_collect(entries.into_iter().next().unwrap(), &wd).unwrap();
+        assert_eq!(relative, "data.txt");
+        assert!(!is_dir, "regular file should not be flagged as a directory");
+        assert_eq!(size, 5);
+    }
+
+    #[test]
+    fn test_collect_dir_entry_directory() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        std::fs::create_dir(tmp.path().join("subdir")).unwrap();
+
+        let entries = collect_entries(tmp.path());
+        assert_eq!(entries.len(), 1);
+        let (relative, is_dir, _) = run_collect(entries.into_iter().next().unwrap(), &wd).unwrap();
+        assert_eq!(relative, "subdir");
+        assert!(is_dir, "directory entry should be flagged as a directory");
+    }
+
+    #[test]
+    fn test_collect_dir_entry_skips_symlink() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        std::fs::write(tmp.path().join("target.txt"), "data").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(tmp.path().join("target.txt"), tmp.path().join("link")).unwrap();
+
+        let entries = collect_entries(tmp.path());
+        let symlink = entries
+            .into_iter()
+            .find(|e| e.file_name().to_string_lossy() == "link")
+            .unwrap();
+        assert!(
+            run_collect(symlink, &wd).is_none(),
+            "symlink entries should be skipped (DirEntry::metadata does not follow symlinks)"
+        );
+    }
+
+    #[test]
+    fn test_collect_dir_entry_strip_prefix_fallback() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("data.txt"), "x").unwrap();
+
+        let entries = collect_entries(tmp.path());
+        let entry_path = entries[0].path();
+        // working_directory is not a prefix of the entry path -> full path returned
+        let (relative, _, _) = run_collect(
+            entries.into_iter().next().unwrap(),
+            "/unrelated/working/dir",
+        )
+        .unwrap();
+        assert_eq!(relative, entry_path.to_string_lossy());
     }
 }
