@@ -118,9 +118,13 @@ pub fn handle_file_list(mut msg: Message) {
         };
 
         let full_path = Path::new(&working_directory).join(&dir_path);
-        let Ok(abs_path) = fs::canonicalize(&full_path).await else {
-            send_file_list_error(&uuid, "Path to list files does not exist");
-            return;
+        let abs_path = match fs::canonicalize(&full_path).await {
+            Ok(path) => path,
+            Err(e) => {
+                warn!("handle_file_list: Failed to canonicalize path: {}", e);
+                send_file_list_error(&uuid, "Path to list files does not exist");
+                return;
+            }
         };
 
         if !validate_path_is_within(&abs_path, &working_directory).await {
