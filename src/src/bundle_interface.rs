@@ -707,6 +707,7 @@ unsafe fn extract_type_name(extype: *mut PyObject) -> String {
     }
     let c_str = PyUnicode_AsUTF8(type_str);
     let name = if c_str.is_null() {
+        PyErr_Clear();
         "unknown".to_string()
     } else {
         CStr::from_ptr(c_str).to_string_lossy().into_owned()
@@ -735,6 +736,7 @@ unsafe fn extract_value_string(
     }
     let c_str = PyUnicode_AsUTF8(str_obj);
     let s = if c_str.is_null() {
+        PyErr_Clear();
         String::new()
     } else {
         CStr::from_ptr(c_str).to_string_lossy().into_owned()
@@ -833,6 +835,9 @@ mod fallback_value_text_tests {
 #[cfg(test)]
 mod bundle_interface_conversion_tests {
     use super::*;
+    use crate::python_interface::{
+        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, Py_eval_input,
+    };
 
     /// Helper: create a minimal `BundleInterface` with null pointer fields.
     /// Safe for testing null-object paths that don't dereference inner fields.
@@ -924,6 +929,81 @@ mod bundle_interface_conversion_tests {
             let _scope = ThreadScope::new(interp).expect("thread scope should be created");
             let value = my_py_true_struct();
             assert_eq!(extract_value_string(value, always_null_converter), "");
+        }
+    }
+
+    /// Converter stub that returns a non-unicode `PyLong` so that
+    /// `PyUnicode_AsUTF8` fails inside `extract_value_string`, exercising the
+    /// `PyErr_Clear()` + empty-string branch.
+    // SAFETY: Test-only; returns a new reference to a PyLong without touching
+    // the Python error indicator.
+    unsafe fn non_unicode_converter(_obj: *mut PyObject) -> *mut PyObject {
+        PyLong_FromUnsignedLongLong(42)
+    }
+
+    #[test]
+    fn extract_value_string_returns_empty_when_unicode_as_utf8_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `extract_value_string` and `PyErr_Clear`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let value = my_py_true_struct();
+            assert_eq!(extract_value_string(value, non_unicode_converter), "");
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyUnicode_AsUTF8 must be cleared"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_type_name_returns_unknown_when_unicode_as_utf8_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `extract_type_name` and `PyErr_Clear`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            // Create a fresh class instance whose `__name__` attribute is a
+            // non-unicode int, so `PyUnicode_AsUTF8` fails inside
+            // `extract_type_name`.
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "globals dict should be created");
+            assert_eq!(
+                PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins()),
+                0,
+                "setting __builtins__ should succeed"
+            );
+            let code = c"type('_T', (), {})()";
+            let instance = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_eval_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            assert!(!instance.is_null(), "class instance should be created");
+            let int_obj = PyLong_FromUnsignedLongLong(42);
+            assert!(!int_obj.is_null(), "int object should be created");
+            assert_eq!(
+                PyObject_SetAttrString(instance, c"__name__".as_ptr(), int_obj),
+                0,
+                "setting __name__ should succeed"
+            );
+            assert_eq!(extract_type_name(instance), "unknown");
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyUnicode_AsUTF8 must be cleared"
+            );
+            Py_DecRef(int_obj);
+            Py_DecRef(instance);
+            Py_DecRef(globals);
         }
     }
 }
