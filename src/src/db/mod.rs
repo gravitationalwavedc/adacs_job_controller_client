@@ -507,6 +507,51 @@ mod tests {
     }
 
     #[test]
+    fn get_job_status_by_job_id_sends_job_id_ulong_only_and_parses_statuses() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let expected_data = {
+            let mut msg = Message::new(DB_JOBSTATUS_GET_BY_JOB_ID, Priority::Medium, "database");
+            msg.push_ulong(42);
+            msg.get_data().clone()
+        };
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request()
+            .times(1)
+            .returning(move |message| {
+                assert_eq!(message.get_data(), &expected_data);
+
+                let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+                resp.push_uint(2);
+                resp.push_ulong(11);
+                resp.push_ulong(42);
+                resp.push_string("scheduler_id");
+                resp.push_uint(500);
+                resp.push_ulong(12);
+                resp.push_ulong(42);
+                resp.push_string("state");
+                resp.push_uint(1);
+                Box::pin(async move { Ok(resp) })
+            });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let statuses = rt
+            .block_on(async { get_job_status_by_job_id(42).await })
+            .unwrap();
+
+        assert_eq!(statuses.len(), 2);
+        assert_eq!(statuses[0].id, 11);
+        assert_eq!(statuses[0].job_id, 42);
+        assert_eq!(statuses[0].what, "scheduler_id");
+        assert_eq!(statuses[0].state, 500);
+        assert_eq!(statuses[1].id, 12);
+        assert_eq!(statuses[1].job_id, 42);
+        assert_eq!(statuses[1].what, "state");
+        assert_eq!(statuses[1].state, 1);
+    }
+
+    #[test]
     fn get_job_status_by_job_id_and_what_sends_job_id_ulong_then_what_string() {
         let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
@@ -562,6 +607,7 @@ mod tests {
         assert_eq!(statuses[0].what, "scheduler_id");
         assert_eq!(statuses[0].state, 500);
         assert_eq!(statuses[1].id, 12);
+        assert_eq!(statuses[1].job_id, 42);
         assert_eq!(statuses[1].what, "state");
         assert_eq!(statuses[1].state, 1);
     }
