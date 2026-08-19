@@ -40,10 +40,31 @@ impl MockDbState {
 
 /// Helper to configure mock WS with DB support using existing state
 fn with_db_support(
-    mut mock_ws: MockWebsocketClient,
+    mock_ws: MockWebsocketClient,
     state: &Arc<std::sync::Mutex<MockDbState>>,
 ) -> MockWebsocketClient {
+    with_db_support_inner(mock_ws, state, &[])
+}
+
+/// Like `with_db_support`, but the Nth (1-based) `DB_JOBSTATUS_GET_BY_JOB_ID`
+/// request (per `fail_status_reads`) returns a DB connection error instead of
+/// a response, exercising the error branches of `get_job_status_by_job_id`.
+fn with_db_support_failing_status_reads(
+    mock_ws: MockWebsocketClient,
+    state: &Arc<std::sync::Mutex<MockDbState>>,
+    fail_status_reads: &[usize],
+) -> MockWebsocketClient {
+    with_db_support_inner(mock_ws, state, fail_status_reads)
+}
+
+fn with_db_support_inner(
+    mut mock_ws: MockWebsocketClient,
+    state: &Arc<std::sync::Mutex<MockDbState>>,
+    fail_status_reads: &[usize],
+) -> MockWebsocketClient {
     let state_clone = state.clone();
+    let fail_status_reads = fail_status_reads.to_vec();
+    let status_read_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     mock_ws.expect_is_connection_closed().returning(|| false);
     mock_ws.expect_is_server_ready().returning(|| true);
@@ -52,6 +73,15 @@ fn with_db_support(
         .times(..)
         .returning(move |msg| {
             let mut resp = Message::new(DB_RESPONSE, Priority::Medium, "database");
+            if msg.id == DB_JOBSTATUS_GET_BY_JOB_ID {
+                let n = status_read_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                if fail_status_reads.contains(&n) {
+                    return Box::pin(async move {
+                        Err(Box::new(std::io::Error::other("db connection failed"))
+                            as Box<dyn std::error::Error + Send + Sync>)
+                    });
+                }
+            }
             match msg.id {
                 DB_JOB_SAVE => {
                     let mut m = Message::from_data(msg.get_data().clone());
@@ -632,6 +662,137 @@ fn test_cancel_job_running_after_status_check_cancel_success_not_already_cancell
         set_websocket_client(Arc::new(mock_ws));
 
         // Try to cancel a job that is running, status check says still running, cancel succeeds
+        let mut msg_raw = Message::new(CANCEL_JOB, Priority::Medium, SYSTEM_SOURCE);
+        msg_raw.push_uint(1234);
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_job_cancel(msg);
+
+        // Wait for message
+        let msg_data = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("Timeout waiting for UPDATE_JOB message")
+            .expect("No message received");
+
+        let mut result_msg = Message::from_data(msg_data);
+        assert_eq!(result_msg.id, UPDATE_JOB);
+        assert_eq!(result_msg.pop_uint(), 1234);
+        assert_eq!(result_msg.pop_string(), "_job_completion_");
+        assert_eq!(result_msg.pop_uint(), CANCELLED);
+        assert_eq!(result_msg.pop_string(), "Job has been cancelled");
+
+        // Job should no longer be running
+        let job_refreshed = state.lock().unwrap().jobs.get(&1).cloned().unwrap();
+        assert!(!job_refreshed.running);
+
+        // Archive should have been generated
+        let archive_path = working_dir.path().join("archive.tar.gz");
+        assert!(archive_path.exists());
+    }
+    inner();
+}
+
+#[test_fork::test]
+fn test_cancel_job_status_read_failure_before_cancel() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        let (fixture, bundle_hash, state, working_dir) = setup_cancel_test(&db_name);
+
+        // Write cancel+status scripts: status returns complete=false, cancel returns True
+        let status_json = r#"{"status": [], "complete": false}"#;
+        fixture.write_job_cancel_check_status(
+            &bundle_hash,
+            4321,
+            1234,
+            "test_cluster",
+            status_json,
+            "True",
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        // Fail the first DB_JOBSTATUS_GET_BY_JOB_ID request (the pre-cancel
+        // status read in handle_job_cancel).
+        let mut mock_ws =
+            with_db_support_failing_status_reads(MockWebsocketClient::new(), &state, &[1]);
+        mock_ws
+            .expect_queue_message()
+            .times(1)
+            .returning(move |_, data, _| {
+                let _ = tx_clone.send(data);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        // Try to cancel a job whose pre-cancel status read fails
+        let mut msg_raw = Message::new(CANCEL_JOB, Priority::Medium, SYSTEM_SOURCE);
+        msg_raw.push_uint(1234);
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_job_cancel(msg);
+
+        // Wait for message
+        let msg_data = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("Timeout waiting for UPDATE_JOB message")
+            .expect("No message received");
+
+        let mut result_msg = Message::from_data(msg_data);
+        assert_eq!(result_msg.id, UPDATE_JOB);
+        assert_eq!(result_msg.pop_uint(), 1234);
+        assert_eq!(result_msg.pop_string(), "_job_completion_");
+        assert_eq!(result_msg.pop_uint(), CANCELLED);
+        assert_eq!(result_msg.pop_string(), "Job has been cancelled");
+
+        // Job should no longer be running
+        let job_refreshed = state.lock().unwrap().jobs.get(&1).cloned().unwrap();
+        assert!(!job_refreshed.running);
+
+        // Archive should have been generated
+        let archive_path = working_dir.path().join("archive.tar.gz");
+        assert!(archive_path.exists());
+    }
+    inner();
+}
+
+#[test_fork::test]
+fn test_cancel_job_status_read_failure_after_cancel() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        let (fixture, bundle_hash, state, working_dir) = setup_cancel_test(&db_name);
+
+        // Write cancel+status scripts: status returns complete=false, cancel returns True
+        let status_json = r#"{"status": [], "complete": false}"#;
+        fixture.write_job_cancel_check_status(
+            &bundle_hash,
+            4321,
+            1234,
+            "test_cluster",
+            status_json,
+            "True",
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        // Fail the fourth DB_JOBSTATUS_GET_BY_JOB_ID request (the post-cancel
+        // status read in handle_job_cancel; the first, second and third reads
+        // come from the pre-cancel read and the two check_job_status calls).
+        let mut mock_ws =
+            with_db_support_failing_status_reads(MockWebsocketClient::new(), &state, &[4]);
+        mock_ws
+            .expect_queue_message()
+            .times(1)
+            .returning(move |_, data, _| {
+                let _ = tx_clone.send(data);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        // Try to cancel a job whose post-cancel status read fails
         let mut msg_raw = Message::new(CANCEL_JOB, Priority::Medium, SYSTEM_SOURCE);
         msg_raw.push_uint(1234);
         let msg = Message::from_data(msg_raw.get_data().clone());
