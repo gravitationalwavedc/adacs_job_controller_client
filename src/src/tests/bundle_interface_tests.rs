@@ -928,6 +928,58 @@ fn test_to_string_py_clears_stale_error_for_non_string_object() {
     inner();
 }
 
+/// The `json.dumps` attribute lookup can fail (e.g. when the `dumps`
+/// attribute is removed from the json module), so `json_dumps` must return
+/// Err (the "Failed to get json.dumps function" branch) instead of
+/// dereferencing a null function pointer.
+#[test]
+fn test_json_dumps_returns_err_when_dumps_lookup_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            // The json module is cached in the sub-interpreter, so this
+            // returns the same module object `json_dumps` reads from.
+            let json_module = PyImport_ImportModule(c"json".as_ptr());
+            assert!(!json_module.is_null(), "json module should import");
+            let c_name = CString::new("dumps").unwrap();
+            // PyObject_SetAttrString with a NULL value deletes the attribute
+            // (this is what CPython's PyObject_DelAttrString macro expands to).
+            assert_eq!(
+                PyObject_SetAttrString(json_module, c_name.as_ptr(), std::ptr::null_mut()),
+                0,
+                "deleting json.dumps should succeed"
+            );
+            let obj = bundle.json_loads(r#"{"key": "value"}"#);
+            assert!(!obj.is_null(), "json_loads should succeed");
+            let result = bundle.json_dumps(obj);
+            bundle.dispose_object(obj);
+            assert_eq!(
+                result,
+                Err("Failed to get json.dumps function".to_string()),
+                "json_dumps should return Err when json.dumps is unavailable"
+            );
+        }
+    }
+    inner();
+}
+
 /// A non-integer `PyObject` (e.g. a str) makes `PyLong_AsUnsignedLongLong`
 /// fail and set a `TypeError`. `to_uint64` must clear that stale error so it
 /// can't poison later `PyErr_Occurred` checks on the same sub-interpreter
