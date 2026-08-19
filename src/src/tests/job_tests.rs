@@ -1362,7 +1362,9 @@ fn test_archive_dir_empty_directory() {
 use crate::db::{job, jobstatus};
 use crate::jobs::check_job_status;
 use crate::messaging::{COMPLETED, RUNNING, UPDATE_JOB};
+use std::io::Write;
 use tempfile::TempDir;
+use tracing_subscriber::fmt::MakeWriter;
 
 fn setup_check_status_test(
     db_name: &str,
@@ -1452,6 +1454,190 @@ fn setup_check_status_test(
     state.lock().unwrap().jobs.insert(1, job.clone());
 
     (fixture, bundle_hash, job, working_dir, state)
+}
+
+#[derive(Clone, Default)]
+struct StatusLogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl StatusLogWriter {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn into_string(self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap_or_default()
+    }
+}
+
+impl<'a> MakeWriter<'a> for StatusLogWriter {
+    type Writer = StatusLogWriterGuard;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        StatusLogWriterGuard(self.0.clone())
+    }
+}
+
+struct StatusLogWriterGuard(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Write for StatusLogWriterGuard {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Run `f` with a thread-local tracing subscriber that captures ERROR-level
+/// events into a `String`.
+fn capture_error_logs<F: FnOnce()>(f: F) -> String {
+    let writer = StatusLogWriter::new();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(writer.clone())
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_max_level(tracing::Level::ERROR)
+        .finish();
+    tracing::subscriber::with_default(subscriber, f);
+    writer.into_string()
+}
+
+#[test_fork::test]
+fn test_check_status_logs_failed_status_read_and_what() {
+    crate::websocket::reset_websocket_client_for_test();
+    let db_name = Uuid::new_v4().to_string();
+    let (fixture, bundle_hash, job, _working_dir, _state) = setup_check_status_test(&db_name);
+
+    // Status script with a RUNNING status so the per-what read is hit.
+    fixture.write_job_status(
+        &bundle_hash,
+        r#"{"status": [{"info": "Some info", "what": "test_what", "status": 50}], "complete": false}"#,
+    );
+
+    let state = Arc::new(std::sync::Mutex::new(MockDbState::default()));
+    let state_clone = state.clone();
+    let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
+    mock_ws.expect_is_server_ready().returning(|| true);
+    mock_ws
+        .expect_send_db_request()
+        .times(..)
+        .returning(move |msg| {
+            if msg.id == DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT {
+                return Box::pin(async move {
+                    Err(Box::<dyn std::error::Error + Send + Sync>::from("db down"))
+                });
+            }
+            let mut resp =
+                Message::new(crate::messaging::DB_RESPONSE, Priority::Medium, "database");
+            match msg.id {
+                DB_JOBSTATUS_SAVE => {
+                    let mut m = Message::from_data(msg.get_data().clone());
+                    let id = m.pop_ulong() as i64;
+                    let job_id = m.pop_ulong() as i64;
+                    let what = m.pop_string();
+                    let state_val = m.pop_uint() as i32;
+                    let mut s = state_clone.lock().unwrap();
+                    let saved_id = if id > 0 { id } else { s.next_status_id };
+                    if id > 0 {
+                        s.next_status_id = std::cmp::max(s.next_status_id, id + 1);
+                    } else {
+                        s.next_status_id += 1;
+                    }
+                    let status = jobstatus::Model {
+                        id: saved_id,
+                        job_id,
+                        state: state_val,
+                        what,
+                    };
+                    s.statuses.insert(saved_id, status);
+                    resp.push_ulong(saved_id as u64);
+                }
+                DB_JOBSTATUS_GET_BY_JOB_ID => {
+                    resp.push_uint(0);
+                }
+                _ => {
+                    resp.push_ulong(0);
+                }
+            }
+            Box::pin(async move { Ok(resp) })
+        });
+    // The update path proceeds even though the per-what read failed.
+    mock_ws
+        .expect_queue_message()
+        .times(1)
+        .returning(|_, _, _| {});
+    set_websocket_client(Arc::new(mock_ws));
+
+    let logs = capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(check_job_status(job.clone(), true));
+    });
+
+    assert!(
+        logs.contains(
+            "check_job_status: failed to read status for job_id=1234, what=test_what: db down"
+        ),
+        "expected status-read error in logs, got:\n{logs}"
+    );
+
+    // The failed read fell back to an empty vec and the update still ran.
+    let v_status: Vec<_> = state
+        .lock()
+        .unwrap()
+        .statuses
+        .values()
+        .filter(|s| s.job_id == job.id)
+        .cloned()
+        .collect();
+    assert_eq!(v_status.len(), 1);
+    assert_eq!(v_status[0].what, "test_what");
+    assert_eq!(v_status[0].state, 50);
+}
+
+#[test_fork::test]
+fn test_check_status_logs_failed_status_read() {
+    crate::websocket::reset_websocket_client_for_test();
+    let db_name = Uuid::new_v4().to_string();
+    let (fixture, bundle_hash, job, _working_dir, _state) = setup_check_status_test(&db_name);
+
+    // Empty status array, not complete: only the final per-job read is hit.
+    fixture.write_job_status(&bundle_hash, r#"{"status": [], "complete": false}"#);
+
+    let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
+    mock_ws.expect_is_server_ready().returning(|| true);
+    mock_ws.expect_send_db_request().times(..).returning(|msg| {
+        if msg.id == DB_JOBSTATUS_GET_BY_JOB_ID {
+            return Box::pin(async move {
+                Err(Box::<dyn std::error::Error + Send + Sync>::from("db down"))
+            });
+        }
+        let mut resp = Message::new(crate::messaging::DB_RESPONSE, Priority::Medium, "database");
+        resp.push_ulong(0);
+        Box::pin(async move { Ok(resp) })
+    });
+    mock_ws.expect_queue_message().times(0);
+    set_websocket_client(Arc::new(mock_ws));
+
+    let logs = capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(check_job_status(job.clone(), true));
+    });
+
+    assert!(
+        logs.contains("check_job_status: failed to read status for job_id=1234: db down"),
+        "expected status-read error in logs, got:\n{logs}"
+    );
 }
 
 #[test_fork::test]
