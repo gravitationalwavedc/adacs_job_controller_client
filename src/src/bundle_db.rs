@@ -556,6 +556,7 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
 
     if PyModule_AddObject(module, c"error".as_ptr(), exc) < 0 {
         Py_XDECREF(exc);
+        Py_DecRef(exc);
         Py_DecRef(module);
         return ptr::null_mut();
     }
