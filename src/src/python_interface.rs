@@ -180,6 +180,7 @@ py_wrap!(PyImport_AppendInittab, (name: *const c_char, init_func: Option<unsafe 
 py_wrap!(PyImport_ImportModule, (name: *const c_char) -> *mut PyObject);
 py_wrap!(PyDict_New, () -> *mut PyObject);
 py_wrap!(PyDict_SetItemString, (dict: *mut PyObject, key: *const c_char, item: *mut PyObject) -> c_int);
+py_wrap!(PyDict_GetItemString, (dict: *mut PyObject, key: *const c_char) -> *mut PyObject);
 py_wrap!(PyEval_GetBuiltins, () -> *mut PyObject);
 py_wrap!(PyObject_GetAttrString, (obj: *mut PyObject, name: *const c_char) -> *mut PyObject);
 py_wrap!(PyObject_SetAttrString, (obj: *mut PyObject, name: *const c_char, value: *mut PyObject) -> c_int);
@@ -214,6 +215,7 @@ py_wrap!(PyLong_AsUnsignedLongLong, (obj: *mut PyObject) -> u64);
 py_wrap!(PyErr_NewException, (name: *const c_char, base: *mut PyObject, dict: *mut PyObject) -> *mut PyObject);
 py_wrap!(PyModule_AddObject, (module: *mut PyObject, name: *const c_char, value: *mut PyObject) -> c_int);
 py_wrap!(PyErr_SetString, (type_: *mut PyObject, message: *const c_char) -> ());
+py_wrap!(PyTuple_Size, (tuple: *mut PyObject) -> Py_ssize_t);
 py_wrap!(PyRun_StringFlags, (code: *const c_char, start: c_int, globals: *mut PyObject, locals: *mut PyObject, flags: *mut c_void) -> *mut PyObject);
 
 // ─── Convenience helpers ─────────────────────────────────────────────────────
@@ -223,6 +225,45 @@ pub unsafe fn Py_XDECREF(obj: *mut PyObject) {
     if !obj.is_null() {
         Py_DecRef(obj);
     }
+}
+
+// ─── Test-only FFI override seam ─────────────────────────────────────────────
+// Some defensive branches (e.g. `PyTuple_SetItem` failures in
+// `BundleInterface::print_last_python_exception`) are unreachable through the
+// public API because the calls always succeed on freshly-created tuples with
+// valid indices. This seam lets tests force a failure without changing
+// production behavior. Tests run serially (`--test-threads=1`), so the global
+// override cannot race across tests.
+
+#[cfg(test)]
+pub type PyTupleSetItemFn = unsafe fn(*mut PyObject, Py_ssize_t, *mut PyObject) -> c_int;
+
+#[cfg(test)]
+static PY_TUPLE_SET_ITEM_OVERRIDE: Mutex<Option<PyTupleSetItemFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_tuple_set_item`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_tuple_set_item_override(f: Option<PyTupleSetItemFn>) -> Option<PyTupleSetItemFn> {
+    let mut guard = PY_TUPLE_SET_ITEM_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyTuple_SetItem` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyTuple_SetItem`: caller holds `PYTHON_MUTEX` and the
+/// GIL; `tuple` is a valid tuple, `pos` is in range, `item` is a live object.
+pub unsafe fn py_tuple_set_item(
+    tuple: *mut PyObject,
+    pos: Py_ssize_t,
+    item: *mut PyObject,
+) -> c_int {
+    #[cfg(test)]
+    if let Some(f) = *PY_TUPLE_SET_ITEM_OVERRIDE.lock() {
+        return f(tuple, pos, item);
+    }
+    PyTuple_SetItem(tuple, pos, item)
 }
 
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.

@@ -6,13 +6,14 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, MyPy_IsNone, PyCallable_Check, PyDict_New,
-    PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print,
-    PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule,
-    PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject,
-    PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject,
-    PyThreadState, PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef,
-    Py_IncRef, Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
+    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
+    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
+    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
+    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
+    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
+    SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -572,27 +573,35 @@ impl BundleInterface {
                         type_name
                     );
                 } else {
-                    PyTuple_SetItem(tb_args, 0, traceback); // steals the ref
-                    let tb_lines = PyObject_CallObject(tb_func, tb_args);
-                    let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
-                    if tb_ok {
-                        error!("Traceback (most recent call last):");
-                        log_python_lines(tb_lines);
-                        Py_DecRef(tb_lines);
+                    // On failure PyTuple_SetItem releases the item reference itself, so we
+                    // must not Py_DecRef the item again here.
+                    if py_tuple_set_item(tb_args, 0, traceback) < 0 {
+                        error!("Error setting traceback in args tuple");
+                        PyErr_Print();
+                        Py_DecRef(tb_args);
+                        Py_XDECREF(tb_func);
                     } else {
-                        error!(
-                            "Error formatting python traceback frames (type was {})",
-                            type_name
-                        );
-                        if !tb_lines.is_null() {
+                        let tb_lines = PyObject_CallObject(tb_func, tb_args);
+                        let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
+                        if tb_ok {
+                            error!("Traceback (most recent call last):");
+                            log_python_lines(tb_lines);
                             Py_DecRef(tb_lines);
+                        } else {
+                            error!(
+                                "Error formatting python traceback frames (type was {})",
+                                type_name
+                            );
+                            if !tb_lines.is_null() {
+                                Py_DecRef(tb_lines);
+                            }
+                            swallow_python_error();
                         }
-                        swallow_python_error();
+                        // tb_args stole the `traceback` ref; releasing the tuple
+                        // decrefs traceback too. Safe in both success and failure.
+                        Py_DecRef(tb_args);
+                        Py_XDECREF(tb_func);
                     }
-                    // tb_args stole the `traceback` ref; releasing the tuple
-                    // decrefs traceback too. Safe in both success and failure.
-                    Py_DecRef(tb_args);
-                    Py_XDECREF(tb_func);
                 }
             }
         }
@@ -630,17 +639,24 @@ impl BundleInterface {
                     fallback_value_text(&value_display, &value_str)
                 );
             } else {
-                PyTuple_SetItem(eo_args, 0, extype); // steals the ref
-                                                     // `format_exception_only` still expects an exception-like object
-                                                     // on modern Python, so raw-string values may make it fail. We
-                                                     // keep a manual fallback below. Pass `Py_None` only when the
-                                                     // fetched value is literally NULL.
-                if value.is_null() {
-                    let none = my_py_none_struct();
-                    Py_IncRef(none);
-                    PyTuple_SetItem(eo_args, 1, none);
-                } else {
-                    PyTuple_SetItem(eo_args, 1, value); // steals the ref
+                // On failure PyTuple_SetItem releases the item reference itself, so we
+                // must not Py_DecRef the item again here.
+                if py_tuple_set_item(eo_args, 0, extype) < 0 {
+                    error!("Error setting exception type in args tuple");
+                    PyErr_Print();
+                    Py_DecRef(eo_args);
+                    // `value` has not been consumed by any SetItem yet; release it
+                    // so it is not leaked.
+                    Py_XDECREF(value);
+                    Py_XDECREF(eo_func);
+                    return;
+                }
+                // `format_exception_only` still expects an exception-like object
+                // on modern Python, so raw-string values may make it fail. We
+                // keep a manual fallback below. Pass `Py_None` only when the
+                // fetched value is literally NULL.
+                if !set_exception_value_slot(eo_args, value, eo_func) {
+                    return;
                 }
                 let eo_lines = PyObject_CallObject(eo_func, eo_args);
                 let eo_ok = !eo_lines.is_null() && PyErr_Occurred().is_null();
@@ -738,6 +754,41 @@ fn fallback_value_text<'a>(display: &'a str, repr: &'a str) -> &'a str {
     } else {
         display
     }
+}
+
+/// Set the exception-value slot (index 1) of `eo_args`, passing `Py_None`
+/// when `value` is NULL. Returns `true` on success. On failure it logs the
+/// marker, releases `eo_args` and `eo_func`, and returns `false` (the caller
+/// must return early).
+///
+/// On failure `PyTuple_SetItem` releases the item reference itself, so we must
+/// not `Py_DecRef` the item again here.
+// SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+// `eo_args` is a live size-2 tuple, `value` is NULL or a live object, and
+// `eo_func` is a live callable.
+unsafe fn set_exception_value_slot(
+    eo_args: *mut PyObject,
+    value: *mut PyObject,
+    eo_func: *mut PyObject,
+) -> bool {
+    if value.is_null() {
+        let none = my_py_none_struct();
+        Py_IncRef(none);
+        if py_tuple_set_item(eo_args, 1, none) < 0 {
+            error!("Error setting exception value in args tuple");
+            PyErr_Print();
+            Py_DecRef(eo_args);
+            Py_XDECREF(eo_func);
+            return false;
+        }
+    } else if py_tuple_set_item(eo_args, 1, value) < 0 {
+        error!("Error setting exception value in args tuple");
+        PyErr_Print();
+        Py_DecRef(eo_args);
+        Py_XDECREF(eo_func);
+        return false;
+    }
+    true
 }
 
 /// Iterate a Python iterable of strings and log each line via
@@ -909,6 +960,148 @@ mod bundle_interface_conversion_tests {
             let _scope = ThreadScope::new(interp).expect("thread scope should be created");
             let value = my_py_true_struct();
             assert_eq!(extract_value_string(value, always_null_converter), "");
+        }
+    }
+}
+
+// ─── set_exception_value_slot tests ──────────────────────────────────────────
+
+#[cfg(test)]
+mod set_exception_value_slot_tests {
+    use super::*;
+    use crate::python_interface::{
+        set_py_tuple_set_item_override, PyTupleSetItemFn, PyTuple_GetItem, PyTuple_Size, Py_ssize_t,
+    };
+    use std::os::raw::c_int;
+
+    /// RAII guard that installs a `py_tuple_set_item` override for the duration
+    /// of a test and restores the previous override on drop.
+    struct TupleSetItemOverrideGuard(Option<PyTupleSetItemFn>);
+
+    impl TupleSetItemOverrideGuard {
+        fn install(f: PyTupleSetItemFn) -> Self {
+            Self(set_py_tuple_set_item_override(Some(f)))
+        }
+    }
+
+    impl Drop for TupleSetItemOverrideGuard {
+        fn drop(&mut self) {
+            set_py_tuple_set_item_override(self.0);
+        }
+    }
+
+    /// Override that fails `PyTuple_SetItem` only for the size-2 `eo_args`
+    /// tuple at index 1 when the item is `Py_None` (the NULL-value slot).
+    // SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
+    unsafe fn fail_none_item(tuple: *mut PyObject, pos: Py_ssize_t, item: *mut PyObject) -> c_int {
+        if PyTuple_Size(tuple) == 2 && pos == 1 && item == my_py_none_struct() {
+            Py_DecRef(item);
+            -1
+        } else {
+            PyTuple_SetItem(tuple, pos, item)
+        }
+    }
+
+    /// Override that fails `PyTuple_SetItem` only for the size-2 `eo_args`
+    /// tuple at index 1 when the item is not `Py_None` (the value slot).
+    // SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
+    unsafe fn fail_non_none_item(
+        tuple: *mut PyObject,
+        pos: Py_ssize_t,
+        item: *mut PyObject,
+    ) -> c_int {
+        if PyTuple_Size(tuple) == 2 && pos == 1 && item != my_py_none_struct() {
+            Py_DecRef(item);
+            -1
+        } else {
+            PyTuple_SetItem(tuple, pos, item)
+        }
+    }
+
+    /// `set_exception_value_slot` must store `Py_None` when `value` is NULL
+    /// (the `value.is_null()` branch) and report success.
+    #[test]
+    fn passes_none_for_null_value() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let eo_args = PyTuple_New(2);
+            assert!(!eo_args.is_null(), "PyTuple_New should succeed");
+            let eo_func = my_py_true_struct();
+            let ok = set_exception_value_slot(eo_args, std::ptr::null_mut(), eo_func);
+            assert!(ok, "NULL value should store Py_None and succeed");
+            let stored = PyTuple_GetItem(eo_args, 1);
+            assert_eq!(stored, my_py_none_struct(), "Py_None should be stored");
+            Py_DecRef(eo_args);
+        }
+    }
+
+    /// `set_exception_value_slot` must store a non-NULL value (the non-NULL
+    /// branch) and report success.
+    #[test]
+    fn stores_value_for_non_null_value() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let eo_args = PyTuple_New(2);
+            assert!(!eo_args.is_null(), "PyTuple_New should succeed");
+            let eo_func = my_py_true_struct();
+            let value = my_py_true_struct();
+            Py_IncRef(value); // SetItem steals this ref into the tuple
+            let ok = set_exception_value_slot(eo_args, value, eo_func);
+            assert!(ok, "non-NULL value should be stored");
+            let stored = PyTuple_GetItem(eo_args, 1);
+            assert_eq!(stored, value, "value should be stored");
+            Py_DecRef(eo_args);
+        }
+    }
+
+    /// `set_exception_value_slot` must log the marker and return `false` when
+    /// the `Py_None` slot `SetItem` fails (the NULL-value failure branch).
+    #[test]
+    fn handles_none_set_item_failure() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let _override = TupleSetItemOverrideGuard::install(fail_none_item);
+            let eo_args = PyTuple_New(2);
+            assert!(!eo_args.is_null(), "PyTuple_New should succeed");
+            let eo_func = my_py_true_struct();
+            let ok = set_exception_value_slot(eo_args, std::ptr::null_mut(), eo_func);
+            assert!(!ok, "None SetItem failure should return false");
+        }
+    }
+
+    /// `set_exception_value_slot` must log the marker and return `false` when
+    /// the value slot `SetItem` fails (the non-NULL-value failure branch).
+    #[test]
+    fn handles_value_set_item_failure() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let _override = TupleSetItemOverrideGuard::install(fail_non_none_item);
+            let eo_args = PyTuple_New(2);
+            assert!(!eo_args.is_null(), "PyTuple_New should succeed");
+            let eo_func = my_py_true_struct();
+            let value = my_py_true_struct();
+            let ok = set_exception_value_slot(eo_args, value, eo_func);
+            assert!(!ok, "value SetItem failure should return false");
         }
     }
 }
