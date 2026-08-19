@@ -13,7 +13,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::{watch, Semaphore};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -450,33 +450,32 @@ pub fn handle_file_download(mut msg: Message) {
         let download_start = std::time::Instant::now();
         let mut total_bytes = 0;
 
-        let paused = Arc::new(Notify::new());
-        let is_paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (pause_tx, mut pause_rx) = watch::channel(false);
 
-        let is_paused_clone = is_paused.clone();
-        let paused_clone = paused.clone();
+        let pause_tx_clone = pause_tx.clone();
         tokio::spawn(async move {
             while let Some(Ok(ws_msg)) = ws_receiver.next().await {
                 if let WsMessage::Binary(data) = ws_msg {
                     let m = Message::from_data(data.to_vec());
                     if m.id == PAUSE_FILE_CHUNK_STREAM {
-                        is_paused_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                        let _ = pause_tx_clone.send(true);
                     } else if m.id == RESUME_FILE_CHUNK_STREAM {
-                        is_paused_clone.store(false, std::sync::atomic::Ordering::SeqCst);
-                        paused_clone.notify_one();
+                        let _ = pause_tx_clone.send(false);
                     }
                 }
             }
             // Connection closed: if a PAUSE was received without a matching
             // RESUME, wake the download loop so it observes the dead connection
-            // and exits instead of blocking forever on the pause notification.
-            is_paused_clone.store(false, std::sync::atomic::Ordering::SeqCst);
-            paused_clone.notify_one();
+            // and exits instead of blocking forever on the pause wait. A watch
+            // channel stores the value, so a change racing with the wait below
+            // is never lost (unlike Notify, which drops notifications with no
+            // registered waiter).
+            let _ = pause_tx_clone.send(false);
         });
 
         loop {
-            if is_paused.load(std::sync::atomic::Ordering::SeqCst) {
-                paused.notified().await;
+            if *pause_rx.borrow_and_update() {
+                let _ = pause_rx.changed().await;
             }
 
             let n = match file.read(&mut buffer).await {
