@@ -1463,6 +1463,35 @@ mod tests {
         assert_eq!(response_msg.source, test_uuid);
     }
 
+    #[tokio::test]
+    async fn test_wait_for_server_ready_returns_handshake() {
+        let server = WebsocketServerFixture::new().await;
+        let url = format!("ws://127.0.0.1:{}/ws/", server.port);
+        let request = build_file_ws_request(&url, "test-token").unwrap();
+        let (ws_stream, _) = connect_async(request).await.unwrap();
+        let (_ws_sender, mut ws_receiver) = ws_stream.split();
+
+        let msg = wait_for_server_ready(&mut ws_receiver)
+            .await
+            .expect("Expected SERVER_READY handshake");
+        assert_eq!(msg.id, SERVER_READY);
+    }
+
+    #[tokio::test]
+    async fn test_connect_file_ws_returns_sender_receiver_on_success() {
+        let server = WebsocketServerFixture::new().await;
+        let url = format!("ws://127.0.0.1:{}/ws/", server.port);
+
+        let result = connect_file_ws(&url, "test-uuid", "", "test").await;
+        assert!(result.is_some(), "Expected successful file WS connection");
+    }
+
+    #[tokio::test]
+    async fn test_connect_file_ws_returns_none_on_invalid_endpoint() {
+        let result = connect_file_ws("not-a-websocket-url", "test-uuid", "", "test").await;
+        assert!(result.is_none(), "Expected None for invalid endpoint");
+    }
+
     #[test]
     #[serial_test::serial]
     fn get_ws_endpoint_from_config_reads_and_normalizes_trailing_slash() {
