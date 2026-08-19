@@ -983,6 +983,7 @@ mod tests {
     use crate::websocket::{
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
+    use mockall::predicate::{always, eq};
     use serde_json::json;
     use std::fs;
     use std::io::Write;
@@ -1352,6 +1353,35 @@ mod tests {
             assert_eq!(resp.source, "uuid-123");
             assert_eq!(resp.pop_string(), "boom");
         });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_send_file_list_error_queues_highest_priority_message() {
+        reset_websocket_client_for_test();
+        let mut mock_ws = MockWebsocketClient::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "uuid-123".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let _ = tx_clone.send(data);
+            });
+        set_websocket_client(Arc::new(mock_ws));
+
+        send_file_list_error(&test_uuid, "boom");
+
+        let data = rx.try_recv().expect("expected a queued message");
+        let mut resp = Message::from_data(data);
+        assert_eq!(resp.id, FILE_LIST_ERROR);
+        assert_eq!(resp.source, "uuid-123");
+        assert_eq!(resp.pop_string(), "uuid-123");
+        assert_eq!(resp.pop_string(), "boom");
     }
 
     #[test]
