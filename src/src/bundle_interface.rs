@@ -195,6 +195,7 @@ impl BundleInterface {
         if PyDict_SetItemString(p_global, c"json".as_ptr(), json_module) < 0 {
             error!("Error setting json module in globals dict");
             PyErr_Print();
+            Py_DecRef(json_module);
             return Err("Failed to set json module in globals dict".to_string());
         }
 
