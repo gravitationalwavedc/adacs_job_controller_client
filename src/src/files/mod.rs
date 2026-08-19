@@ -421,19 +421,29 @@ pub fn handle_file_list(mut msg: Message) {
             let mut stack = vec![abs_path.clone()];
             while let Some(current_dir) = stack.pop() {
                 match fs::read_dir(&current_dir).await {
-                    Ok(mut entries) => {
-                        while let Ok(Some(entry)) = entries.next_entry().await {
-                            let path = entry.path();
-                            if let Some((relative_path, is_dir, size)) =
-                                collect_dir_entry(entry, &working_directory).await
-                            {
-                                file_list.push((relative_path, is_dir, size));
-                                if is_dir {
-                                    stack.push(path);
+                    Ok(mut entries) => loop {
+                        match entries.next_entry().await {
+                            Ok(Some(entry)) => {
+                                let path = entry.path();
+                                if let Some((relative_path, is_dir, size)) =
+                                    collect_dir_entry(entry, &working_directory).await
+                                {
+                                    file_list.push((relative_path, is_dir, size));
+                                    if is_dir {
+                                        stack.push(path);
+                                    }
                                 }
                             }
+                            Ok(None) => break,
+                            Err(e) => {
+                                warn!(
+                                    "handle_file_list: failed to read directory entry in {:?}: {}",
+                                    current_dir, e
+                                );
+                                break;
+                            }
                         }
-                    }
+                    },
                     Err(e) => {
                         warn!(
                             "handle_file_list: failed to read directory {:?}: {}",
@@ -444,14 +454,25 @@ pub fn handle_file_list(mut msg: Message) {
             }
         } else {
             match fs::read_dir(&abs_path).await {
-                Ok(mut entries) => {
-                    while let Ok(Some(entry)) = entries.next_entry().await {
-                        if let Some(entry_info) = collect_dir_entry(entry, &working_directory).await
-                        {
-                            file_list.push(entry_info);
+                Ok(mut entries) => loop {
+                    match entries.next_entry().await {
+                        Ok(Some(entry)) => {
+                            if let Some(entry_info) =
+                                collect_dir_entry(entry, &working_directory).await
+                            {
+                                file_list.push(entry_info);
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            warn!(
+                                "handle_file_list: failed to read directory entry in {:?}: {}",
+                                abs_path, e
+                            );
+                            break;
                         }
                     }
-                }
+                },
                 Err(e) => {
                     warn!(
                         "handle_file_list: failed to read directory {:?}: {}",
