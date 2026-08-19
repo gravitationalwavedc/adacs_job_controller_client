@@ -128,17 +128,9 @@ pub fn handle_file_list(mut msg: Message) {
             return;
         }
 
-        match fs::metadata(&abs_path).await {
-            Ok(m) if m.is_dir() => {}
-            Ok(_) => {
-                send_file_list_error(&uuid, "Path to list files is not a directory");
-                return;
-            }
-            Err(e) => {
-                warn!("handle_file_list: Failed to get file metadata: {}", e);
-                send_file_list_error(&uuid, "Path to list files is not a directory");
-                return;
-            }
+        if validate_list_target_is_directory(&abs_path).await.is_err() {
+            send_file_list_error(&uuid, "Path to list files is not a directory");
+            return;
         }
 
         let mut file_list = Vec::new();
@@ -188,6 +180,17 @@ pub fn handle_file_list(mut msg: Message) {
         get_websocket_client().queue_message(uuid, result.get_data().clone(), Priority::Highest);
         debug!("handle_file_list: FILE_LIST message queued");
     });
+}
+
+async fn validate_list_target_is_directory(abs_path: &Path) -> Result<(), ()> {
+    match fs::metadata(abs_path).await {
+        Ok(m) if m.is_dir() => Ok(()),
+        Ok(_) => Err(()),
+        Err(e) => {
+            warn!("handle_file_list: Failed to get file metadata: {}", e);
+            Err(())
+        }
+    }
 }
 
 async fn collect_dir_entry(
@@ -953,9 +956,58 @@ mod tests {
     };
     use serde_json::json;
     use std::fs;
+    use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
     use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct VecWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl VecWriter {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn into_string(self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap_or_default()
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for VecWriter {
+        type Writer = VecWriterGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            VecWriterGuard(self.0.clone())
+        }
+    }
+
+    struct VecWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for VecWriterGuard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn capture_logs<F: FnOnce()>(f: F) -> String {
+        let writer = VecWriter::new();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .with_target(true)
+            .with_level(true)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        writer.into_string()
+    }
 
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -992,6 +1044,41 @@ mod tests {
         assert!(run_validate(&file, &wd), "file inside wd should pass");
         assert!(run_validate(&sub, &wd), "subdir inside wd should pass");
         assert!(run_validate(tmp.path(), &wd), "wd itself should pass");
+    }
+
+    #[test]
+    fn validate_list_target_is_directory_accepts_dir_rejects_file_and_logs_metadata_failure() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let subdir = tmp.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+        let file = tmp.path().join("file.txt");
+        fs::write(&file, "data").unwrap();
+        let missing = tmp.path().join("missing");
+
+        assert!(
+            rt.block_on(validate_list_target_is_directory(&subdir))
+                .is_ok(),
+            "existing directory should be accepted"
+        );
+
+        assert!(
+            rt.block_on(validate_list_target_is_directory(&file))
+                .is_err(),
+            "existing file should be rejected"
+        );
+
+        let logs = capture_logs(|| {
+            assert!(
+                rt.block_on(validate_list_target_is_directory(&missing))
+                    .is_err(),
+                "metadata failure should be rejected"
+            );
+        });
+        assert!(
+            logs.contains("handle_file_list: Failed to get file metadata"),
+            "expected metadata failure warning, got: {logs}"
+        );
     }
 
     #[test]
