@@ -2687,6 +2687,81 @@ fn test_file_upload_open_write_error() {
 }
 
 #[test_fork::test]
+fn test_file_upload_create_dir_all_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test36");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+
+        // Create a regular file blocking the parent directory path so
+        // create_dir_all fails with ENOTDIR
+        let blocker = fixture.get_temp_path().join("blocker");
+        fs::write(&blocker, b"not a directory").unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1250i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-create-dir-error".to_string();
+        let target_path = "blocker/sub/file.txt";
+        let file_content = b"should fail to create parent dir";
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(file_content.len() as u64);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_upload(msg);
+
+        let mut server = server;
+        let ready = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for SERVER_READY")
+            .expect("No ready");
+        assert_eq!(ready.id, SERVER_READY);
+
+        let response = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for response")
+            .expect("No response");
+
+        assert_eq!(response.id, FILE_UPLOAD_ERROR);
+        let mut response_msg = response;
+        let error_msg = response_msg.pop_string();
+        assert!(
+            error_msg.contains("Failed to create parent directory"),
+            "Expected create_dir_all error, got: {error_msg}"
+        );
+        assert_ne!(error_msg, "Failed to open target file for writing");
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
 fn test_file_upload_large_file() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {

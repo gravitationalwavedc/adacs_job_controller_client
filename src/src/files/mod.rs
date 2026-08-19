@@ -646,6 +646,14 @@ fn handle_file_upload_internal(
                     "handle_file_upload_internal: Failed to create parent directory {:?}: {}",
                     parent, e
                 );
+                send_file_error(
+                    &mut ws_sender,
+                    &uuid,
+                    &format!("Failed to create parent directory: {e}"),
+                    FILE_UPLOAD_ERROR,
+                )
+                .await;
+                return;
             }
         }
 
