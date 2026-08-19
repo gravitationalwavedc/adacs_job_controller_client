@@ -1,6 +1,10 @@
 #![allow(clippy::uninlined_format_args)]
-use crate::bundle_logging::get_last_log_message;
+use crate::bundle_logging::{get_last_log_message, write_log};
 use crate::bundle_manager::BundleManager;
+use crate::python_interface::{
+    my_py_true_struct, PyErr_Occurred, PyLong_FromUnsignedLongLong, PyTuple_New, PyTuple_SetItem,
+    Py_DecRef, PYTHON_MUTEX,
+};
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use serde_json::json;
 use test_fork::test;
@@ -163,4 +167,62 @@ fn test_wrong_arity_write_returns_none_cleanly() {
         BundleManager::singleton().run_bundle_bool("logging_test", &bundle_hash, &json!({}), "");
 
     assert!(result);
+}
+
+/// DIRECT UNIT TEST for the `c_msg.is_null()` branch in `write_log` —
+/// reviewer request on MR !289 ("Please add a unit test to cover this branch.").
+/// A non-string `PyObject` (e.g. an int) makes `PyUnicode_AsUTF8` fail and set a
+/// `TypeError`. `write_log` must clear that stale error (`PyErr_Clear`) and return
+/// `Py_None` instead of returning with an exception set.
+#[test]
+fn test_write_log_clears_stale_error_for_non_string_message() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and the ThreadScope acquires the GIL for
+        // the bundle's sub-interpreter, so the Python C-API calls below are valid.
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let args = PyTuple_New(2);
+            assert!(!args.is_null(), "PyTuple_New(2) should succeed");
+            // is_stdout = True; message = an int, which makes PyUnicode_AsUTF8
+            // fail and set a TypeError.
+            assert_eq!(
+                PyTuple_SetItem(args, 0, my_py_true_struct()),
+                0,
+                "setting is_stdout should succeed"
+            );
+            let int_obj = PyLong_FromUnsignedLongLong(42);
+            assert!(!int_obj.is_null(), "int object should be created");
+            assert_eq!(
+                PyTuple_SetItem(args, 1, int_obj),
+                0,
+                "setting message should succeed"
+            );
+            let result = write_log(std::ptr::null_mut(), args);
+            assert!(
+                !result.is_null(),
+                "write_log should return Py_None for a non-string message"
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale TypeError from PyUnicode_AsUTF8 must be cleared"
+            );
+            Py_DecRef(result);
+            Py_DecRef(args);
+        }
+    }
+    inner();
 }
