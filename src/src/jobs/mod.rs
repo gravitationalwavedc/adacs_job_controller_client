@@ -554,9 +554,13 @@ pub fn handle_job_cancel(mut msg: Message) {
         }
 
         // Check if already cancelled before doing status check
-        let db_status = db::get_job_status_by_job_id(job_model.id)
-            .await
-            .unwrap_or_default();
+        let db_status = match db::get_job_status_by_job_id(job_model.id).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Cancel: failed to read status for job {}: {}", job_id, e);
+                vec![]
+            }
+        };
         if db_status.iter().any(|s| s.state as u32 == CANCELLED) {
             debug!(
                 "Job {} already has CANCELLED status, skipping cancel",
@@ -604,9 +608,16 @@ pub fn handle_job_cancel(mut msg: Message) {
         }
         check_job_status(job_model.clone(), false).await;
 
-        let db_status = db::get_job_status_by_job_id(job_model.id)
-            .await
-            .unwrap_or_default();
+        let db_status = match db::get_job_status_by_job_id(job_model.id).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(
+                    "Cancel: failed to read status after cancel for job {}: {}",
+                    job_id, e
+                );
+                vec![]
+            }
+        };
         if db_status.iter().any(|s| s.state as u32 == CANCELLED) {
             return;
         }
