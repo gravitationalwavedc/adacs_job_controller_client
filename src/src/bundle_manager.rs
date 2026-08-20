@@ -75,7 +75,14 @@ impl BundleManager {
                 // test process and is no longer accessible to any other thread (tests
                 // run --test-threads=1).
                 unsafe {
-                    drop(Box::from_raw(old));
+                    // Deliberately leak the previous manager instead of dropping it.
+                    // Dropping it tears down any cached `SubInterpreter` via
+                    // `Py_EndInterpreter`, which can block forever when invoked from a
+                    // different thread than the one that created the sub-interpreter
+                    // (the Python GIL is held by a thread state that is no longer
+                    // current). Sub-interpreters are process-lifetime resources and
+                    // leaked memory is reclaimed when the test process exits.
+                    std::mem::forget(Box::from_raw(old));
                 }
             }
         }
@@ -104,7 +111,14 @@ impl BundleManager {
             // process and is no longer accessible to any other thread (tests run
             // --test-threads=1).
             unsafe {
-                drop(Box::from_raw(ptr));
+                // Deliberately leak the previous manager instead of dropping it.
+                // Dropping it tears down any cached `SubInterpreter` via
+                // `Py_EndInterpreter`, which can block forever when invoked from a
+                // different thread than the one that created the sub-interpreter
+                // (the Python GIL is held by a thread state that is no longer
+                // current). Sub-interpreters are process-lifetime resources and
+                // leaked memory is reclaimed when the test process exits.
+                std::mem::forget(Box::from_raw(ptr));
             }
         }
     }
