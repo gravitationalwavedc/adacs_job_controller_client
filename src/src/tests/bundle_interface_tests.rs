@@ -706,6 +706,38 @@ fn test_run_returns_err_for_missing_function() {
     inner();
 }
 
+/// A bundle attribute that exists but is not callable (e.g. `submit = 42`)
+/// makes `PyCallable_Check` return 0, so `run` must return
+/// `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_for_non_callable_function() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(&bundle_hash, "submit = 42\n");
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let result = bundle.run("submit", &serde_json::json!({}), "");
+            assert!(
+                result.is_err(),
+                "non-callable function should make run return Err"
+            );
+        }
+    }
+    inner();
+}
+
 /// A bundle function that returns `None` makes `run` return
 /// `Err(NoneException)`.
 #[test]
