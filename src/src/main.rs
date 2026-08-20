@@ -27,7 +27,7 @@ use crate::logging::init_logging_with_level;
 use crate::update_check::check_for_updates;
 use crate::websocket::{get_reconnect_notify, get_shutdown_notify, get_websocket_client};
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -148,7 +148,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let executable_path = bundle_manager::get_executable_path();
-    let log_dir = executable_path.join("logs");
+    let log_dir = executable_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("logs");
 
     let config = read_client_config();
     let log_level = get_log_level(&config);
