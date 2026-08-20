@@ -4177,9 +4177,12 @@ fn test_task4_pause_resume_supervisor_event_loop() {
         let _details = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
             .await
             .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS");
-        let _chunk1 = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+        let chunk1 = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
             .await
-            .expect("Timeout waiting for FILE_CHUNK 1");
+            .expect("Timeout waiting for FILE_CHUNK 1")
+            .expect("No chunk 1");
+        assert_eq!(chunk1.id, FILE_CHUNK);
+        let mut total_chunks = 1usize;
 
         let pause_msg = Message::new(PAUSE_FILE_CHUNK_STREAM, Priority::Highest, &test_uuid);
         server.msg_tx.send(pause_msg.get_data().clone()).unwrap();
@@ -4188,10 +4191,14 @@ fn test_task4_pause_resume_supervisor_event_loop() {
         // timeout and avoids racing the supervisor's first read.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        while tokio::time::timeout(Duration::from_millis(50), server.msg_rx.recv())
-            .await
-            .is_ok()
-        {}
+        // Drain and count any chunks that were in flight before the Pause took
+        // effect. These are legitimate (already sent) and must not be lost.
+        while let Ok(Some(msg)) =
+            tokio::time::timeout(Duration::from_millis(50), server.msg_rx.recv()).await
+        {
+            assert_eq!(msg.id, FILE_CHUNK, "unexpected message while draining");
+            total_chunks += 1;
+        }
 
         let paused_recv =
             tokio::time::timeout(Duration::from_millis(300), server.msg_rx.recv()).await;
@@ -4203,11 +4210,29 @@ fn test_task4_pause_resume_supervisor_event_loop() {
         let resume_msg = Message::new(RESUME_FILE_CHUNK_STREAM, Priority::Highest, &test_uuid);
         server.msg_tx.send(resume_msg.get_data().clone()).unwrap();
 
-        let resumed_chunk = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
-            .await
-            .expect("No chunk after resume")
-            .expect("No chunk");
-        assert_eq!(resumed_chunk.id, FILE_CHUNK);
+        // After Resume the remaining chunks must arrive; collect them until the
+        // stream ends or a generous timeout expires. The 320 KB file is exactly
+        // 5 chunks of 64 KB, so a correct pause/resume transfer must deliver
+        // exactly 5 chunks in total with no duplication and no loss.
+        let mut resumed = 0usize;
+        loop {
+            match tokio::time::timeout(Duration::from_secs(3), server.msg_rx.recv()).await {
+                Ok(Some(msg)) => {
+                    assert_eq!(msg.id, FILE_CHUNK, "unexpected message after resume");
+                    resumed += 1;
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+        assert!(
+            resumed > 0,
+            "at least one chunk must arrive after resume"
+        );
+        total_chunks += resumed;
+        assert_eq!(
+            total_chunks, 5,
+            "pause/resume must deliver exactly 5 chunks (no duplication, no loss); got {total_chunks}"
+        );
 
         assert!(
             wait_for_released(&observer, 1, Duration::from_secs(5)).await,

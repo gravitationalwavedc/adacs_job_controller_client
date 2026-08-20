@@ -931,6 +931,13 @@ async fn run_reading_phase(
         return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
     }
 
+    // Process any Pause/Resume/terminal messages already buffered before
+    // arming a file read, so a Pause that arrived during the previous send is
+    // honoured promptly.
+    if let Some(step) = drain_pending_incoming(ws_receiver, is_paused, resume_notify, state) {
+        return step;
+    }
+
     if is_paused.load(Ordering::Acquire) {
         // While paused we do not arm a file read; we just wait for resume or a
         // peer terminal event.
@@ -1053,6 +1060,13 @@ async fn run_sending_phase(
     resume_notify: &Arc<Notify>,
     state: &mut TransferState,
 ) -> LoopStep {
+    // Process any Pause/Resume/terminal messages already buffered (e.g. a
+    // Pause that arrived while the previous chunk send was in flight) before
+    // sending, so flow control is honoured promptly even on a fast socket.
+    if let Some(step) = drain_pending_incoming(ws_receiver, is_paused, resume_notify, state) {
+        return step;
+    }
+
     // Honour pause before sending: if a Pause arrived while a chunk was
     // pending, the previous Sending iteration restored the chunk and set the
     // pause flag, but `LoopStep::Continue` kept the state as Sending. Without
@@ -1174,6 +1188,49 @@ fn classify_incoming(
         }
         Some(Ok(_)) => IncomingEvent::Ignored,
         Some(Err(e)) => IncomingEvent::Error(e.to_string()),
+    }
+}
+
+/// Drain any incoming WebSocket messages that are already buffered without
+/// blocking, applying Pause/Resume state and returning a terminal `LoopStep`
+/// if a peer Close, EOF, or receive error is pending. This is called between
+/// transfer phases so a Pause that arrives while a chunk send is in flight is
+/// honoured promptly instead of being deferred until the transfer reaches EOF
+/// on a fast socket. Returns `None` when no message is immediately ready.
+fn drain_pending_incoming(
+    ws_receiver: &mut WsReceiver,
+    is_paused: &Arc<AtomicBool>,
+    resume_notify: &Arc<Notify>,
+    state: &mut TransferState,
+) -> Option<LoopStep> {
+    use futures_util::FutureExt;
+    loop {
+        match ws_receiver.next().now_or_never() {
+            Some(incoming) => match classify_incoming(incoming) {
+                IncomingEvent::Pause => {
+                    is_paused.store(true, Ordering::Release);
+                }
+                IncomingEvent::Resume => {
+                    is_paused.store(false, Ordering::Release);
+                    resume_notify.notify_one();
+                }
+                IncomingEvent::Close => {
+                    return Some(LoopStep::Finish(
+                        state.peer_terminal("peer Close".to_string()),
+                    ));
+                }
+                IncomingEvent::Eof => {
+                    return Some(LoopStep::Finish(state.peer_terminal("peer EOF".to_string())));
+                }
+                IncomingEvent::Error(msg) => {
+                    return Some(LoopStep::Finish(state.peer_terminal(format!(
+                        "peer receive error: {msg}"
+                    ))));
+                }
+                IncomingEvent::Ignored => {}
+            },
+            None => return None,
+        }
     }
 }
 
