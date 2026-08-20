@@ -858,6 +858,20 @@ impl WebsocketClient for TungsteniteWebsocketClient {
             wrapped.get_data().clone(),
             Priority::Highest,
         );
+        // TOCTOU: the connection may have dropped between the initial
+        // connection_closed check above and queue_message. In that case
+        // queue_message dropped our message, but the promise inserted above
+        // survives handle_disconnect's mem::take and would orphan rx.await
+        // until the next disconnect. Re-check and clean up.
+        if self.connection_closed.load(Ordering::SeqCst) {
+            let removed = self.db_request_promises.write().remove(&request_id);
+            debug!(
+                "send_db_request: connection closed after queueing - removed promise for request_id={} (was_present={})",
+                request_id,
+                removed.is_some()
+            );
+            return Box::pin(async { Err("WebSocket is disconnected".into()) });
+        }
         debug!("send_db_request: message queued, waiting for response...");
 
         Box::pin(async move {
