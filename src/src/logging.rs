@@ -91,7 +91,10 @@ pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize, log_
 /// prefix "`adacs_job_client`", retains 7 days of logs,
 /// and uses the specified log level.
 pub fn init_logging_with_level(executable_path: &Path, log_level: &str) {
-    let log_dir = executable_path.join("logs");
+    let log_dir = executable_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("logs");
     init_logging(&log_dir, "adacs_job_client", 7, log_level);
 }
 
@@ -139,9 +142,9 @@ mod tests {
     fn test_init_logging_with_level() {
         let temp_dir = TempDir::new().unwrap();
         let executable_path = temp_dir.path().join("bin");
-        let log_dir = executable_path.join("logs");
+        let log_dir = temp_dir.path().join("logs");
 
-        fs::create_dir_all(&executable_path).unwrap();
+        fs::write(&executable_path, b"").unwrap();
         init_logging_with_level(&executable_path, "debug");
         tracing::debug!("Debug level test message");
         thread::sleep(Duration::from_millis(50));
