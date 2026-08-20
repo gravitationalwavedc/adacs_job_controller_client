@@ -3271,7 +3271,7 @@ fn test_file_download_pause_resume() {
 }
 
 #[cfg(target_os = "linux")]
-fn count_open_fds_for(path: &Path) -> usize {
+fn count_open_fds_for_path(path: &Path) -> usize {
     let mut count = 0;
     if let Ok(entries) = std::fs::read_dir("/proc/self/fd") {
         for entry in entries.flatten() {
@@ -3283,6 +3283,21 @@ fn count_open_fds_for(path: &Path) -> usize {
         }
     }
     count
+}
+
+/// Count the process's open socket descriptors by inspecting `/proc/self/fd`.
+/// This directly measures the client-side symptom in issue #7: one leaked
+/// download WebSocket per transfer shows up as one extra `socket:[...]` entry
+/// that never returns to baseline.
+#[cfg(target_os = "linux")]
+fn count_open_socket_fds() -> usize {
+    std::fs::read_dir("/proc/self/fd")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+        .filter(|target| target.to_string_lossy().starts_with("socket:["))
+        .count()
 }
 
 #[cfg(target_os = "linux")]
@@ -3335,7 +3350,7 @@ fn test_file_download_pause_then_disconnect_exits_cleanly() {
         let _ = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv()).await; // CHUNK 1
 
         assert!(
-            count_open_fds_for(&canonical_file) > 0,
+            count_open_fds_for_path(&canonical_file) > 0,
             "download task should hold the file open while streaming"
         );
 
@@ -3357,7 +3372,7 @@ fn test_file_download_pause_then_disconnect_exits_cleanly() {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         let mut released = false;
         while tokio::time::Instant::now() < deadline {
-            if count_open_fds_for(&canonical_file) == 0 {
+            if count_open_fds_for_path(&canonical_file) == 0 {
                 released = true;
                 break;
             }
@@ -4358,6 +4373,108 @@ fn test_task4_sequential_downloads_return_to_baseline() {
                 "sequential iteration {i}: one fresh connection must be accepted"
             );
         }
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+
+/// Sustained sequential downloads must not grow the client's open socket
+/// descriptors. This directly exercises issue #7's acceptance criterion
+/// ("under a sustained sequence of downloads, the client's open-FD count stays
+/// flat"). We warm up the runtime and fixture, record a socket baseline, run a
+/// batch of downloads each on a fresh fixture, then assert the socket count
+/// returns to baseline (with a small tolerance for lazily-created runtime
+/// descriptors).
+#[cfg(target_os = "linux")]
+#[test_fork::test]
+fn test_task4_sustained_downloads_do_not_leak_socket_fds() {
+    const ITERATIONS: usize = 30;
+
+    async fn run_one_download(job_id: i64, iteration: usize) {
+        let server = WebsocketServerFixture::new().await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = format!("test-uuid-task4-sockfd-{iteration}");
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("sustained.txt");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        let mut server = server;
+        let _details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS");
+        let _chunk = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_CHUNK");
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "iteration {iteration}: supervisor must release the connection"
+        );
+        assert_eq!(
+            observer.live_connections(),
+            0,
+            "iteration {iteration}: live connections must return to baseline"
+        );
+    }
+
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_socket_fd_leak");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let file_content = b"sustained download socket fd leak check";
+        fs::write(fixture.get_temp_path().join("sustained.txt"), file_content).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8011i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        // Warm up: one download so lazy runtime/fixture descriptors exist
+        // before we record the baseline.
+        run_one_download(job_id, 0).await;
+
+        // Allow sockets to settle before recording the baseline.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let baseline = count_open_socket_fds();
+
+        for i in 1..=ITERATIONS {
+            run_one_download(job_id, i).await;
+        }
+
+        // Allow sockets to settle after the batch, then assert no growth.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let after = count_open_socket_fds();
+        // Small tolerance for lazily-created runtime descriptors; a real leak
+        // of one socket per download would exceed this by far.
+        assert!(
+            after <= baseline + 2,
+            "client socket FDs grew from {baseline} to {after} across {ITERATIONS} downloads"
+        );
+
         reset_download_test_seams();
     } // end inner()
     inner();

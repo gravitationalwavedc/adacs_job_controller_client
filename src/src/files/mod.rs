@@ -1053,6 +1053,17 @@ async fn run_sending_phase(
     resume_notify: &Arc<Notify>,
     state: &mut TransferState,
 ) -> LoopStep {
+    // Honour pause before sending: if a Pause arrived while a chunk was
+    // pending, the previous Sending iteration restored the chunk and set the
+    // pause flag, but `LoopStep::Continue` kept the state as Sending. Without
+    // this guard the restored chunk would be retried immediately while still
+    // paused, breaking the flow-control protocol. While paused we wait for
+    // Resume (or a peer terminal event) and keep the pending chunk in state so
+    // the next Sending iteration transmits it.
+    if is_paused.load(Ordering::Acquire) {
+        return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
+    }
+
     // Take the pending chunk bytes out for the duration of this phase; if a
     // peer input branch wins the select, we restore the original bytes so
     // the chunk can be retried on the next Sending iteration.
