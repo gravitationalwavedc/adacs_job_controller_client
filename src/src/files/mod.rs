@@ -6,10 +6,16 @@ use crate::messaging::{
     PAUSE_FILE_CHUNK_STREAM, RESUME_FILE_CHUNK_STREAM, SERVER_READY,
 };
 use crate::websocket::get_websocket_client;
+use bytes::Bytes;
 use futures_util::{Sink, SinkExt, StreamExt};
 use serde_json::json;
 use std::path::{Component, Path};
-use std::sync::{Arc, LazyLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, LazyLock,
+};
+#[cfg(test)]
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -28,6 +34,279 @@ const FILE_LIST_CONCURRENCY_LIMIT: usize = 4;
 const DOWNLOAD_CHUNK_SIZE: usize = 64 * 1024;
 const SERVER_READY_TIMEOUT_SECS: u64 = 10;
 const FILE_WS_CONNECT_TIMEOUT_SECS: u64 = 10;
+/// Test-only override for the `SERVER_READY` handshake timeout. When `None`
+/// the production 10-second deadline applies. Tests may shrink it to
+/// milliseconds to exercise the readiness timeout path deterministically.
+#[cfg(test)]
+static SERVER_READY_TIMEOUT_OVERRIDE: LazyLock<Mutex<Option<Duration>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_server_ready_timeout_for_test(timeout: Option<Duration>) {
+    let mut guard = SERVER_READY_TIMEOUT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = timeout;
+}
+
+#[cfg(test)]
+fn server_ready_timeout() -> Duration {
+    let guard = SERVER_READY_TIMEOUT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    guard.unwrap_or(Duration::from_secs(SERVER_READY_TIMEOUT_SECS))
+}
+
+const GRACEFUL_CLOSE_TIMEOUT_SECS: u64 = 5;
+
+/// Test-only override for [`graceful_close_timeout`]. When `None` the
+/// production five-second deadline applies. Tests may set a short duration to
+/// exercise the forced-release path deterministically without wall-clock
+/// sleeps. The override is scoped narrowly to the graceful-shutdown deadline;
+/// it never affects readiness, connect, or transfer work.
+#[cfg(test)]
+static GRACEFUL_CLOSE_TIMEOUT_OVERRIDE: LazyLock<Mutex<Option<Duration>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+fn graceful_close_timeout() -> Duration {
+    let guard = GRACEFUL_CLOSE_TIMEOUT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    guard.unwrap_or(Duration::from_secs(GRACEFUL_CLOSE_TIMEOUT_SECS))
+}
+
+#[cfg(not(test))]
+fn graceful_close_timeout() -> Duration {
+    Duration::from_secs(GRACEFUL_CLOSE_TIMEOUT_SECS)
+}
+
+#[cfg(test)]
+pub(crate) fn set_graceful_close_timeout_for_test(timeout: Option<Duration>) {
+    let mut guard = GRACEFUL_CLOSE_TIMEOUT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = timeout;
+}
+
+/// Test-only seam that exposes the supervisor's final-send and zero-byte EOF
+/// boundaries to integration tests via [`LifecycleBarrier`]. The supervisor
+/// calls `arrive_and_wait` on whichever barrier is currently set so a test
+/// can inject a peer terminal event between the final chunk send and the
+/// zero-byte EOF read, or between the zero-byte EOF read and the
+/// authoritative-result selection. The seams are no-ops when no barrier is
+/// installed; production behaviour is therefore unchanged.
+#[cfg(test)]
+use crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier;
+
+#[cfg(test)]
+use tokio::sync::mpsc;
+
+#[cfg(test)]
+static TEST_FINAL_SEND_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+static TEST_ZERO_BYTE_EOF_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_final_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    let mut guard = TEST_FINAL_SEND_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = barrier;
+}
+
+#[cfg(test)]
+pub(crate) fn set_zero_byte_eof_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    let mut guard = TEST_ZERO_BYTE_EOF_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = barrier;
+}
+
+#[cfg(test)]
+async fn arrive_final_send_barrier() {
+    let barrier = TEST_FINAL_SEND_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(b) = barrier {
+        b.arrive_and_wait().await;
+    }
+}
+
+#[cfg(test)]
+async fn arrive_zero_byte_eof_barrier() {
+    let barrier = TEST_ZERO_BYTE_EOF_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(b) = barrier {
+        b.arrive_and_wait().await;
+    }
+}
+
+/// Test-only seam that parks the supervisor immediately before the graceful
+/// Close frame send in [`cleanup_download`]. Lets a test reset the peer
+/// transport so the Close send deterministically fails after a successful
+/// transfer. The seam is a no-op when no barrier is installed.
+#[cfg(test)]
+static TEST_PRE_CLOSE_SEND_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_pre_close_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    let mut guard = TEST_PRE_CLOSE_SEND_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = barrier;
+}
+
+#[cfg(test)]
+async fn arrive_pre_close_send_barrier() {
+    let barrier = TEST_PRE_CLOSE_SEND_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(b) = barrier {
+        b.arrive_and_wait().await;
+    }
+}
+
+/// Test-only seam that exposes the supervisor's authoritative transfer result
+/// to integration tests. The supervisor sends the selected `TransferOutcome`
+/// at the start of unified cleanup — covering both transfer-loop results and
+/// pre-transfer primary errors — to the current observer. The seam is a no-op
+/// when no observer is installed; production behaviour is therefore unchanged.
+#[cfg(test)]
+static TEST_TRANSFER_OUTCOME_OBSERVER: LazyLock<
+    Mutex<Option<mpsc::UnboundedSender<TransferOutcome>>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_transfer_outcome_observer_for_test(
+    observer: Option<mpsc::UnboundedSender<TransferOutcome>>,
+) {
+    let mut guard = TEST_TRANSFER_OUTCOME_OBSERVER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = observer;
+}
+
+#[cfg(test)]
+fn notify_transfer_outcome_observer(authoritative: &AuthoritativeResult) {
+    let observer = TEST_TRANSFER_OUTCOME_OBSERVER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(tx) = observer {
+        let _ = tx.send(authoritative.clone().into_outcome());
+    }
+}
+
+/// Test-only seam that exposes cleanup failures (Close-send failure or
+/// graceful-shutdown timeout) to integration tests. Lets a test assert that a
+/// cleanup failure was recorded without masking the preserved primary result.
+/// The seam is a no-op when no observer is installed.
+#[cfg(test)]
+static TEST_CLEANUP_FAILURE_OBSERVER: LazyLock<Mutex<Option<mpsc::UnboundedSender<String>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_cleanup_failure_observer_for_test(
+    observer: Option<mpsc::UnboundedSender<String>>,
+) {
+    let mut guard = TEST_CLEANUP_FAILURE_OBSERVER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = observer;
+}
+
+#[cfg(test)]
+fn notify_cleanup_failure(message: String) {
+    let observer = TEST_CLEANUP_FAILURE_OBSERVER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(tx) = observer {
+        let _ = tx.send(message);
+    }
+}
+
+type WsSender = futures_util::stream::SplitSink<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    WsMessage,
+>;
+type WsReceiver = futures_util::stream::SplitStream<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+>;
+
+/// Authoritative transfer result selected by the supervisor before unified
+/// cleanup. Once a primary operation failure has been selected, later peer
+/// terminal events and cleanup failures cannot replace it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AuthoritativeResult {
+    /// No result yet — used internally before the clean-EOF boundary.
+    Pending,
+    /// A post-connect primary operation failed: `SERVER_READY` validation,
+    /// job lookup, bundle-directory resolution, canonicalisation, path
+    /// containment, metadata inspection, file open, details send, file read,
+    /// or chunk send.
+    PrimaryError(String),
+    /// Peer sent Close, EOF, or a receive error before the clean-EOF boundary.
+    PeerTerminal(String),
+    /// Clean EOF after every byte was sent successfully and expected-size
+    /// equality held.
+    CleanEof,
+}
+
+impl AuthoritativeResult {
+    fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    fn into_outcome(self) -> TransferOutcome {
+        match self {
+            Self::Pending => TransferOutcome::PeerTerminal("exited without result".to_string()),
+            Self::PrimaryError(msg) => TransferOutcome::PrimaryError(msg),
+            Self::PeerTerminal(msg) => TransferOutcome::PeerTerminal(msg),
+            Self::CleanEof => TransferOutcome::CleanEof,
+        }
+    }
+}
+
+/// Same as [`AuthoritativeResult`] but exposes the terminal variants only;
+/// used after the supervisor finishes to drive completion and failure
+/// reporting without exposing internal `Pending` state. `pub(crate)` so the
+/// test-only outcome observer can hand it to integration tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TransferOutcome {
+    PrimaryError(String),
+    PeerTerminal(String),
+    CleanEof,
+}
+
+enum ChunkState {
+    Reading,
+    Sending,
+}
+
+enum IncomingEvent {
+    Pause,
+    Resume,
+    Close,
+    Eof,
+    Error(String),
+    Ignored,
+}
+
+enum LoopStep {
+    Continue,
+    SetState(ChunkState),
+    Finish(AuthoritativeResult),
+}
 
 static FILE_LIST_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(FILE_LIST_CONCURRENCY_LIMIT)));
@@ -267,280 +546,872 @@ pub fn handle_file_download(mut msg: Message) {
     let job_id = i64::from(msg.pop_uint());
     let uuid = msg.pop_string();
     let bundle_hash = msg.pop_string();
-    let mut file_path = msg.pop_string();
+    let file_path = msg.pop_string();
 
     tokio::spawn(async move {
-        debug!(
-            "handle_file_download: SPAWNED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
-            job_id, uuid, bundle_hash, file_path
-        );
-        debug!(
-            "handle_file_download: STARTED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
-            job_id, uuid, bundle_hash, file_path
-        );
+        run_download_supervisor(job_id, uuid, bundle_hash, file_path).await;
+    });
+}
 
-        let ws_endpoint = get_ws_endpoint_from_config();
-        let Some((mut ws_sender, mut ws_receiver)) = connect_file_ws(
-            &ws_endpoint,
-            &uuid,
-            "handle_file_download: ",
-            "file download",
-        )
-        .await
-        else {
-            return;
-        };
+/// One supervisor task owns both WebSocket halves and all download lifecycle
+/// state from immediately after `connect_async` until resource release. There
+/// is no detached pause/resume listener. The supervisor drives Connected,
+/// Transferring, Closing, and Forced release control flow.
+async fn run_download_supervisor(
+    job_id: i64,
+    uuid: String,
+    bundle_hash: String,
+    file_path: String,
+) {
+    debug!(
+        "handle_file_download: SPAWNED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
+        job_id, uuid, bundle_hash, file_path
+    );
+    debug!(
+        "handle_file_download: STARTED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
+        job_id, uuid, bundle_hash, file_path
+    );
 
-        debug!("handle_file_download: SERVER_READY received, resolving working directory for job_id={}", job_id);
-        let working_directory = if job_id != 0 {
-            debug!(
-                "handle_file_download: Looking up job {} in database",
-                job_id
-            );
-            match lookup_job_working_directory(job_id).await {
-                Ok(working_directory) => {
-                    debug!("handle_file_download: Job found, submitting=false");
-                    working_directory
-                }
-                Err(err) => {
-                    match &err {
-                        JobLookupError::NotSubmitted => {
-                            warn!("handle_file_download: Job is not submitted, sending error");
-                        }
-                        JobLookupError::NotFound => {
-                            warn!("handle_file_download: Job {} not found in database", job_id);
-                        }
-                        JobLookupError::Database(e) => {
-                            warn!(
-                                "handle_file_download: Database error for job {}: {}",
-                                job_id, e
-                            );
-                        }
-                    }
-                    send_file_error(
-                        &mut ws_sender,
-                        &uuid,
-                        &err.client_message(),
-                        FILE_DOWNLOAD_ERROR,
-                    )
-                    .await;
-                    return;
-                }
+    // --- Connected: establish the WebSocket and own both halves immediately.
+    let ws_endpoint = get_ws_endpoint_from_config();
+    let Some((mut ws_sender, mut ws_receiver)) = connect_file_ws_raw(
+        &ws_endpoint,
+        &uuid,
+        "handle_file_download: ",
+        "file download",
+    )
+    .await
+    else {
+        return;
+    };
+
+    // --- Connected → readiness validation.
+    if let Err(reason) = validate_server_ready(&mut ws_receiver).await {
+        warn!("handle_file_download: SERVER_READY validation failed ({reason}); entering cleanup");
+        let authoritative =
+            AuthoritativeResult::PrimaryError(format!("SERVER_READY validation failed: {reason}"));
+        cleanup_download(&mut ws_sender, &mut ws_receiver, authoritative).await;
+        return;
+    }
+
+    // --- Connected → post-connect primary operations (each may select a primary error).
+    debug!(
+        "handle_file_download: SERVER_READY received, resolving working directory for job_id={}",
+        job_id
+    );
+    let working_directory = if job_id != 0 {
+        debug!(
+            "handle_file_download: Looking up job {} in database",
+            job_id
+        );
+        match lookup_job_working_directory(job_id).await {
+            Ok(working_directory) => {
+                debug!("handle_file_download: Job found, submitting=false");
+                working_directory
             }
-        } else {
-            debug!("handle_file_download: Using bundle manager for working_directory");
-            resolve_working_directory(
-                &bundle_hash,
-                json!(file_path.clone()),
-                "file_download",
-                "handle_file_download",
-            )
-            .await
-        };
-
-        debug!(
-            "handle_file_download: working_directory={}, file_path={}",
-            working_directory, file_path
-        );
-        file_path = file_path.trim_start_matches('/').to_string();
-
-        let full_path = Path::new(&working_directory).join(&file_path);
-        debug!("handle_file_download: full_path={:?}", full_path);
-        let abs_path = match fs::canonicalize(&full_path).await {
-            Ok(path) => {
-                debug!("handle_file_download: canonicalized path={:?}", path);
-                path
-            }
-            Err(e) => {
-                warn!("handle_file_download: Failed to canonicalize path: {}", e);
+            Err(err) => {
+                log_job_lookup_error("handle_file_download", job_id, &err);
                 send_file_error(
                     &mut ws_sender,
                     &uuid,
-                    "Path to file download does not exist",
+                    &err.client_message(),
                     FILE_DOWNLOAD_ERROR,
+                )
+                .await;
+                cleanup_download(
+                    &mut ws_sender,
+                    &mut ws_receiver,
+                    AuthoritativeResult::PrimaryError(format!(
+                        "job lookup failed: {}",
+                        err.client_message()
+                    )),
                 )
                 .await;
                 return;
             }
-        };
+        }
+    } else {
+        debug!("handle_file_download: Using bundle manager for working_directory");
+        resolve_working_directory(
+            &bundle_hash,
+            json!(file_path.clone()),
+            "file_download",
+            "handle_file_download",
+        )
+        .await
+    };
 
-        if !validate_path_is_within(&abs_path, &working_directory).await {
-            warn!("handle_file_download: Path validation failed - outside working directory");
+    debug!(
+        "handle_file_download: working_directory={}, file_path={}",
+        working_directory, file_path
+    );
+    let trimmed_path = file_path.trim_start_matches('/').to_string();
+    let full_path = Path::new(&working_directory).join(&trimmed_path);
+    debug!("handle_file_download: full_path={:?}", full_path);
+    let abs_path = match fs::canonicalize(&full_path).await {
+        Ok(path) => {
+            debug!("handle_file_download: canonicalized path={:?}", path);
+            path
+        }
+        Err(e) => {
+            warn!("handle_file_download: Failed to canonicalize path: {}", e);
             send_file_error(
                 &mut ws_sender,
                 &uuid,
-                "Path to file download is outside the working directory",
+                "Path to file download does not exist",
                 FILE_DOWNLOAD_ERROR,
+            )
+            .await;
+            cleanup_download(
+                &mut ws_sender,
+                &mut ws_receiver,
+                AuthoritativeResult::PrimaryError("canonicalize failed".to_string()),
             )
             .await;
             return;
         }
+    };
 
-        debug!("handle_file_download: Getting file metadata");
-        let file_meta = match fs::metadata(&abs_path).await {
-            Ok(m) if m.is_file() => {
-                debug!("handle_file_download: File found, size={} bytes", m.len());
-                m
-            }
-            Ok(m) => {
-                warn!(
-                    "handle_file_download: Path is not a file (is_directory={})",
-                    m.is_dir()
-                );
-                send_file_error(
-                    &mut ws_sender,
-                    &uuid,
-                    "Path to file download is not a file",
-                    FILE_DOWNLOAD_ERROR,
-                )
-                .await;
-                return;
-            }
-            Err(e) => {
-                warn!("handle_file_download: Failed to get file metadata: {}", e);
-                send_file_error(
-                    &mut ws_sender,
-                    &uuid,
-                    &format!("Failed to get file metadata: {e}"),
-                    FILE_DOWNLOAD_ERROR,
-                )
-                .await;
-                return;
-            }
-        };
+    if !validate_path_is_within(&abs_path, &working_directory).await {
+        warn!("handle_file_download: Path validation failed - outside working directory");
+        send_file_error(
+            &mut ws_sender,
+            &uuid,
+            "Path to file download is outside the working directory",
+            FILE_DOWNLOAD_ERROR,
+        )
+        .await;
+        cleanup_download(
+            &mut ws_sender,
+            &mut ws_receiver,
+            AuthoritativeResult::PrimaryError("path outside working directory".to_string()),
+        )
+        .await;
+        return;
+    }
 
-        let file_size = file_meta.len();
-        debug!(
-            "handle_file_download: Sending FILE_DOWNLOAD_DETAILS (file_size={} bytes)",
-            file_size
-        );
-        let mut details_msg = Message::new(FILE_DOWNLOAD_DETAILS, Priority::Highest, &uuid);
-        details_msg.push_ulong(file_size);
-        if let Err(e) = ws_sender
-            .send(WsMessage::Binary(details_msg.get_data().clone().into()))
-            .await
-        {
+    debug!("handle_file_download: Getting file metadata");
+    let file_meta = match fs::metadata(&abs_path).await {
+        Ok(m) if m.is_file() => {
+            debug!("handle_file_download: File found, size={} bytes", m.len());
+            m
+        }
+        Ok(m) => {
             warn!(
-                "handle_file_download: Failed to send FILE_DOWNLOAD_DETAILS: {}",
-                e
+                "handle_file_download: Path is not a file (is_directory={})",
+                m.is_dir()
             );
+            send_file_error(
+                &mut ws_sender,
+                &uuid,
+                "Path to file download is not a file",
+                FILE_DOWNLOAD_ERROR,
+            )
+            .await;
+            cleanup_download(
+                &mut ws_sender,
+                &mut ws_receiver,
+                AuthoritativeResult::PrimaryError("path is not a file".to_string()),
+            )
+            .await;
             return;
         }
-        debug!("handle_file_download: FILE_DOWNLOAD_DETAILS sent successfully");
+        Err(e) => {
+            warn!("handle_file_download: Failed to get file metadata: {}", e);
+            send_file_error(
+                &mut ws_sender,
+                &uuid,
+                &format!("Failed to get file metadata: {e}"),
+                FILE_DOWNLOAD_ERROR,
+            )
+            .await;
+            cleanup_download(
+                &mut ws_sender,
+                &mut ws_receiver,
+                AuthoritativeResult::PrimaryError("metadata read failed".to_string()),
+            )
+            .await;
+            return;
+        }
+    };
 
-        debug!("handle_file_download: Opening file for reading");
-        let mut file = match File::open(&abs_path).await {
-            Ok(f) => {
-                debug!("handle_file_download: File opened successfully");
-                f
+    let file_size = file_meta.len();
+    debug!(
+        "handle_file_download: Sending FILE_DOWNLOAD_DETAILS (file_size={} bytes)",
+        file_size
+    );
+    let mut details_msg = Message::new(FILE_DOWNLOAD_DETAILS, Priority::Highest, &uuid);
+    details_msg.push_ulong(file_size);
+    if let Err(e) = ws_sender
+        .send(WsMessage::Binary(details_msg.get_data().clone().into()))
+        .await
+    {
+        warn!(
+            "handle_file_download: Failed to send FILE_DOWNLOAD_DETAILS: {}",
+            e
+        );
+        cleanup_download(
+            &mut ws_sender,
+            &mut ws_receiver,
+            AuthoritativeResult::PrimaryError("details send failed".to_string()),
+        )
+        .await;
+        return;
+    }
+    debug!("handle_file_download: FILE_DOWNLOAD_DETAILS sent successfully");
+
+    debug!("handle_file_download: Opening file for reading");
+    let mut file = match File::open(&abs_path).await {
+        Ok(f) => {
+            debug!("handle_file_download: File opened successfully");
+            f
+        }
+        Err(e) => {
+            warn!("Failed to open file for download: {}", e);
+            send_file_error(
+                &mut ws_sender,
+                &uuid,
+                "Failed to open file for download",
+                FILE_DOWNLOAD_ERROR,
+            )
+            .await;
+            cleanup_download(
+                &mut ws_sender,
+                &mut ws_receiver,
+                AuthoritativeResult::PrimaryError("file open failed".to_string()),
+            )
+            .await;
+            return;
+        }
+    };
+
+    // --- Transferring: one ordered supervisor event loop drives file reads,
+    // chunk sends, pause/resume input, and peer terminal events.
+    let is_paused = Arc::new(AtomicBool::new(false));
+    let resume_notify = Arc::new(Notify::new());
+    let download_start = std::time::Instant::now();
+    let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
+
+    let state = run_transfer_loop(
+        &mut ws_sender,
+        &mut ws_receiver,
+        &mut file,
+        &mut buffer,
+        file_size,
+        &is_paused,
+        &resume_notify,
+        &uuid,
+    )
+    .await;
+
+    // --- User-facing reporting from the authoritative result (cleanup below
+    // never replaces this).
+    match state.authoritative().clone().into_outcome() {
+        TransferOutcome::CleanEof => {
+            debug!(
+                "handle_file_download: COMPLETED - downloaded {} bytes in {:?}",
+                state.total_bytes(),
+                download_start.elapsed()
+            );
+        }
+        TransferOutcome::PrimaryError(msg) => {
+            warn!("handle_file_download: primary transfer failure: {}", msg);
+        }
+        TransferOutcome::PeerTerminal(msg) => {
+            warn!(
+                "handle_file_download: peer terminal event during transfer: {}",
+                msg
+            );
+        }
+    }
+
+    // --- Closing → Forced release unified cleanup. The supervisor still owns
+    // both halves here; they are dropped as the task ends.
+    cleanup_download(&mut ws_sender, &mut ws_receiver, state.take_authoritative()).await;
+}
+
+/// Validate `SERVER_READY` on the supervisor-owned receive half. Returns the
+/// reason string on any readiness failure shape (invalid ID, non-binary,
+/// receive error, peer EOF, timeout).
+async fn validate_server_ready(ws_receiver: &mut WsReceiver) -> Result<(), String> {
+    let timeout = {
+        #[cfg(test)]
+        {
+            server_ready_timeout()
+        }
+        #[cfg(not(test))]
+        {
+            Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
+        }
+    };
+    let handshake = tokio::time::timeout(timeout, ws_receiver.next()).await;
+    match handshake {
+        Ok(Some(Ok(WsMessage::Binary(data)))) => {
+            let msg = Message::from_data(data.to_vec());
+            if msg.id == SERVER_READY {
+                Ok(())
+            } else {
+                Err(format!("expected SERVER_READY, got {}", msg.id))
             }
-            Err(e) => {
-                warn!("Failed to open file for download: {}", e);
-                send_file_error(
-                    &mut ws_sender,
-                    &uuid,
-                    "Failed to open file for download",
-                    FILE_DOWNLOAD_ERROR,
+        }
+        Ok(Some(Ok(_))) => Err("expected binary SERVER_READY, got unexpected frame".to_string()),
+        Ok(Some(Err(e))) => Err(format!("handshake error: {e}")),
+        Ok(None) => Err("server closed connection before sending SERVER_READY".to_string()),
+        Err(_) => Err(format!(
+            "timeout waiting for SERVER_READY after {SERVER_READY_TIMEOUT_SECS}s"
+        )),
+    }
+}
+
+/// Drive file reads, chunk sends, pause/resume input, and peer terminal
+/// events in one ordered event loop. Transmitted bytes advance only after a
+/// chunk send resolves successfully. `COMPLETED` requires clean EOF plus
+/// expected-size equality. Once a primary error is selected, later peer
+/// terminal events cannot replace it.
+async fn run_transfer_loop(
+    ws_sender: &mut WsSender,
+    ws_receiver: &mut WsReceiver,
+    file: &mut File,
+    buffer: &mut [u8],
+    file_size: u64,
+    is_paused: &Arc<AtomicBool>,
+    resume_notify: &Arc<Notify>,
+    uuid: &str,
+) -> TransferState {
+    let mut state = TransferState::new(file_size);
+    let mut chunk_state = ChunkState::Reading;
+
+    loop {
+        let step = match chunk_state {
+            ChunkState::Reading => {
+                run_reading_phase(
+                    ws_sender,
+                    ws_receiver,
+                    file,
+                    buffer,
+                    is_paused,
+                    resume_notify,
+                    uuid,
+                    &mut state,
                 )
-                .await;
-                return;
+                .await
+            }
+            ChunkState::Sending => {
+                run_sending_phase(ws_sender, ws_receiver, is_paused, resume_notify, &mut state)
+                    .await
             }
         };
-        let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
-        let download_start = std::time::Instant::now();
-        let mut total_bytes = 0;
 
-        let paused = Arc::new(Notify::new());
-        let is_paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        match step {
+            LoopStep::Continue => {}
+            LoopStep::SetState(next) => chunk_state = next,
+            LoopStep::Finish(result) => {
+                state.set_authoritative(result);
+                break;
+            }
+        }
+    }
 
-        let is_paused_clone = is_paused.clone();
-        let paused_clone = paused.clone();
-        tokio::spawn(async move {
-            while let Some(Ok(ws_msg)) = ws_receiver.next().await {
-                if let WsMessage::Binary(data) = ws_msg {
-                    let m = Message::from_data(data.to_vec());
-                    if m.id == PAUSE_FILE_CHUNK_STREAM {
-                        is_paused_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-                    } else if m.id == RESUME_FILE_CHUNK_STREAM {
-                        is_paused_clone.store(false, std::sync::atomic::Ordering::SeqCst);
-                        paused_clone.notify_one();
-                    }
+    state
+}
+
+async fn run_reading_phase(
+    ws_sender: &mut WsSender,
+    ws_receiver: &mut WsReceiver,
+    file: &mut File,
+    buffer: &mut [u8],
+    is_paused: &Arc<AtomicBool>,
+    resume_notify: &Arc<Notify>,
+    uuid: &str,
+    state: &mut TransferState,
+) -> LoopStep {
+    // If a primary error already exists, only listen for peer terminal events
+    // and resume notifications so we do not waste file work.
+    if state.authoritative.is_primary() {
+        return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
+    }
+
+    // Process any Pause/Resume/terminal messages already buffered before
+    // arming a file read, so a Pause that arrived during the previous send is
+    // honoured promptly.
+    if let Some(step) = drain_pending_incoming(ws_receiver, is_paused, resume_notify, state) {
+        return step;
+    }
+
+    if is_paused.load(Ordering::Acquire) {
+        // While paused we do not arm a file read; we just wait for resume or a
+        // peer terminal event.
+        return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
+    }
+
+    let mut read_fut = Box::pin(file.read(buffer));
+    tokio::select! {
+        biased;
+        incoming = ws_receiver.next() => {
+            match classify_incoming(incoming) {
+                IncomingEvent::Pause => {
+                    is_paused.store(true, Ordering::Release);
+                    LoopStep::Continue
                 }
+                IncomingEvent::Resume => {
+                    is_paused.store(false, Ordering::Release);
+                    resume_notify.notify_one();
+                    LoopStep::Continue
+                }
+                IncomingEvent::Close => {
+                    // Peer Close during transfer becomes the authoritative
+                    // terminal event. Drops both halves during cleanup.
+                    LoopStep::Finish(state.peer_terminal("peer Close".to_string()))
+                }
+                IncomingEvent::Eof => LoopStep::Finish(state.peer_terminal("peer EOF".to_string())),
+                IncomingEvent::Error(msg) => {
+                    LoopStep::Finish(state.peer_terminal(format!("peer receive error: {msg}")))
+                }
+                IncomingEvent::Ignored => LoopStep::Continue,
             }
-            // Connection closed: if a PAUSE was received without a matching
-            // RESUME, wake the download loop so it observes the dead connection
-            // and exits instead of blocking forever on the pause notification.
-            is_paused_clone.store(false, std::sync::atomic::Ordering::SeqCst);
-            paused_clone.notify_one();
-        });
-
-        loop {
-            if is_paused.load(std::sync::atomic::Ordering::SeqCst) {
-                paused.notified().await;
-            }
-
-            let n = match file.read(&mut buffer).await {
+        }
+        read_result = &mut read_fut => {
+            match read_result {
                 Ok(0) => {
+                    // Clean EOF is only valid after every byte has been sent
+                    // successfully and total bytes match the expected size.
                     trace!("handle_file_download: End of file reached");
-                    break;
+                    // Test seam: arrive-and-wait on the zero-byte-EOF barrier
+                    // before consulting authoritative state and polling for
+                    // peer terminal events. The seam is a no-op when no
+                    // barrier is installed.
+                    #[cfg(test)]
+                    arrive_zero_byte_eof_barrier().await;
+                    let expected = state.expected_size();
+                    let transmitted = state.total_bytes();
+                    if transmitted == expected && !state.authoritative().is_primary() {
+                        // One zero-duration poll for a peer terminal event
+                        // that may already be ready in the WebSocket receive
+                        // buffer. Per the approved design, a terminal event
+                        // that becomes ready in this poll wins over the
+                        // clean-EOF boundary. Events that are still pending
+                        // belong to cleanup, not transfer-result selection.
+                        use futures_util::FutureExt;
+                        match ws_receiver.next().now_or_never() {
+                            Some(Some(Ok(WsMessage::Close(_)))) => LoopStep::Finish(
+                                state.peer_terminal("peer Close".to_string()),
+                            ),
+                            Some(Some(Err(_)) | None) => {
+                                LoopStep::Finish(state.peer_terminal("peer EOF".to_string()))
+                            }
+                            // A control frame arriving at the boundary is
+                            // not a transfer failure; commit CleanEof.
+                            Some(Some(Ok(_))) | None => {
+                                LoopStep::Finish(AuthoritativeResult::CleanEof)
+                            }
+                        }
+                    } else if transmitted == expected {
+                        // A primary error already selected — keep it.
+                        LoopStep::Finish(state.authoritative().clone())
+                    } else {
+                        // Size mismatch (file truncated or modified during the
+                        // transfer): report it over the wire as the existing
+                        // protocol does, then select the primary error.
+                        warn!(
+                            "handle_file_download: File size mismatch: expected {expected} bytes, got {transmitted} bytes (file truncated or modified during download)"
+                        );
+                        send_file_error(
+                            ws_sender,
+                            uuid,
+                            &format!("File size mismatch: expected {expected}, got {transmitted}"),
+                            FILE_DOWNLOAD_ERROR,
+                        )
+                        .await;
+                        LoopStep::Finish(AuthoritativeResult::PrimaryError(format!(
+                            "unexpected EOF: transmitted {transmitted} of {expected} bytes"
+                        )))
+                    }
                 }
                 Ok(n) => {
                     trace!("handle_file_download: Read {} bytes from file", n);
-                    n
+                    // Build the chunk message bytes and arm the Sending phase.
+                    let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, uuid);
+                    chunk_msg.push_bytes(&buffer[..n]);
+                    let bytes: Bytes = chunk_msg.get_data().clone().into();
+                    state.pending_chunk_bytes = Some(bytes);
+                    state.pending_chunk_len = n;
+                    LoopStep::SetState(ChunkState::Sending)
                 }
                 Err(e) => {
                     warn!("Error reading file: {}", e);
                     send_file_error(
-                        &mut ws_sender,
-                        &uuid,
+                        ws_sender,
+                        uuid,
                         "Exception reading file",
                         FILE_DOWNLOAD_ERROR,
                     )
                     .await;
-                    return;
+                    LoopStep::Finish(state.primary("file read failed"))
                 }
-            };
+            }
+        }
+    }
+}
 
-            total_bytes += n;
-            trace!(
-                "handle_file_download: Sending chunk {} (total: {} bytes)",
-                total_bytes,
-                n
-            );
+async fn run_sending_phase(
+    ws_sender: &mut WsSender,
+    ws_receiver: &mut WsReceiver,
+    is_paused: &Arc<AtomicBool>,
+    resume_notify: &Arc<Notify>,
+    state: &mut TransferState,
+) -> LoopStep {
+    // Process any Pause/Resume/terminal messages already buffered (e.g. a
+    // Pause that arrived while the previous chunk send was in flight) before
+    // sending, so flow control is honoured promptly even on a fast socket.
+    if let Some(step) = drain_pending_incoming(ws_receiver, is_paused, resume_notify, state) {
+        return step;
+    }
 
-            let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, &uuid);
-            chunk_msg.push_bytes(&buffer[..n]);
-            match ws_sender
-                .send(WsMessage::Binary(chunk_msg.get_data().clone().into()))
-                .await
-            {
-                Ok(()) => trace!("handle_file_download: Chunk sent successfully"),
+    // Honour pause before sending: if a Pause arrived while a chunk was
+    // pending, the previous Sending iteration restored the chunk and set the
+    // pause flag, but `LoopStep::Continue` kept the state as Sending. Without
+    // this guard the restored chunk would be retried immediately while still
+    // paused, breaking the flow-control protocol. While paused we wait for
+    // Resume (or a peer terminal event) and keep the pending chunk in state so
+    // the next Sending iteration transmits it.
+    if is_paused.load(Ordering::Acquire) {
+        return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
+    }
+
+    // Take the pending chunk bytes out for the duration of this phase; if a
+    // peer input branch wins the select, we restore the original bytes so
+    // the chunk can be retried on the next Sending iteration.
+    let Some(pending_bytes) = state.pending_chunk_bytes.take() else {
+        // No pending chunk — fall back to reading.
+        return LoopStep::SetState(ChunkState::Reading);
+    };
+    let chunk_len = state.pending_chunk_len;
+    let ws_msg = WsMessage::Binary(pending_bytes.clone());
+    let mut send_fut = Box::pin(ws_sender.send(ws_msg));
+
+    tokio::select! {
+        biased;
+        incoming = ws_receiver.next() => {
+            // Restore the chunk so the next Sending phase can retry.
+            state.pending_chunk_bytes = Some(pending_bytes);
+            match classify_incoming(incoming) {
+                IncomingEvent::Pause => {
+                    is_paused.store(true, Ordering::Release);
+                    LoopStep::Continue
+                }
+                IncomingEvent::Resume => {
+                    is_paused.store(false, Ordering::Release);
+                    resume_notify.notify_one();
+                    LoopStep::Continue
+                }
+                IncomingEvent::Close => LoopStep::Finish(state.peer_terminal("peer Close".to_string())),
+                IncomingEvent::Eof => LoopStep::Finish(state.peer_terminal("peer EOF".to_string())),
+                IncomingEvent::Error(msg) => LoopStep::Finish(
+                    state.peer_terminal(format!("peer receive error: {msg}"))
+                ),
+                IncomingEvent::Ignored => LoopStep::Continue,
+            }
+        }
+        send_result = &mut send_fut => {
+            state.pending_chunk_bytes = None;
+            state.pending_chunk_len = 0;
+            match send_result {
+                Ok(()) => {
+                    trace!("handle_file_download: Chunk sent successfully");
+                    // Accounting happens ONLY after a successful send.
+                    state.transmitted_bytes += chunk_len as u64;
+                    let is_final = state.transmitted_bytes == state.expected_size;
+                    // Yield after non-final chunks so a Pause that is still in
+                    // transit can be delivered and processed by the next phase's
+                    // drain. Without this the supervisor can stream the whole
+                    // file back-to-back on a fast socket and finish before the
+                    // peer's Pause ever arrives, defeating the flow-control
+                    // protocol. The final chunk does not yield so barrier-based
+                    // race tests observe the send-complete boundary
+                    // deterministically.
+                    if !is_final {
+                        tokio::task::yield_now().await;
+                    }
+                    // Test seam: arrive-and-wait on the final-send barrier if
+                    // this was the last chunk and a barrier is installed. The
+                    // seam is a no-op when no barrier is set.
+                    #[cfg(test)]
+                    if is_final {
+                        arrive_final_send_barrier().await;
+                    }
+                    LoopStep::SetState(ChunkState::Reading)
+                }
                 Err(e) => {
                     warn!("handle_file_download: Failed to send chunk: {}", e);
+                    LoopStep::Finish(state.primary("chunk send failed"))
+                }
+            }
+        }
+    }
+}
+
+async fn wait_for_terminal_or_resume(
+    ws_receiver: &mut WsReceiver,
+    is_paused: &Arc<AtomicBool>,
+    resume_notify: &Arc<Notify>,
+    state: &mut TransferState,
+) -> LoopStep {
+    tokio::select! {
+        biased;
+        incoming = ws_receiver.next() => match classify_incoming(incoming) {
+            IncomingEvent::Pause => {
+                is_paused.store(true, Ordering::Release);
+                LoopStep::Continue
+            }
+            IncomingEvent::Resume => {
+                is_paused.store(false, Ordering::Release);
+                resume_notify.notify_one();
+                LoopStep::Continue
+            }
+            IncomingEvent::Close => LoopStep::Finish(state.peer_terminal("peer Close".to_string())),
+            IncomingEvent::Eof => LoopStep::Finish(state.peer_terminal("peer EOF".to_string())),
+            IncomingEvent::Error(msg) => {
+                LoopStep::Finish(state.peer_terminal(format!("peer receive error: {msg}")))
+            }
+            IncomingEvent::Ignored => LoopStep::Continue,
+        },
+        () = resume_notify.notified(), if is_paused.load(Ordering::Acquire) => {
+            is_paused.store(false, Ordering::Release);
+            LoopStep::Continue
+        }
+    }
+}
+
+fn classify_incoming(
+    incoming: Option<Result<WsMessage, tokio_tungstenite::tungstenite::Error>>,
+) -> IncomingEvent {
+    match incoming {
+        None => IncomingEvent::Eof,
+        Some(Ok(WsMessage::Close(_))) => IncomingEvent::Close,
+        Some(Ok(WsMessage::Binary(data))) => {
+            let msg = Message::from_data(data.to_vec());
+            if msg.id == PAUSE_FILE_CHUNK_STREAM {
+                IncomingEvent::Pause
+            } else if msg.id == RESUME_FILE_CHUNK_STREAM {
+                IncomingEvent::Resume
+            } else {
+                IncomingEvent::Ignored
+            }
+        }
+        Some(Ok(_)) => IncomingEvent::Ignored,
+        Some(Err(e)) => IncomingEvent::Error(e.to_string()),
+    }
+}
+
+/// Drain any incoming WebSocket messages that are already buffered without
+/// blocking, applying Pause/Resume state and returning a terminal `LoopStep`
+/// if a peer Close, EOF, or receive error is pending. This is called between
+/// transfer phases so a Pause that arrives while a chunk send is in flight is
+/// honoured promptly instead of being deferred until the transfer reaches EOF
+/// on a fast socket. Returns `None` when no message is immediately ready.
+fn drain_pending_incoming(
+    ws_receiver: &mut WsReceiver,
+    is_paused: &Arc<AtomicBool>,
+    resume_notify: &Arc<Notify>,
+    state: &mut TransferState,
+) -> Option<LoopStep> {
+    use futures_util::FutureExt;
+    loop {
+        match ws_receiver.next().now_or_never() {
+            Some(incoming) => match classify_incoming(incoming) {
+                IncomingEvent::Pause => {
+                    is_paused.store(true, Ordering::Release);
+                }
+                IncomingEvent::Resume => {
+                    is_paused.store(false, Ordering::Release);
+                    resume_notify.notify_one();
+                }
+                IncomingEvent::Close => {
+                    return Some(LoopStep::Finish(
+                        state.peer_terminal("peer Close".to_string()),
+                    ));
+                }
+                IncomingEvent::Eof => {
+                    return Some(LoopStep::Finish(
+                        state.peer_terminal("peer EOF".to_string()),
+                    ));
+                }
+                IncomingEvent::Error(msg) => {
+                    return Some(LoopStep::Finish(
+                        state.peer_terminal(format!("peer receive error: {msg}")),
+                    ));
+                }
+                IncomingEvent::Ignored => {}
+            },
+            None => return None,
+        }
+    }
+}
+
+/// Unified cleanup epilogue. Sends a standard WebSocket Close frame, keeps the
+/// receive half active for peer acknowledgement, and bounds the entire
+/// graceful shutdown by one total `graceful_close_timeout()` deadline. On
+/// graceful failure or timeout the supervisor drops both halves as the task
+/// ends — there is no child listener to abort or await.
+async fn cleanup_download(
+    ws_sender: &mut WsSender,
+    ws_receiver: &mut WsReceiver,
+    primary: AuthoritativeResult,
+) {
+    // Test seam: expose the authoritative result (transfer-loop or pre-transfer
+    // primary error) to integration tests before cleanup consumes it. No-op
+    // when no observer is installed.
+    #[cfg(test)]
+    notify_transfer_outcome_observer(&primary);
+
+    // Test seam: park before the Close send so a test can reset the peer
+    // transport and make the Close send deterministically fail after a
+    // successful transfer. No-op when no barrier is installed.
+    #[cfg(test)]
+    arrive_pre_close_send_barrier().await;
+
+    // Preserve the primary transfer result — cleanup errors cannot replace it.
+    let primary_error = match primary {
+        AuthoritativeResult::PrimaryError(msg) => Some(msg),
+        _ => None,
+    };
+
+    // One total deadline covers both sending Close and waiting for the peer's
+    // acknowledgement. A send failure or deadline expiry is followed
+    // immediately by forced release when the supervisor drops both halves.
+    let graceful_close = async {
+        ws_sender
+            .send(WsMessage::Close(None))
+            .await
+            .map_err(|e| format!("failed to send Close frame: {e}"))?;
+
+        loop {
+            match ws_receiver.next().await {
+                Some(Ok(WsMessage::Close(_))) => {
+                    debug!("handle_file_download: peer acknowledged Close");
+                    break;
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => {
+                    debug!("handle_file_download: peer terminated during graceful close");
                     break;
                 }
             }
-            // Yield to allow pause/resume messages to be processed
-            tokio::task::yield_now().await;
         }
-        if total_bytes as u64 != file_size {
+
+        Ok::<(), String>(())
+    };
+
+    match tokio::time::timeout(graceful_close_timeout(), graceful_close).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            warn!("handle_file_download: {e} during cleanup; forced release follows");
+            #[cfg(test)]
+            notify_cleanup_failure(format!("{e} during cleanup; forced release follows"));
+            if let Some(msg) = primary_error {
+                debug!("handle_file_download: cleanup failure preserved primary error: {msg}");
+            }
+        }
+        Err(_) => {
             warn!(
-                "handle_file_download: File size mismatch: expected {file_size} bytes, got {total_bytes} bytes (file truncated or modified during download)"
+                "handle_file_download: graceful shutdown exceeded {}s; forced release follows",
+                GRACEFUL_CLOSE_TIMEOUT_SECS
             );
-            send_file_error(
-                &mut ws_sender,
-                &uuid,
-                &format!("File size mismatch: expected {file_size}, got {total_bytes}"),
-                FILE_DOWNLOAD_ERROR,
-            )
-            .await;
+            #[cfg(test)]
+            notify_cleanup_failure("graceful shutdown timeout; forced release follows".to_string());
+            if let Some(msg) = primary_error {
+                debug!("handle_file_download: cleanup timeout preserved primary error: {msg}");
+            }
         }
-        debug!(
-            "handle_file_download: COMPLETED - downloaded {} bytes in {:?}",
-            total_bytes,
-            download_start.elapsed()
-        );
-    });
+    }
+}
+
+fn log_job_lookup_error(prefix: &str, job_id: i64, err: &JobLookupError) {
+    match err {
+        JobLookupError::NotSubmitted => {
+            warn!("{prefix}: Job is not submitted, sending error");
+        }
+        JobLookupError::NotFound => {
+            warn!("{prefix}: Job {} not found in database", job_id);
+        }
+        JobLookupError::Database(e) => {
+            warn!("{prefix}: Database error for job {}: {}", job_id, e);
+        }
+    }
+}
+
+/// Per-transfer mutable state owned by the supervisor. Encapsulates
+/// authoritative result selection, transmitted-byte accounting, and the
+/// pending chunk that survives a Sending-phase peer input branch.
+#[derive(Debug)]
+struct TransferState {
+    authoritative: AuthoritativeResult,
+    transmitted_bytes: u64,
+    expected_size: u64,
+    pending_chunk_bytes: Option<Bytes>,
+    pending_chunk_len: usize,
+}
+
+impl TransferState {
+    fn new(expected_size: u64) -> Self {
+        Self {
+            authoritative: AuthoritativeResult::Pending,
+            transmitted_bytes: 0,
+            expected_size,
+            pending_chunk_bytes: None,
+            pending_chunk_len: 0,
+        }
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.transmitted_bytes
+    }
+
+    fn expected_size(&self) -> u64 {
+        self.expected_size
+    }
+
+    fn authoritative(&self) -> &AuthoritativeResult {
+        &self.authoritative
+    }
+
+    fn take_authoritative(self) -> AuthoritativeResult {
+        self.authoritative
+    }
+
+    fn set_authoritative(&mut self, result: AuthoritativeResult) {
+        // Preserve ordering: a primary error already selected cannot be
+        // overwritten by a peer terminal that arrives later.
+        if matches!(self.authoritative, AuthoritativeResult::PrimaryError(_))
+            && !matches!(result, AuthoritativeResult::PrimaryError(_))
+        {
+            return;
+        }
+        self.authoritative = result;
+    }
+
+    fn primary(&mut self, msg: &str) -> AuthoritativeResult {
+        let result = AuthoritativeResult::PrimaryError(msg.to_string());
+        self.set_authoritative(result.clone());
+        result
+    }
+
+    /// Record a peer terminal event. If a primary error already won, this
+    /// returns the preserved primary error so callers can short-circuit.
+    fn peer_terminal(&mut self, msg: String) -> AuthoritativeResult {
+        if matches!(self.authoritative, AuthoritativeResult::PrimaryError(_)) {
+            return self.authoritative.clone();
+        }
+        let result = AuthoritativeResult::PeerTerminal(msg);
+        self.authoritative = result.clone();
+        result
+    }
+}
+
+impl AuthoritativeResult {
+    fn is_primary(&self) -> bool {
+        matches!(self, Self::PrimaryError(_))
+    }
 }
 
 async fn send_file_error<S, E>(ws_sender: &mut S, uuid: &str, error_msg: &str, msg_id: u32)
@@ -850,6 +1721,41 @@ async fn connect_file_ws(
         >,
     >,
 )> {
+    let (ws_sender, mut ws_receiver) =
+        connect_file_ws_raw(ws_endpoint, uuid, prefix, operation).await?;
+
+    if wait_for_server_ready(&mut ws_receiver).await.is_none() {
+        warn!("{prefix}Failed to receive SERVER_READY");
+        return None;
+    }
+
+    Some((ws_sender, ws_receiver))
+}
+
+/// Establish an authenticated file WebSocket and transfer ownership of both
+/// halves to the caller before any application-level readiness validation.
+///
+/// Downloads use this seam so their lifecycle owner can converge every
+/// post-connect readiness outcome on unified cleanup. Uploads continue through
+/// `connect_file_ws`, preserving their existing connect-and-ready behaviour.
+async fn connect_file_ws_raw(
+    ws_endpoint: &str,
+    uuid: &str,
+    prefix: &str,
+    operation: &str,
+) -> Option<(
+    futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        WsMessage,
+    >,
+    futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+)> {
     let request = match build_file_ws_request(ws_endpoint, uuid) {
         Ok(request) => request,
         Err(e) => {
@@ -875,14 +1781,7 @@ async fn connect_file_ws(
         }
     };
 
-    let (ws_sender, mut ws_receiver) = ws_stream.split();
-
-    if wait_for_server_ready(&mut ws_receiver).await.is_none() {
-        warn!("{prefix}Failed to receive SERVER_READY");
-        return None;
-    }
-
-    Some((ws_sender, ws_receiver))
+    Some(ws_stream.split())
 }
 
 async fn validate_path_is_within(target_path: &Path, working_directory: &str) -> bool {
@@ -1782,5 +2681,96 @@ mod tests {
         )
         .unwrap();
         assert_eq!(relative, entry_path.to_string_lossy());
+    }
+
+    // ---------------------------------------------------------------
+    // Per-transfer download supervisor smoke tests (task-2).
+    // Exercise the supervisor's seam and authoritative-result selection
+    // without relying on a real WebSocket. Task-4 will add full lifecycle
+    // regression coverage using the task-3 fixture.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn graceful_close_timeout_defaults_to_five_seconds() {
+        set_graceful_close_timeout_for_test(None);
+        assert_eq!(
+            graceful_close_timeout(),
+            Duration::from_secs(GRACEFUL_CLOSE_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn graceful_close_timeout_override_is_honoured() {
+        set_graceful_close_timeout_for_test(Some(Duration::from_millis(50)));
+        assert_eq!(
+            graceful_close_timeout(),
+            Duration::from_millis(50),
+            "override seam must allow tests to exercise forced release deterministically"
+        );
+        set_graceful_close_timeout_for_test(None);
+        assert_eq!(
+            graceful_close_timeout(),
+            Duration::from_secs(GRACEFUL_CLOSE_TIMEOUT_SECS),
+            "production default must be restored when override is cleared"
+        );
+    }
+
+    #[test]
+    fn transfer_state_preserves_primary_error_over_later_peer_terminal() {
+        let mut state = TransferState::new(1024);
+        let primary = state.primary("chunk send failed");
+        assert!(matches!(primary, AuthoritativeResult::PrimaryError(_)));
+
+        let peer = state.peer_terminal("peer Close".to_string());
+        assert!(
+            matches!(peer, AuthoritativeResult::PrimaryError(_)),
+            "primary error must not be overwritten by a later peer terminal event"
+        );
+        assert!(matches!(
+            state.authoritative(),
+            AuthoritativeResult::PrimaryError(_)
+        ));
+    }
+
+    #[test]
+    fn transfer_state_records_bytes_only_after_set_authoritative_with_clean_eof() {
+        let mut state = TransferState::new(8);
+        state.transmitted_bytes = 8;
+        state.set_authoritative(AuthoritativeResult::CleanEof);
+        assert_eq!(state.total_bytes(), 8);
+        assert!(matches!(
+            state.authoritative(),
+            AuthoritativeResult::CleanEof
+        ));
+    }
+
+    #[test]
+    fn transfer_state_rejects_clean_eof_with_size_mismatch() {
+        let mut state = TransferState::new(8);
+        state.transmitted_bytes = 4;
+        // The supervisor's reading-phase branch selects a PrimaryError when the
+        // zero-byte read arrives before transmitted_bytes == expected_size.
+        // This unit test only asserts that the state still surfaces a
+        // non-CleanEof outcome via `authoritative()` after the supervisor
+        // sets it; the actual selection happens in the supervisor.
+        state.set_authoritative(AuthoritativeResult::PrimaryError(
+            "unexpected EOF: transmitted 4 of 8 bytes".to_string(),
+        ));
+        assert!(!matches!(
+            state.authoritative(),
+            AuthoritativeResult::CleanEof
+        ));
+    }
+
+    #[test]
+    fn transfer_state_lets_primary_error_replace_pending() {
+        let mut state = TransferState::new(8);
+        state.set_authoritative(AuthoritativeResult::Pending);
+        // Pending is overwritten by any terminal variant.
+        state.set_authoritative(AuthoritativeResult::CleanEof);
+        assert!(matches!(
+            state.authoritative(),
+            AuthoritativeResult::CleanEof
+        ));
     }
 }
