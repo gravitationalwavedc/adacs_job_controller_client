@@ -181,9 +181,23 @@ impl TungsteniteWebsocketClient {
     /// Prune empty queue sources (matches C++ pruneSources)
     /// Runs every `QUEUE_SOURCE_PRUNE_SECONDS` (60s)
     fn prune_sources(&self) {
+        let mut skipped = 0;
         for priority in &self.queue {
-            let mut map = priority.lock();
+            // try_lock avoids blocking the async prune task on the tokio
+            // executor when another task still holds the priority mutex
+            // mid-cycle. Contended priorities keep their sources until the
+            // next prune pass.
+            let Some(mut map) = priority.try_lock() else {
+                skipped += 1;
+                continue;
+            };
             map.retain(|_, q| !q.is_empty());
+        }
+        if skipped > 0 {
+            debug!(
+                "WS: Skipped {} contended priority queue(s) during prune (retry next pass)",
+                skipped
+            );
         }
         debug!("WS: Pruned empty queue sources");
     }
