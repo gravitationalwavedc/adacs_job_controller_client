@@ -4727,10 +4727,12 @@ fn test_task4_final_send_race_peer_eof_wins() {
         let fixture = TemporaryDirectoryFixture::new();
         let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
         let path = fixture.get_temp_path().join("eof_final.bin");
-        // Two chunks (128 KB) so drop_after_n_incoming = Some(2) makes the
+        // Two chunks (128 KB) so drop_after_n_incoming = Some(3) makes the
         // server close the connection after the supervisor has sent both
-        // chunks. The supervisor's biased select at the EOF boundary then
-        // observes the dropped connection (peer EOF) instead of CleanEof.
+        // chunks (the fixture counts every binary message, including the
+        // initial FILE_DOWNLOAD_DETAILS). The supervisor's biased select at
+        // the EOF boundary then observes the dropped connection (peer EOF)
+        // instead of CleanEof.
         let content = vec![0xEE; 128 * 1024];
         fs::write(&path, &content).unwrap();
 
@@ -4761,7 +4763,7 @@ fn test_task4_final_send_race_peer_eof_wins() {
         let config = WebsocketServerConfig {
             server_ready: ServerReadyBehaviour::Valid,
             close_handshake: CloseHandshakeBehaviour::Acknowledge,
-            drop_after_n_incoming: Some(2),
+            drop_after_n_incoming: Some(3),
         };
         let server = WebsocketServerFixture::with_config(config).await;
         let observer = server.lifecycle();

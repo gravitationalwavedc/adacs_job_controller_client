@@ -1120,11 +1120,23 @@ async fn run_sending_phase(
                     trace!("handle_file_download: Chunk sent successfully");
                     // Accounting happens ONLY after a successful send.
                     state.transmitted_bytes += chunk_len as u64;
+                    let is_final = state.transmitted_bytes == state.expected_size;
+                    // Yield after non-final chunks so a Pause that is still in
+                    // transit can be delivered and processed by the next phase's
+                    // drain. Without this the supervisor can stream the whole
+                    // file back-to-back on a fast socket and finish before the
+                    // peer's Pause ever arrives, defeating the flow-control
+                    // protocol. The final chunk does not yield so barrier-based
+                    // race tests observe the send-complete boundary
+                    // deterministically.
+                    if !is_final {
+                        tokio::task::yield_now().await;
+                    }
                     // Test seam: arrive-and-wait on the final-send barrier if
                     // this was the last chunk and a barrier is installed. The
                     // seam is a no-op when no barrier is set.
                     #[cfg(test)]
-                    if state.transmitted_bytes == state.expected_size {
+                    if is_final {
                         arrive_final_send_barrier().await;
                     }
                     LoopStep::SetState(ChunkState::Reading)
