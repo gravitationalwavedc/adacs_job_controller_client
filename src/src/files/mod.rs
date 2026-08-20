@@ -1220,12 +1220,14 @@ fn drain_pending_incoming(
                     ));
                 }
                 IncomingEvent::Eof => {
-                    return Some(LoopStep::Finish(state.peer_terminal("peer EOF".to_string())));
+                    return Some(LoopStep::Finish(
+                        state.peer_terminal("peer EOF".to_string()),
+                    ));
                 }
                 IncomingEvent::Error(msg) => {
-                    return Some(LoopStep::Finish(state.peer_terminal(format!(
-                        "peer receive error: {msg}"
-                    ))));
+                    return Some(LoopStep::Finish(
+                        state.peer_terminal(format!("peer receive error: {msg}")),
+                    ));
                 }
                 IncomingEvent::Ignored => {}
             },

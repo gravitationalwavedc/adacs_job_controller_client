@@ -4224,10 +4224,7 @@ fn test_task4_pause_resume_supervisor_event_loop() {
                 Ok(None) | Err(_) => break,
             }
         }
-        assert!(
-            resumed > 0,
-            "at least one chunk must arrive after resume"
-        );
+        assert!(resumed > 0, "at least one chunk must arrive after resume");
         total_chunks += resumed;
         assert_eq!(
             total_chunks, 5,
