@@ -2382,6 +2382,59 @@ mod tests {
         assert_eq!(fields.file_size, 1024);
     }
 
+    #[test]
+    fn classify_incoming_none_is_eof() {
+        assert!(matches!(classify_incoming(None), IncomingEvent::Eof));
+    }
+
+    #[test]
+    fn classify_incoming_close_frame_is_close() {
+        let incoming = Some(Ok(WsMessage::Close(None)));
+        assert!(matches!(classify_incoming(incoming), IncomingEvent::Close));
+    }
+
+    #[test]
+    fn classify_incoming_pause_message_is_pause() {
+        let msg = Message::new(PAUSE_FILE_CHUNK_STREAM, Priority::Lowest, "server");
+        let incoming = Some(Ok(WsMessage::Binary(msg.get_data().clone().into())));
+        assert!(matches!(classify_incoming(incoming), IncomingEvent::Pause));
+    }
+
+    #[test]
+    fn classify_incoming_resume_message_is_resume() {
+        let msg = Message::new(RESUME_FILE_CHUNK_STREAM, Priority::Lowest, "server");
+        let incoming = Some(Ok(WsMessage::Binary(msg.get_data().clone().into())));
+        assert!(matches!(classify_incoming(incoming), IncomingEvent::Resume));
+    }
+
+    #[test]
+    fn classify_incoming_unknown_binary_is_ignored() {
+        let msg = Message::new(FILE_CHUNK, Priority::Lowest, "server");
+        let incoming = Some(Ok(WsMessage::Binary(msg.get_data().clone().into())));
+        assert!(matches!(
+            classify_incoming(incoming),
+            IncomingEvent::Ignored
+        ));
+    }
+
+    #[test]
+    fn classify_incoming_text_frame_is_ignored() {
+        let incoming = Some(Ok(WsMessage::Text("hello".into())));
+        assert!(matches!(
+            classify_incoming(incoming),
+            IncomingEvent::Ignored
+        ));
+    }
+
+    #[test]
+    fn classify_incoming_error_is_error() {
+        let incoming = Some(Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed));
+        assert!(matches!(
+            classify_incoming(incoming),
+            IncomingEvent::Error(_)
+        ));
+    }
+
     struct TestSink {
         sent: Vec<WsMessage>,
         fail_next: bool,
