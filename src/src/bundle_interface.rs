@@ -1287,3 +1287,120 @@ mod append_bundle_path_to_sys_path_tests {
         }
     }
 }
+
+// ─── log_python_lines tests ──────────────────────────────────────────────────
+
+#[cfg(test)]
+mod log_python_lines_tests {
+    use super::*;
+    use crate::python_interface::Py_eval_input;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct VecWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl VecWriter {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn into_string(self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap_or_default()
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for VecWriter {
+        type Writer = VecWriterGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            VecWriterGuard(self.0.clone())
+        }
+    }
+
+    struct VecWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for VecWriterGuard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Run `f` with a thread-local tracing subscriber that captures all
+    /// `INFO`-and-above events into a `String`. Returns the captured log.
+    fn capture_logs<F: FnOnce()>(f: F) -> String {
+        let writer = VecWriter::new();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .with_target(true)
+            .with_level(true)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        writer.into_string()
+    }
+
+    /// `log_python_lines` must iterate a Python list of strings and log each
+    /// element via `error!`.
+    #[test]
+    fn logs_each_string_in_list() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `log_python_lines` and the Python C-API calls used
+        // to build the input list.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "globals dict should be created");
+            assert_eq!(
+                PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins()),
+                0,
+                "setting __builtins__ should succeed"
+            );
+            let code = c"['line one', 'line two', 'line three']";
+            let list = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_eval_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            assert!(!list.is_null(), "list literal should evaluate");
+            let logs = capture_logs(|| log_python_lines(list));
+            Py_DecRef(list);
+            Py_DecRef(globals);
+            for line in ["line one", "line two", "line three"] {
+                assert!(
+                    logs.contains(line),
+                    "expected '{line}' to be logged via error!, got:\n{logs}"
+                );
+            }
+        }
+    }
+
+    /// `log_python_lines` must return silently on NULL input without touching
+    /// the Python C-API or emitting any log events.
+    #[test]
+    fn returns_silently_on_null_input() {
+        crate::tests::init_python_global();
+        // SAFETY: The NULL branch returns before any Python C-API call, so no
+        // GIL/thread state is required.
+        unsafe {
+            let logs = capture_logs(|| log_python_lines(std::ptr::null_mut()));
+            assert!(
+                logs.is_empty(),
+                "NULL input should log nothing, got:\n{logs}"
+            );
+        }
+    }
+}
