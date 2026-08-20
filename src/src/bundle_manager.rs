@@ -72,10 +72,12 @@ impl BundleManager {
             let old = SINGLETON_TEST.swap(ptr, std::sync::atomic::Ordering::SeqCst);
             if !old.is_null() {
                 // SAFETY: `old` was set by a previous `initialize` call in this same
-                // test process and is no longer accessible to any other thread (tests
-                // run --test-threads=1).
+                // test process. Tests run --test-threads=1, so no other thread
+                // accesses the retired manager concurrently. Previously returned
+                // `&'static BundleManager` references cannot be ruled out; the
+                // retention policy below keeps the allocation alive when needed.
                 unsafe {
-                    drop(Box::from_raw(old));
+                    Self::retire_test_manager(Box::from_raw(old));
                 }
             }
         }
@@ -101,11 +103,30 @@ impl BundleManager {
         let ptr = SINGLETON_TEST.swap(std::ptr::null_mut(), std::sync::atomic::Ordering::SeqCst);
         if !ptr.is_null() {
             // SAFETY: `ptr` was set by a previous `initialize` call in this same test
-            // process and is no longer accessible to any other thread (tests run
-            // --test-threads=1).
+            // process. Tests run --test-threads=1, so no other thread accesses the
+            // retired manager concurrently. Previously returned `&'static
+            // BundleManager` references cannot be ruled out; the retention policy
+            // below keeps the allocation alive when needed.
             unsafe {
-                drop(Box::from_raw(ptr));
+                Self::retire_test_manager(Box::from_raw(ptr));
             }
+        }
+    }
+
+    /// Retire a test `BundleManager` that is being replaced. Managers whose
+    /// bundle map is empty contain no `SubInterpreter` and are dropped normally.
+    /// Managers that own bundles must be retained for process lifetime: dropping
+    /// them tears down each cached `SubInterpreter` via `Py_EndInterpreter`,
+    /// which can block forever when invoked from a different thread than the one
+    /// that created the sub-interpreter (the Python GIL is held by a thread state
+    /// that is no longer current). Retained allocations are reclaimed when the
+    /// test process exits.
+    #[cfg(test)]
+    fn retire_test_manager(manager: Box<BundleManager>) {
+        if manager.bundles.read().is_empty() {
+            drop(manager);
+        } else {
+            std::mem::forget(manager);
         }
     }
 
