@@ -832,4 +832,50 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn set_db_error_and_return_null_returns_null_and_sets_error_message() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_set_db_error_null";
+        fixture.write_bundle_db_create_or_update_job(bundle_hash, r#"{"test": 1}"#);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        let bundle = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let error_obj = get_bundle_db_error(bundle_hash);
+            let result = set_db_error_and_return_null(error_obj, "Job ID must be provided.");
+            assert!(result.is_null(), "error helper should return null pointer");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "Python error should be set"
+            );
+
+            // Fetch the error and verify the message matches what was set.
+            let mut extype: *mut PyObject = ptr::null_mut();
+            let mut value: *mut PyObject = ptr::null_mut();
+            let mut traceback: *mut PyObject = ptr::null_mut();
+            crate::python_interface::PyErr_Fetch(
+                &raw mut extype,
+                &raw mut value,
+                &raw mut traceback,
+            );
+            let str_obj = crate::python_interface::PyObject_Str(value);
+            assert!(!str_obj.is_null(), "error value should stringify");
+            let c_str = crate::python_interface::PyUnicode_AsUTF8(str_obj);
+            assert!(!c_str.is_null(), "error string should be UTF-8");
+            assert_eq!(
+                std::ffi::CStr::from_ptr(c_str).to_str().unwrap(),
+                "Job ID must be provided."
+            );
+            crate::python_interface::Py_DecRef(str_obj);
+            crate::python_interface::Py_DecRef(extype);
+            crate::python_interface::Py_DecRef(value);
+            crate::python_interface::Py_DecRef(traceback);
+        }
+    }
 }
