@@ -868,17 +868,16 @@ async fn run_download_supervisor(
     let download_start = std::time::Instant::now();
     let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
 
-    let state = run_transfer_loop(
-        &mut ws_sender,
-        &mut ws_receiver,
-        &mut file,
-        &mut buffer,
-        file_size,
-        &is_paused,
-        &resume_notify,
-        &uuid,
-    )
-    .await;
+    let mut ctx = TransferContext {
+        ws_sender: &mut ws_sender,
+        ws_receiver: &mut ws_receiver,
+        file: &mut file,
+        buffer: &mut buffer,
+        is_paused: &is_paused,
+        resume_notify: &resume_notify,
+        uuid: &uuid,
+    };
+    let state = run_transfer_loop(&mut ctx, file_size).await;
 
     // --- User-facing reporting from the authoritative result (cleanup below
     // never replaces this).
@@ -939,42 +938,37 @@ async fn validate_server_ready(ws_receiver: &mut WsReceiver) -> Result<(), Strin
     }
 }
 
+struct TransferContext<'a> {
+    ws_sender: &'a mut WsSender,
+    ws_receiver: &'a mut WsReceiver,
+    file: &'a mut File,
+    buffer: &'a mut [u8],
+    is_paused: &'a Arc<AtomicBool>,
+    resume_notify: &'a Arc<Notify>,
+    uuid: &'a str,
+}
+
 /// Drive file reads, chunk sends, pause/resume input, and peer terminal
 /// events in one ordered event loop. Transmitted bytes advance only after a
 /// chunk send resolves successfully. `COMPLETED` requires clean EOF plus
 /// expected-size equality. Once a primary error is selected, later peer
 /// terminal events cannot replace it.
-async fn run_transfer_loop(
-    ws_sender: &mut WsSender,
-    ws_receiver: &mut WsReceiver,
-    file: &mut File,
-    buffer: &mut [u8],
-    file_size: u64,
-    is_paused: &Arc<AtomicBool>,
-    resume_notify: &Arc<Notify>,
-    uuid: &str,
-) -> TransferState {
+async fn run_transfer_loop(ctx: &mut TransferContext<'_>, file_size: u64) -> TransferState {
     let mut state = TransferState::new(file_size);
     let mut chunk_state = ChunkState::Reading;
 
     loop {
         let step = match chunk_state {
-            ChunkState::Reading => {
-                run_reading_phase(
-                    ws_sender,
-                    ws_receiver,
-                    file,
-                    buffer,
-                    is_paused,
-                    resume_notify,
-                    uuid,
+            ChunkState::Reading => run_reading_phase(ctx, &mut state).await,
+            ChunkState::Sending => {
+                run_sending_phase(
+                    ctx.ws_sender,
+                    ctx.ws_receiver,
+                    ctx.is_paused,
+                    ctx.resume_notify,
                     &mut state,
                 )
                 .await
-            }
-            ChunkState::Sending => {
-                run_sending_phase(ws_sender, ws_receiver, is_paused, resume_notify, &mut state)
-                    .await
             }
         };
 
@@ -991,47 +985,52 @@ async fn run_transfer_loop(
     state
 }
 
-async fn run_reading_phase(
-    ws_sender: &mut WsSender,
-    ws_receiver: &mut WsReceiver,
-    file: &mut File,
-    buffer: &mut [u8],
-    is_paused: &Arc<AtomicBool>,
-    resume_notify: &Arc<Notify>,
-    uuid: &str,
-    state: &mut TransferState,
-) -> LoopStep {
+async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferState) -> LoopStep {
     // If a primary error already exists, only listen for peer terminal events
     // and resume notifications so we do not waste file work.
     if state.authoritative.is_primary() {
-        return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
+        return wait_for_terminal_or_resume(
+            ctx.ws_receiver,
+            ctx.is_paused,
+            ctx.resume_notify,
+            state,
+        )
+        .await;
     }
 
     // Process any Pause/Resume/terminal messages already buffered before
     // arming a file read, so a Pause that arrived during the previous send is
     // honoured promptly.
-    if let Some(step) = drain_pending_incoming(ws_receiver, is_paused, resume_notify, state) {
+    if let Some(step) =
+        drain_pending_incoming(ctx.ws_receiver, ctx.is_paused, ctx.resume_notify, state)
+    {
         return step;
     }
 
-    if is_paused.load(Ordering::Acquire) {
+    if ctx.is_paused.load(Ordering::Acquire) {
         // While paused we do not arm a file read; we just wait for resume or a
         // peer terminal event.
-        return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
+        return wait_for_terminal_or_resume(
+            ctx.ws_receiver,
+            ctx.is_paused,
+            ctx.resume_notify,
+            state,
+        )
+        .await;
     }
 
-    let mut read_fut = Box::pin(file.read(buffer));
+    let mut read_fut = Box::pin(ctx.file.read(ctx.buffer));
     tokio::select! {
         biased;
-        incoming = ws_receiver.next() => {
+        incoming = ctx.ws_receiver.next() => {
             match classify_incoming(incoming) {
                 IncomingEvent::Pause => {
-                    is_paused.store(true, Ordering::Release);
+                    ctx.is_paused.store(true, Ordering::Release);
                     LoopStep::Continue
                 }
                 IncomingEvent::Resume => {
-                    is_paused.store(false, Ordering::Release);
-                    resume_notify.notify_one();
+                    ctx.is_paused.store(false, Ordering::Release);
+                    ctx.resume_notify.notify_one();
                     LoopStep::Continue
                 }
                 IncomingEvent::Close => {
@@ -1068,7 +1067,7 @@ async fn run_reading_phase(
                         // clean-EOF boundary. Events that are still pending
                         // belong to cleanup, not transfer-result selection.
                         use futures_util::FutureExt;
-                        match ws_receiver.next().now_or_never() {
+                        match ctx.ws_receiver.next().now_or_never() {
                             Some(Some(Ok(WsMessage::Close(_)))) => LoopStep::Finish(
                                 state.peer_terminal("peer Close".to_string()),
                             ),
@@ -1092,8 +1091,8 @@ async fn run_reading_phase(
                             "handle_file_download: File size mismatch: expected {expected} bytes, got {transmitted} bytes (file truncated or modified during download)"
                         );
                         send_file_error(
-                            ws_sender,
-                            uuid,
+                            ctx.ws_sender,
+                            ctx.uuid,
                             &format!("File size mismatch: expected {expected}, got {transmitted}"),
                             FILE_DOWNLOAD_ERROR,
                         )
@@ -1106,8 +1105,8 @@ async fn run_reading_phase(
                 Ok(n) => {
                     trace!("handle_file_download: Read {} bytes from file", n);
                     // Build the chunk message bytes and arm the Sending phase.
-                    let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, uuid);
-                    chunk_msg.push_bytes(&buffer[..n]);
+                    let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, ctx.uuid);
+                    chunk_msg.push_bytes(&ctx.buffer[..n]);
                     let bytes: Bytes = chunk_msg.get_data().clone().into();
                     state.pending_chunk_bytes = Some(bytes);
                     state.pending_chunk_len = n;
@@ -1116,8 +1115,8 @@ async fn run_reading_phase(
                 Err(e) => {
                     warn!("Error reading file: {}", e);
                     send_file_error(
-                        ws_sender,
-                        uuid,
+                        ctx.ws_sender,
+                        ctx.uuid,
                         "Exception reading file",
                         FILE_DOWNLOAD_ERROR,
                     )
