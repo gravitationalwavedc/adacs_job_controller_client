@@ -223,6 +223,17 @@ pub struct WebsocketServerFixture {
     pub zero_byte_eof_barrier: Arc<LifecycleBarrier>,
 }
 
+struct SpawnArgs {
+    port: u16,
+    outbound_tx: mpsc::UnboundedSender<Message>,
+    inbound_rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
+    close_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
+    reset_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
+    stop_signal: Arc<Notify>,
+    config: WebsocketServerConfig,
+    lifecycle: Arc<LifecycleState>,
+}
+
 impl WebsocketServerFixture {
     fn reset_transport(stream: TcpStream) {
         let std_stream = stream
@@ -286,16 +297,17 @@ impl WebsocketServerFixture {
         }
     }
 
-    async fn spawn_server(
-        port: u16,
-        outbound_tx: mpsc::UnboundedSender<Message>,
-        inbound_rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
-        close_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
-        reset_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
-        stop_signal: Arc<Notify>,
-        config: WebsocketServerConfig,
-        lifecycle: Arc<LifecycleState>,
-    ) -> tokio::task::JoinHandle<()> {
+    async fn spawn_server(args: SpawnArgs) -> tokio::task::JoinHandle<()> {
+        let SpawnArgs {
+            port,
+            outbound_tx,
+            inbound_rx,
+            close_rx,
+            reset_rx,
+            stop_signal,
+            config,
+            lifecycle,
+        } = args;
         let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
             .await
             .unwrap();
@@ -483,16 +495,16 @@ impl WebsocketServerFixture {
         let reset_rx = Arc::new(Mutex::new(reset_rx_from_test));
         let stop_tx = Arc::new(Notify::new());
         let lifecycle = Arc::new(LifecycleState::default());
-        let handle = Self::spawn_server(
+        let handle = Self::spawn_server(SpawnArgs {
             port,
-            msg_tx_to_test.clone(),
-            inbound_rx.clone(),
-            close_rx.clone(),
-            reset_rx.clone(),
-            stop_tx.clone(),
-            config.clone(),
-            lifecycle.clone(),
-        )
+            outbound_tx: msg_tx_to_test.clone(),
+            inbound_rx: inbound_rx.clone(),
+            close_rx: close_rx.clone(),
+            reset_rx: reset_rx.clone(),
+            stop_signal: stop_tx.clone(),
+            config: config.clone(),
+            lifecycle: lifecycle.clone(),
+        })
         .await;
 
         Self {
@@ -562,16 +574,16 @@ impl WebsocketServerFixture {
         let close_rx = Arc::new(Mutex::new(close_rx_from_test));
         let reset_rx = Arc::new(Mutex::new(reset_rx_from_test));
         self.handle = Some(
-            Self::spawn_server(
-                self.port,
-                self.outbound_tx.clone(),
-                self.inbound_rx.clone(),
+            Self::spawn_server(SpawnArgs {
+                port: self.port,
+                outbound_tx: self.outbound_tx.clone(),
+                inbound_rx: self.inbound_rx.clone(),
                 close_rx,
                 reset_rx,
-                self.stop_tx.clone(),
-                self.config.clone(),
-                self.lifecycle.clone(),
-            )
+                stop_signal: self.stop_tx.clone(),
+                config: self.config.clone(),
+                lifecycle: self.lifecycle.clone(),
+            })
             .await,
         );
     }
