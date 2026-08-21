@@ -199,6 +199,9 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
                 "DB: Bundle {} not found in cache during FFI callback: {}",
                 bundle_hash, e
             );
+            let error_obj = get_bundle_db_error(&bundle_hash);
+            let err_msg = err_cstring("Bundle not found in cache");
+            PyErr_SetString(error_obj, err_msg.as_ptr());
             return None;
         }
     };
@@ -405,7 +408,8 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
                 "DB: Bundle {} not found in cache during FFI callback: {}",
                 bundle_hash, e
             );
-            return std::ptr::null_mut();
+            let error_obj = get_bundle_db_error(&bundle_hash);
+            return set_db_error_and_return_null(error_obj, "Bundle not found in cache");
         }
     };
 
