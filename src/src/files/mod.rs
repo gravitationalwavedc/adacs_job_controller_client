@@ -1593,7 +1593,7 @@ fn handle_file_upload_internal(
                     let chunk = m.pop_bytes();
                     if let Err(e) = file.write_all(&chunk).await {
                         warn!("Failed to write chunk: {}", e);
-                        let _ = fs::remove_file(&full_path).await;
+                        remove_partial_file(&full_path).await;
                         send_file_error(
                             &mut ws_sender,
                             &uuid,
@@ -1606,7 +1606,7 @@ fn handle_file_upload_internal(
                     received_size += chunk.len() as u64;
                 } else if m.id == FILE_UPLOAD_COMPLETE {
                     if received_size != file_size {
-                        let _ = fs::remove_file(&full_path).await;
+                        remove_partial_file(&full_path).await;
                         send_file_error(
                             &mut ws_sender,
                             &uuid,
@@ -1645,7 +1645,7 @@ fn handle_file_upload_internal(
         // Connection dropped before FILE_UPLOAD_COMPLETE — remove the partial
         // file so it isn't mistaken for a complete upload.
         warn!("handle_file_upload: connection dropped before FILE_UPLOAD_COMPLETE, removing partial file");
-        let _ = fs::remove_file(&full_path).await;
+        remove_partial_file(&full_path).await;
     });
 }
 
@@ -1843,6 +1843,17 @@ impl FinalizeFile for File {
     }
 }
 
+/// Remove a partial upload file, logging (rather than silently ignoring) any
+/// failure so an unremovable partial file is diagnosable in the logs.
+async fn remove_partial_file(full_path: &Path) {
+    if let Err(e) = fs::remove_file(full_path).await {
+        warn!(
+            "handle_file_upload_internal: Failed to remove partial file {:?}: {}",
+            full_path, e
+        );
+    }
+}
+
 /// Flush and sync the uploaded file to disk. On failure, removes the partial
 /// file and sends the upload error, returning `false`.
 async fn finalize_upload_file<F, S, E>(
@@ -1858,12 +1869,7 @@ where
 {
     if let Err(e) = file.flush().await {
         warn!("Failed to flush uploaded file: {}", e);
-        if let Err(e) = fs::remove_file(full_path).await {
-            warn!(
-                "Failed to remove partial upload file {:?}: {}",
-                full_path, e
-            );
-        }
+        remove_partial_file(full_path).await;
         send_file_error(
             ws_sender,
             uuid,
@@ -1875,12 +1881,7 @@ where
     }
     if let Err(e) = file.sync_all().await {
         warn!("Failed to sync uploaded file: {}", e);
-        if let Err(e) = fs::remove_file(full_path).await {
-            warn!(
-                "Failed to remove partial upload file {:?}: {}",
-                full_path, e
-            );
-        }
+        remove_partial_file(full_path).await;
         send_file_error(
             ws_sender,
             uuid,
@@ -2438,6 +2439,38 @@ mod tests {
             assert_eq!(resp.source, "uuid-123");
             assert_eq!(resp.pop_string(), "Failed to finalize uploaded file");
         });
+    }
+
+    #[test]
+    fn test_remove_partial_file_logs_warning_when_removal_fails() {
+        let tmp = TempDir::new().unwrap();
+        // fs::remove_file on a non-existent path fails (NotFound), so the
+        // warning branch is exercised.
+        let missing = tmp.path().join("does-not-exist.bin");
+        let logs = capture_logs(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(remove_partial_file(&missing));
+        });
+        assert!(
+            logs.contains("Failed to remove partial file"),
+            "expected a warning for the failed removal, got: {logs}"
+        );
+    }
+
+    #[test]
+    fn test_remove_partial_file_removes_existing_file_without_warning() {
+        let tmp = TempDir::new().unwrap();
+        let full_path = tmp.path().join("upload.bin");
+        std::fs::write(&full_path, b"data").unwrap();
+        let logs = capture_logs(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(remove_partial_file(&full_path));
+        });
+        assert!(!full_path.exists(), "existing file should be removed");
+        assert!(
+            !logs.contains("Failed to remove partial file"),
+            "no warning expected on successful removal, got: {logs}"
+        );
     }
 
     #[test]
