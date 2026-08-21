@@ -9,7 +9,7 @@ use crate::websocket::get_websocket_client;
 use bytes::Bytes;
 use futures_util::{Sink, SinkExt, StreamExt};
 use serde_json::json;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, LazyLock,
@@ -422,17 +422,12 @@ pub fn handle_file_list(mut msg: Message) {
             while let Some(current_dir) = stack.pop() {
                 match fs::read_dir(&current_dir).await {
                     Ok(mut entries) => {
-                        while let Ok(Some(entry)) = entries.next_entry().await {
-                            let path = entry.path();
-                            if let Some((relative_path, is_dir, size)) =
-                                collect_dir_entry(entry, &working_directory).await
-                            {
-                                file_list.push((relative_path, is_dir, size));
-                                if is_dir {
-                                    stack.push(path);
-                                }
-                            }
-                        }
+                        let mut handler = RecursiveFileListHandler {
+                            file_list: &mut file_list,
+                            stack: &mut stack,
+                            working_directory: &working_directory,
+                        };
+                        for_each_dir_entry(&mut entries, &current_dir, &mut handler).await;
                     }
                     Err(e) => {
                         warn!(
@@ -445,12 +440,11 @@ pub fn handle_file_list(mut msg: Message) {
         } else {
             match fs::read_dir(&abs_path).await {
                 Ok(mut entries) => {
-                    while let Ok(Some(entry)) = entries.next_entry().await {
-                        if let Some(entry_info) = collect_dir_entry(entry, &working_directory).await
-                        {
-                            file_list.push(entry_info);
-                        }
-                    }
+                    let mut handler = FileListHandler {
+                        file_list: &mut file_list,
+                        working_directory: &working_directory,
+                    };
+                    for_each_dir_entry(&mut entries, &abs_path, &mut handler).await;
                 }
                 Err(e) => {
                     warn!(
@@ -520,6 +514,80 @@ async fn collect_dir_entry(
         .to_string_lossy()
         .into_owned();
     Some((relative_path, metadata.is_dir(), metadata.len()))
+}
+
+/// A source of directory entries whose iteration can fail mid-stream.
+trait DirEntrySource {
+    async fn next_entry(&mut self) -> std::io::Result<Option<fs::DirEntry>>;
+}
+
+impl DirEntrySource for fs::ReadDir {
+    async fn next_entry(&mut self) -> std::io::Result<Option<fs::DirEntry>> {
+        fs::ReadDir::next_entry(self).await
+    }
+}
+
+/// Handles a single directory entry during iteration.
+trait DirEntryHandler {
+    async fn handle(&mut self, entry: fs::DirEntry);
+}
+
+/// Iterate a directory stream, invoking `handler` for each entry. Logs a warning
+/// and stops iteration if `next_entry` fails.
+async fn for_each_dir_entry<S, H>(entries: &mut S, dir: &Path, handler: &mut H)
+where
+    S: DirEntrySource,
+    H: DirEntryHandler,
+{
+    loop {
+        match entries.next_entry().await {
+            Ok(Some(entry)) => handler.handle(entry).await,
+            Ok(None) => break,
+            Err(e) => {
+                warn!(
+                    "handle_file_list: failed to read directory entry in {:?}: {}",
+                    dir, e
+                );
+                break;
+            }
+        }
+    }
+}
+
+/// Collects entries from a single directory into `file_list`, pushing
+/// subdirectories onto `stack` for recursive traversal.
+struct RecursiveFileListHandler<'a> {
+    file_list: &'a mut Vec<(String, bool, u64)>,
+    stack: &'a mut Vec<PathBuf>,
+    working_directory: &'a str,
+}
+
+impl DirEntryHandler for RecursiveFileListHandler<'_> {
+    async fn handle(&mut self, entry: fs::DirEntry) {
+        let path = entry.path();
+        if let Some((relative_path, is_dir, size)) =
+            collect_dir_entry(entry, self.working_directory).await
+        {
+            self.file_list.push((relative_path, is_dir, size));
+            if is_dir {
+                self.stack.push(path);
+            }
+        }
+    }
+}
+
+/// Collects entries from a single directory into `file_list`.
+struct FileListHandler<'a> {
+    file_list: &'a mut Vec<(String, bool, u64)>,
+    working_directory: &'a str,
+}
+
+impl DirEntryHandler for FileListHandler<'_> {
+    async fn handle(&mut self, entry: fs::DirEntry) {
+        if let Some(entry_info) = collect_dir_entry(entry, self.working_directory).await {
+            self.file_list.push(entry_info);
+        }
+    }
 }
 
 fn send_file_list_error(uuid: &str, error_msg: &str) {
@@ -1998,6 +2066,93 @@ mod tests {
             }
             out
         })
+    }
+
+    struct FailingDirEntrySource;
+
+    impl DirEntrySource for FailingDirEntrySource {
+        async fn next_entry(&mut self) -> std::io::Result<Option<tokio::fs::DirEntry>> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "simulated read failure",
+            ))
+        }
+    }
+
+    struct EmptyDirEntrySource;
+
+    impl DirEntrySource for EmptyDirEntrySource {
+        async fn next_entry(&mut self) -> std::io::Result<Option<tokio::fs::DirEntry>> {
+            Ok(None)
+        }
+    }
+
+    struct CountHandler<'a> {
+        count: &'a mut usize,
+    }
+
+    impl DirEntryHandler for CountHandler<'_> {
+        async fn handle(&mut self, _entry: tokio::fs::DirEntry) {
+            *self.count += 1;
+        }
+    }
+
+    struct NameCollector<'a> {
+        names: &'a mut std::collections::BTreeSet<String>,
+    }
+
+    impl DirEntryHandler for NameCollector<'_> {
+        async fn handle(&mut self, entry: tokio::fs::DirEntry) {
+            self.names
+                .insert(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+
+    #[test]
+    fn for_each_dir_entry_logs_warning_and_stops_on_next_entry_error() {
+        let logs = capture_logs(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let mut source = FailingDirEntrySource;
+                let mut count = 0usize;
+                let mut handler = CountHandler { count: &mut count };
+                for_each_dir_entry(&mut source, Path::new("/tmp"), &mut handler).await;
+                assert_eq!(count, 0, "no entries should be visited on error");
+            });
+        });
+        assert!(
+            logs.contains("handle_file_list: failed to read directory entry"),
+            "expected next_entry failure warning, got: {logs}"
+        );
+    }
+
+    #[test]
+    fn for_each_dir_entry_stops_cleanly_at_end_of_stream() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut source = EmptyDirEntrySource;
+            let mut count = 0usize;
+            let mut handler = CountHandler { count: &mut count };
+            for_each_dir_entry(&mut source, Path::new("/tmp"), &mut handler).await;
+            assert_eq!(count, 0);
+        });
+    }
+
+    #[test]
+    fn for_each_dir_entry_visits_all_entries_in_directory() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("a.txt"), "a").unwrap();
+        fs::write(tmp.path().join("b.txt"), "b").unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut entries = tokio::fs::read_dir(tmp.path()).await.unwrap();
+            let mut names = std::collections::BTreeSet::new();
+            let mut handler = NameCollector { names: &mut names };
+            for_each_dir_entry(&mut entries, tmp.path(), &mut handler).await;
+            assert_eq!(names.len(), 2);
+            assert!(names.contains("a.txt"));
+            assert!(names.contains("b.txt"));
+        });
     }
 
     #[test]
