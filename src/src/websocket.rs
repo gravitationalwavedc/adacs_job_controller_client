@@ -1060,6 +1060,39 @@ mod tests {
         assert!(client.reconnectable.load(Ordering::SeqCst));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn test_run_connection_returns_error_on_malformed_url() {
+        let client = TungsteniteWebsocketClient::new();
+        let result = client
+            .clone()
+            .run_connection("not-a-websocket-url".to_string(), "test-token".to_string())
+            .await;
+        assert!(
+            result.is_err(),
+            "run_connection should return Err for a malformed URL"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn test_run_connection_returns_error_when_connection_refused() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let client = TungsteniteWebsocketClient::new();
+        let url = format!("ws://127.0.0.1:{port}/ws/");
+        let result = client
+            .clone()
+            .run_connection(url, "test-token".to_string())
+            .await;
+        assert!(
+            result.is_err(),
+            "run_connection should return Err when the peer refuses the connection"
+        );
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_send_db_request_prefixes_u32_request_id_before_payload() {
