@@ -2777,6 +2777,43 @@ mod tests {
         assert_eq!(err.client_message(), "Database error: db connection failed");
     }
 
+    #[test]
+    fn log_job_lookup_error_warns_for_not_submitted() {
+        let logs = capture_logs(|| {
+            log_job_lookup_error("handle_file_download", 22, &JobLookupError::NotSubmitted);
+        });
+        assert!(
+            logs.contains("handle_file_download: Job is not submitted, sending error"),
+            "expected NotSubmitted warning, got: {logs}"
+        );
+    }
+
+    #[test]
+    fn log_job_lookup_error_warns_for_not_found() {
+        let logs = capture_logs(|| {
+            log_job_lookup_error("handle_file_download", 22, &JobLookupError::NotFound);
+        });
+        assert!(
+            logs.contains("handle_file_download: Job 22 not found in database"),
+            "expected NotFound warning, got: {logs}"
+        );
+    }
+
+    #[test]
+    fn log_job_lookup_error_warns_for_database_error() {
+        let logs = capture_logs(|| {
+            log_job_lookup_error(
+                "handle_file_download",
+                22,
+                &JobLookupError::Database("db connection failed".to_string()),
+            );
+        });
+        assert!(
+            logs.contains("handle_file_download: Database error for job 22: db connection failed"),
+            "expected Database warning, got: {logs}"
+        );
+    }
+
     #[tokio::test]
     async fn test_send_file_error_sends_file_download_error() {
         let server = WebsocketServerFixture::new().await;
