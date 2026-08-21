@@ -4215,14 +4215,11 @@ fn test_task4_pause_resume_supervisor_event_loop() {
         // 5 chunks of 64 KB, so a correct pause/resume transfer must deliver
         // exactly 5 chunks in total with no duplication and no loss.
         let mut resumed = 0usize;
-        loop {
-            match tokio::time::timeout(Duration::from_secs(3), server.msg_rx.recv()).await {
-                Ok(Some(msg)) => {
-                    assert_eq!(msg.id, FILE_CHUNK, "unexpected message after resume");
-                    resumed += 1;
-                }
-                Ok(None) | Err(_) => break,
-            }
+        while let Ok(Some(msg)) =
+            tokio::time::timeout(Duration::from_secs(3), server.msg_rx.recv()).await
+        {
+            assert_eq!(msg.id, FILE_CHUNK, "unexpected message after resume");
+            resumed += 1;
         }
         assert!(resumed > 0, "at least one chunk must arrive after resume");
         total_chunks += resumed;
