@@ -181,9 +181,23 @@ impl TungsteniteWebsocketClient {
     /// Prune empty queue sources (matches C++ pruneSources)
     /// Runs every `QUEUE_SOURCE_PRUNE_SECONDS` (60s)
     fn prune_sources(&self) {
+        let mut skipped = 0;
         for priority in &self.queue {
-            let mut map = priority.lock();
+            // try_lock avoids blocking the async prune task on the tokio
+            // executor when another task still holds the priority mutex
+            // mid-cycle. Contended priorities keep their sources until the
+            // next prune pass.
+            let Some(mut map) = priority.try_lock() else {
+                skipped += 1;
+                continue;
+            };
             map.retain(|_, q| !q.is_empty());
+        }
+        if skipped > 0 {
+            debug!(
+                "WS: Skipped {} contended priority queue(s) during prune (retry next pass)",
+                skipped
+            );
         }
         debug!("WS: Pruned empty queue sources");
     }
@@ -1706,6 +1720,65 @@ mod tests {
         for p in 0..PRIORITY_LEVELS {
             let map = client.queue[p].lock();
             assert_eq!(map.len(), 0, "Priority {p} should have no queues");
+        }
+    }
+
+    #[test]
+    fn test_prune_sources_skips_contended_priorities() {
+        let client = TungsteniteWebsocketClient::new();
+
+        // Add data to priorities 0 and 19, then consume it so prune would remove them.
+        client.queue_message("p0".to_string(), vec![1], Priority::Highest);
+        client.queue_message("p19".to_string(), vec![1], Priority::Lowest);
+        {
+            let mut map = client.queue[0].lock();
+            if let Some(q) = map.get_mut("p0") {
+                q.pop_front();
+            }
+        }
+        {
+            let mut map = client.queue[19].lock();
+            if let Some(q) = map.get_mut("p19") {
+                q.pop_front();
+            }
+        }
+
+        // Manually populate priority 5 (no named Priority variant) with one
+        // empty and one non-empty queue.
+        {
+            let mut map = client.queue[5].lock();
+            map.insert("empty".to_string(), VecDeque::new());
+            map.insert("full".to_string(), VecDeque::from(vec![vec![1]]));
+        }
+
+        // Hold a guard on priority 5 to simulate contention.
+        let held_guard = client.queue[5].lock();
+
+        client.prune_sources();
+
+        // Non-contended priorities should be pruned.
+        for p in [0usize, 19] {
+            let map = client.queue[p].lock();
+            assert_eq!(map.len(), 0, "Priority {p} should be pruned");
+        }
+
+        // Release the guard so we can inspect priority 5's preserved state.
+        drop(held_guard);
+
+        {
+            let map = client.queue[5].lock();
+            assert_eq!(map.len(), 2, "Priority 5 should be skipped while contended");
+            assert!(map.contains_key("empty"), "empty queue should be retained");
+            assert!(map.contains_key("full"), "full queue should be retained");
+        }
+
+        // Second pass (no contention) should prune priority 5's empty queue.
+        client.prune_sources();
+
+        {
+            let map = client.queue[5].lock();
+            assert_eq!(map.len(), 1, "empty queue should be pruned on second pass");
+            assert!(map.contains_key("full"), "full queue should still exist");
         }
     }
 
