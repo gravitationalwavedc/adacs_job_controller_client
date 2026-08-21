@@ -190,22 +190,22 @@ fn perform_update(download_url: &str) -> Result<(), Box<dyn std::error::Error>> 
 
 /// Main update check function — call this at startup before connecting WebSocket.
 pub fn check_for_updates() {
-    if cfg!(test) {
-        // Never auto-update during tests: the check hits the live GitHub API and,
-        // when a newer release exists, replaces the running test binary with the
-        // downloaded release binary, stripping coverage instrumentation and
-        // breaking `cargo llvm-cov report` ("no coverage data found").
-        return;
-    }
-    match check_for_update() {
-        Ok(Some(download_url)) => {
-            if let Err(e) = perform_update(&download_url) {
-                error!("Failed to perform update: {e}");
+    // Never perform a real network update check during tests: the reconnect
+    // test triggers this via check_for_updates_on_reconnect, and a live update
+    // would replace the test binary and exit the process mid-run, killing the
+    // whole test harness (and leaving the coverage run without any data).
+    #[cfg(not(test))]
+    {
+        match check_for_update() {
+            Ok(Some(download_url)) => {
+                if let Err(e) = perform_update(&download_url) {
+                    error!("Failed to perform update: {e}");
+                }
             }
-        }
-        Ok(None) => {}
-        Err(e) => {
-            error!("Error checking for updates: {e}");
+            Ok(None) => {}
+            Err(e) => {
+                error!("Error checking for updates: {e}");
+            }
         }
     }
 }

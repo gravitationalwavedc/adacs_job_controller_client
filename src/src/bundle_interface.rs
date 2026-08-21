@@ -322,7 +322,15 @@ impl BundleInterface {
             Py_DecRef(json_obj);
             return Err(NoneException);
         }
-        PyTuple_SetItem(p_args, 0, json_obj);
+        // On failure PyTuple_SetItem releases the item reference itself, so we
+        // must not Py_DecRef the item again here.
+        if PyTuple_SetItem(p_args, 0, json_obj) < 0 {
+            error!("Error setting json object in args tuple");
+            PyErr_Print();
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return Err(NoneException);
+        }
         let Ok(c_job_data) = CString::new(job_data) else {
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
@@ -335,7 +343,15 @@ impl BundleInterface {
             Py_XDECREF(p_func);
             return Err(NoneException);
         }
-        PyTuple_SetItem(p_args, 1, p_job_data);
+        // On failure PyTuple_SetItem releases the item reference itself, so we
+        // must not Py_DecRef the item again here.
+        if PyTuple_SetItem(p_args, 1, p_job_data) < 0 {
+            error!("Error setting job data in args tuple");
+            PyErr_Print();
+            Py_DecRef(p_args);
+            Py_XDECREF(p_func);
+            return Err(NoneException);
+        }
 
         // Set up the thread bundle hash map (RAII guard clears on drop)
         let bundle_guard = ThreadBundleGuard::new(self.inner.bundle_hash.clone());
