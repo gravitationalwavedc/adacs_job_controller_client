@@ -616,8 +616,11 @@ pub fn handle_file_download(mut msg: Message) {
     let bundle_hash = msg.pop_string();
     let file_path = msg.pop_string();
 
+    // Read config BEFORE spawning to capture the correct URL for this download
+    let ws_endpoint = get_ws_endpoint_from_config();
+
     tokio::spawn(async move {
-        run_download_supervisor(job_id, uuid, bundle_hash, file_path).await;
+        run_download_supervisor(job_id, uuid, bundle_hash, file_path, ws_endpoint).await;
     });
 }
 
@@ -630,6 +633,7 @@ async fn run_download_supervisor(
     uuid: String,
     bundle_hash: String,
     file_path: String,
+    ws_endpoint: String,
 ) {
     debug!(
         "handle_file_download: SPAWNED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
@@ -641,7 +645,6 @@ async fn run_download_supervisor(
     );
 
     // --- Connected: establish the WebSocket and own both halves immediately.
-    let ws_endpoint = get_ws_endpoint_from_config();
     let Some((mut ws_sender, mut ws_receiver)) = connect_file_ws_raw(
         &ws_endpoint,
         &uuid,
