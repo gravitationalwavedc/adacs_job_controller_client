@@ -189,6 +189,9 @@ fn perform_update(download_url: &str) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 /// Main update check function — call this at startup before connecting WebSocket.
+///
+/// Production: performs the real check (network call + binary replace + exec).
+#[cfg(not(test))]
 pub fn check_for_updates() {
     if cfg!(test) {
         // Never auto-update during tests: the check hits the live GitHub API and,
@@ -209,6 +212,13 @@ pub fn check_for_updates() {
         }
     }
 }
+
+/// Test builds: no-op. The update check performs a real network call and, when
+/// a newer release exists, replaces the running binary and execs it — which
+/// would overwrite the test binary and prevent coverage from being flushed
+/// (causing flaky "no coverage data found" CI failures in reconnect tests).
+#[cfg(test)]
+pub fn check_for_updates() {}
 
 #[cfg(test)]
 mod tests {
