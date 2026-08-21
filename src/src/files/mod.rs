@@ -2072,10 +2072,7 @@ mod tests {
 
     impl DirEntrySource for FailingDirEntrySource {
         async fn next_entry(&mut self) -> std::io::Result<Option<tokio::fs::DirEntry>> {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "simulated read failure",
-            ))
+            Err(std::io::Error::other("simulated read failure"))
         }
     }
 
