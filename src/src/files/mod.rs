@@ -1657,7 +1657,18 @@ fn handle_file_upload_internal(
 
         let mut received_size = 0u64;
         let upload_start = std::time::Instant::now();
-        while let Some(Ok(ws_msg)) = ws_receiver.next().await {
+        loop {
+            let ws_msg = match ws_receiver.next().await {
+                Some(Ok(ws_msg)) => ws_msg,
+                Some(Err(e)) => {
+                    warn!(
+                        "handle_file_upload_internal: websocket receive error during upload: {}",
+                        e
+                    );
+                    break;
+                }
+                None => break,
+            };
             if let WsMessage::Binary(data) = ws_msg {
                 let mut m = Message::from_data(data.to_vec());
                 if m.id == FILE_UPLOAD_CHUNK {
