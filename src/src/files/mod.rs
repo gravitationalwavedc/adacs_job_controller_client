@@ -379,9 +379,7 @@ pub fn handle_file_list(mut msg: Message) {
             match lookup_job_working_directory(job_id).await {
                 Ok(working_directory) => working_directory,
                 Err(err) => {
-                    if let JobLookupError::Database(e) = &err {
-                        error!("handle_file_list: Database error for job {}: {}", job_id, e);
-                    }
+                    log_job_lookup_error("handle_file_list", job_id, &err);
                     send_file_list_error(&uuid, &err.client_message());
                     return;
                 }
@@ -1578,12 +1576,7 @@ fn handle_file_upload_internal(
             match lookup_job_working_directory(job_id).await {
                 Ok(working_directory) => working_directory,
                 Err(err) => {
-                    if let JobLookupError::Database(e) = &err {
-                        warn!(
-                            "handle_file_upload_internal: Database error for job {}: {}",
-                            job_id, e
-                        );
-                    }
+                    log_job_lookup_error("handle_file_upload_internal", job_id, &err);
                     send_file_error(
                         &mut ws_sender,
                         &uuid,
