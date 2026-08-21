@@ -1177,6 +1177,50 @@ mod tests {
         assert!(queue.get("db").is_none());
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_send_db_request_removes_orphaned_promise_when_connection_closes_after_queueing() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+
+        // Deterministically hit the TOCTOU re-check: hold the db queue lock so
+        // send_db_request blocks inside queue_message after passing the initial
+        // connection_closed check, then flip connection_closed to true (as a
+        // racing disconnect would) before releasing the lock. The re-check must
+        // then observe the closed connection and remove the orphaned promise.
+        let (lock_held_tx, lock_held_rx) = std::sync::mpsc::channel();
+        let queue = client.queue[Priority::Highest as usize].clone();
+        let flipper_client = client.clone();
+        let flipper = std::thread::spawn(move || {
+            let _guard = queue.lock();
+            lock_held_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            flipper_client
+                .connection_closed
+                .store(true, Ordering::SeqCst);
+        });
+        lock_held_rx.recv().unwrap();
+
+        let mut msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Highest, "database");
+        msg.push_ulong(42);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(client.send_db_request(msg));
+        flipper.join().unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "WebSocket is disconnected"
+        );
+        assert!(
+            client.db_request_promises.read().is_empty(),
+            "orphaned promise must be removed when the connection drops after queueing"
+        );
+    }
+
     #[tokio::test]
     #[serial_test::serial]
     async fn test_handle_db_response_uses_u32_request_id() {
