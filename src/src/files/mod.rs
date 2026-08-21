@@ -659,6 +659,13 @@ async fn run_download_supervisor(
     // --- Connected → readiness validation.
     if let Err(reason) = validate_server_ready(&mut ws_receiver).await {
         warn!("handle_file_download: SERVER_READY validation failed ({reason}); entering cleanup");
+        send_file_error(
+            &mut ws_sender,
+            &uuid,
+            &format!("SERVER_READY validation failed: {reason}"),
+            FILE_DOWNLOAD_ERROR,
+        )
+        .await;
         let authoritative =
             AuthoritativeResult::PrimaryError(format!("SERVER_READY validation failed: {reason}"));
         cleanup_download(&mut ws_sender, &mut ws_receiver, authoritative).await;

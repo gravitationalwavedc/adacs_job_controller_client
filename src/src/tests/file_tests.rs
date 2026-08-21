@@ -3589,7 +3589,7 @@ fn test_task4_server_ready_branches_release_connection() {
                 close_handshake: CloseHandshakeBehaviour::Acknowledge,
                 drop_after_n_incoming: None,
             };
-            let server = WebsocketServerFixture::with_config(config).await;
+            let mut server = WebsocketServerFixture::with_config(config).await;
             let observer = server.lifecycle();
             set_test_config(server.port);
 
@@ -3611,6 +3611,16 @@ fn test_task4_server_ready_branches_release_connection() {
                 0,
                 "{behaviour:?}: live connection count must return to baseline"
             );
+            if matches!(behaviour, ServerReadyBehaviour::Withheld) {
+                let error = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+                    .await
+                    .expect("Timeout waiting for FILE_DOWNLOAD_ERROR")
+                    .expect("No FILE_DOWNLOAD_ERROR");
+                assert_eq!(
+                    error.id, FILE_DOWNLOAD_ERROR,
+                    "Withheld: supervisor must send FILE_DOWNLOAD_ERROR before releasing"
+                );
+            }
         }
         reset_download_test_seams();
     } // end inner()
