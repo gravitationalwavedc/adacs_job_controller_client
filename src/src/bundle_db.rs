@@ -193,6 +193,13 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
             bundle_hash
         );
         let error_obj = get_bundle_db_error(&bundle_hash);
+        if error_obj.is_null() {
+            error!(
+                "DB: load_bundle_and_job_id failed to get error object for bundle hash: {}",
+                bundle_hash
+            );
+            return None;
+        }
         let err_msg = err_cstring("Failed to serialize job data");
         PyErr_SetString(error_obj, err_msg.as_ptr());
         return None;
@@ -369,6 +376,13 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
         );
         PyErr_Clear();
         let error_obj = get_bundle_db_error(&bundle_hash);
+        if error_obj.is_null() {
+            error!(
+                "DB: get_job_by_id failed to get error object for bundle hash: {}",
+                bundle_hash
+            );
+            return ptr::null_mut();
+        }
         PyErr_SetString(error_obj, c"Job ID must be an integer".as_ptr());
         return ptr::null_mut();
     }
