@@ -778,6 +778,28 @@ mod tests {
     }
 
     #[test]
+    fn delete_job_propagates_send_error() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request()
+            .times(1)
+            .returning(|_message| {
+                Box::pin(async move {
+                    Err::<Message, Box<dyn std::error::Error + Send + Sync>>(
+                        "mock send failure".into(),
+                    )
+                })
+            });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async { delete_job(42).await });
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "mock send failure");
+    }
+
+    #[test]
     fn get_job_by_id_sends_id_only_request_and_parses_job() {
         let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
