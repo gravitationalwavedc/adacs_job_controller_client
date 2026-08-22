@@ -76,6 +76,10 @@ fn replace_binary(
     executable_path: &Path,
     update_data: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if update_data.is_empty() {
+        return Err("Refusing to replace binary: update data is empty".into());
+    }
+
     let update_path = get_update_path(executable_path);
 
     fs::write(&update_path, update_data)?;
@@ -533,6 +537,33 @@ mod tests {
             !update_path.exists(),
             "update file '{}' should be gone after rename",
             update_path.display()
+        );
+    }
+
+    #[test]
+    fn test_replace_binary_rejects_empty_data() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_path = dir.path().join("adacs_job_client");
+        fs::write(&exe_path, b"old binary content").unwrap();
+
+        let result = replace_binary(&exe_path, &[]);
+        assert!(
+            result.is_err(),
+            "empty update data should be rejected before touching the binary"
+        );
+
+        // The running binary must be untouched
+        let content = fs::read(&exe_path).unwrap();
+        assert_eq!(
+            content, b"old binary content",
+            "running binary should be left unchanged"
+        );
+
+        // No .update file should be written
+        let update_path = get_update_path(&exe_path);
+        assert!(
+            !update_path.exists(),
+            "no update file should be written for empty data"
         );
     }
 
