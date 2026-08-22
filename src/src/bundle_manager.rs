@@ -625,3 +625,65 @@ mod thread_scope_error_tests {
         assert_eq!(result, Value::Null);
     }
 }
+
+#[cfg(test)]
+mod load_bundle_error_tests {
+    use super::*;
+    use crate::tests::fixtures::bundle_fixture::BundleFixture;
+    use serde_json::json;
+
+    /// A bundle hash with no `bundle.py` on disk is not cached and
+    /// `BundleInterface::new` fails, so `load_bundle_or_error` returns the
+    /// "Failed to load bundle" error and each `run_bundle_*` method returns its
+    /// error-return default.
+    fn manager_with_missing_bundle() -> (BundleFixture, &'static str) {
+        let fixture = BundleFixture::new();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        (fixture, "test_load_failure")
+    }
+
+    #[test]
+    fn run_bundle_string_returns_error_json_when_load_fails() {
+        crate::tests::init_python_global();
+        let (_fixture, hash) = manager_with_missing_bundle();
+
+        let result =
+            BundleManager::singleton().run_bundle_string("test_func", hash, &json!({}), "");
+        let parsed: Value = serde_json::from_str(&result).expect("result should be valid JSON");
+        assert!(
+            parsed["error"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("Failed to load bundle"),
+            "unexpected error: {parsed}"
+        );
+    }
+
+    #[test]
+    fn run_bundle_uint64_returns_zero_when_load_fails() {
+        crate::tests::init_python_global();
+        let (_fixture, hash) = manager_with_missing_bundle();
+
+        let result =
+            BundleManager::singleton().run_bundle_uint64("test_func", hash, &json!({}), "");
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn run_bundle_bool_returns_false_when_load_fails() {
+        crate::tests::init_python_global();
+        let (_fixture, hash) = manager_with_missing_bundle();
+
+        let result = BundleManager::singleton().run_bundle_bool("test_func", hash, &json!({}), "");
+        assert!(!result);
+    }
+
+    #[test]
+    fn run_bundle_json_returns_null_when_load_fails() {
+        crate::tests::init_python_global();
+        let (_fixture, hash) = manager_with_missing_bundle();
+
+        let result = BundleManager::singleton().run_bundle_json("test_func", hash, &json!({}), "");
+        assert_eq!(result, Value::Null);
+    }
+}
