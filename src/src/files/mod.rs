@@ -657,17 +657,14 @@ async fn run_download_supervisor(
     // --- Connected → readiness validation.
     if let Err(reason) = validate_server_ready(&mut ws_receiver).await {
         warn!("handle_file_download: SERVER_READY validation failed ({reason}); entering cleanup");
-        send_file_error(
+        return fail_download(
             &mut ws_sender,
+            &mut ws_receiver,
             &uuid,
-            &format!("SERVER_READY validation failed: {reason}"),
-            FILE_DOWNLOAD_ERROR,
+            Some(&format!("SERVER_READY validation failed: {reason}")),
+            format!("SERVER_READY validation failed: {reason}"),
         )
         .await;
-        let authoritative =
-            AuthoritativeResult::PrimaryError(format!("SERVER_READY validation failed: {reason}"));
-        cleanup_download(&mut ws_sender, &mut ws_receiver, authoritative).await;
-        return;
     }
 
     // --- Connected → post-connect primary operations (each may select a primary error).
@@ -687,23 +684,14 @@ async fn run_download_supervisor(
             }
             Err(err) => {
                 log_job_lookup_error("handle_file_download", job_id, &err);
-                send_file_error(
-                    &mut ws_sender,
-                    &uuid,
-                    &err.client_message(),
-                    FILE_DOWNLOAD_ERROR,
-                )
-                .await;
-                cleanup_download(
+                return fail_download(
                     &mut ws_sender,
                     &mut ws_receiver,
-                    AuthoritativeResult::PrimaryError(format!(
-                        "job lookup failed: {}",
-                        err.client_message()
-                    )),
+                    &uuid,
+                    Some(&err.client_message()),
+                    format!("job lookup failed: {}", err.client_message()),
                 )
                 .await;
-                return;
             }
         }
     } else {
@@ -731,39 +719,27 @@ async fn run_download_supervisor(
         }
         Err(e) => {
             warn!("handle_file_download: Failed to canonicalize path: {}", e);
-            send_file_error(
-                &mut ws_sender,
-                &uuid,
-                "Path to file download does not exist",
-                FILE_DOWNLOAD_ERROR,
-            )
-            .await;
-            cleanup_download(
+            return fail_download(
                 &mut ws_sender,
                 &mut ws_receiver,
-                AuthoritativeResult::PrimaryError("canonicalize failed".to_string()),
+                &uuid,
+                Some("Path to file download does not exist"),
+                "canonicalize failed".to_string(),
             )
             .await;
-            return;
         }
     };
 
     if !validate_path_is_within(&abs_path, &working_directory).await {
         warn!("handle_file_download: Path validation failed - outside working directory");
-        send_file_error(
-            &mut ws_sender,
-            &uuid,
-            "Path to file download is outside the working directory",
-            FILE_DOWNLOAD_ERROR,
-        )
-        .await;
-        cleanup_download(
+        return fail_download(
             &mut ws_sender,
             &mut ws_receiver,
-            AuthoritativeResult::PrimaryError("path outside working directory".to_string()),
+            &uuid,
+            Some("Path to file download is outside the working directory"),
+            "path outside working directory".to_string(),
         )
         .await;
-        return;
     }
 
     debug!("handle_file_download: Getting file metadata");
@@ -777,37 +753,25 @@ async fn run_download_supervisor(
                 "handle_file_download: Path is not a file (is_directory={})",
                 m.is_dir()
             );
-            send_file_error(
-                &mut ws_sender,
-                &uuid,
-                "Path to file download is not a file",
-                FILE_DOWNLOAD_ERROR,
-            )
-            .await;
-            cleanup_download(
+            return fail_download(
                 &mut ws_sender,
                 &mut ws_receiver,
-                AuthoritativeResult::PrimaryError("path is not a file".to_string()),
+                &uuid,
+                Some("Path to file download is not a file"),
+                "path is not a file".to_string(),
             )
             .await;
-            return;
         }
         Err(e) => {
             warn!("handle_file_download: Failed to get file metadata: {}", e);
-            send_file_error(
-                &mut ws_sender,
-                &uuid,
-                &format!("Failed to get file metadata: {e}"),
-                FILE_DOWNLOAD_ERROR,
-            )
-            .await;
-            cleanup_download(
+            return fail_download(
                 &mut ws_sender,
                 &mut ws_receiver,
-                AuthoritativeResult::PrimaryError("metadata read failed".to_string()),
+                &uuid,
+                Some(&format!("Failed to get file metadata: {e}")),
+                "metadata read failed".to_string(),
             )
             .await;
-            return;
         }
     };
 
@@ -826,13 +790,14 @@ async fn run_download_supervisor(
             "handle_file_download: Failed to send FILE_DOWNLOAD_DETAILS: {}",
             e
         );
-        cleanup_download(
+        return fail_download(
             &mut ws_sender,
             &mut ws_receiver,
-            AuthoritativeResult::PrimaryError("details send failed".to_string()),
+            &uuid,
+            None,
+            "details send failed".to_string(),
         )
         .await;
-        return;
     }
     debug!("handle_file_download: FILE_DOWNLOAD_DETAILS sent successfully");
 
@@ -844,20 +809,14 @@ async fn run_download_supervisor(
         }
         Err(e) => {
             warn!("Failed to open file for download: {}", e);
-            send_file_error(
-                &mut ws_sender,
-                &uuid,
-                "Failed to open file for download",
-                FILE_DOWNLOAD_ERROR,
-            )
-            .await;
-            cleanup_download(
+            return fail_download(
                 &mut ws_sender,
                 &mut ws_receiver,
-                AuthoritativeResult::PrimaryError("file open failed".to_string()),
+                &uuid,
+                Some("Failed to open file for download"),
+                "file open failed".to_string(),
             )
             .await;
-            return;
         }
     };
 
@@ -1400,6 +1359,28 @@ async fn cleanup_download(
             }
         }
     }
+}
+
+/// Shared post-connect primary-error path for [`run_download_supervisor`]:
+/// send the `FILE_DOWNLOAD_ERROR` message (when `error_msg` is `Some`), run
+/// unified cleanup with the given primary error, then return. The caller
+/// returns immediately after this call.
+async fn fail_download(
+    ws_sender: &mut WsSender,
+    ws_receiver: &mut WsReceiver,
+    uuid: &str,
+    error_msg: Option<&str>,
+    primary_msg: String,
+) {
+    if let Some(error_msg) = error_msg {
+        send_file_error(ws_sender, uuid, error_msg, FILE_DOWNLOAD_ERROR).await;
+    }
+    cleanup_download(
+        ws_sender,
+        ws_receiver,
+        AuthoritativeResult::PrimaryError(primary_msg),
+    )
+    .await;
 }
 
 fn log_job_lookup_error(prefix: &str, job_id: i64, err: &JobLookupError) {
