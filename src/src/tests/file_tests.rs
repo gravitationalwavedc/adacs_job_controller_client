@@ -3192,6 +3192,76 @@ fn test_file_upload_actual_bigger_than_declared() {
 }
 
 #[test_fork::test]
+fn test_file_upload_chunk_exceeds_declared_size() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test17");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1246i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-upload-chunk-exceeds".to_string();
+        let target_path = "chunk_exceeds.txt";
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(10); // Declare 10 bytes
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_upload(msg);
+
+        let mut server = server;
+        let _ = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv()).await;
+
+        // A single chunk already exceeds the declared size; the handler must
+        // reject it immediately without waiting for FILE_UPLOAD_COMPLETE.
+        let mut chunk_msg = Message::new(FILE_UPLOAD_CHUNK, Priority::Highest, &test_uuid);
+        chunk_msg.push_bytes(&[0u8; 20]);
+        server.msg_tx.send(chunk_msg.get_data().clone()).unwrap();
+
+        let response = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for response")
+            .expect("No response");
+        assert_eq!(response.id, FILE_UPLOAD_ERROR);
+
+        // The partial file must have been removed immediately.
+        let final_path = Path::new(&working_dir).join(target_path);
+        assert!(
+            !final_path.exists(),
+            "partial file should have been removed"
+        );
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
 fn test_file_download_pause_resume() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {

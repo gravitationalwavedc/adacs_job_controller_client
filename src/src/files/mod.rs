@@ -1673,6 +1673,21 @@ fn handle_file_upload_internal(
                 let mut m = Message::from_data(data.to_vec());
                 if m.id == FILE_UPLOAD_CHUNK {
                     let chunk = m.pop_bytes();
+                    let chunk_len = chunk.len() as u64;
+                    if received_size + chunk_len > file_size {
+                        remove_partial_file(&full_path).await;
+                        send_file_error(
+                            &mut ws_sender,
+                            &uuid,
+                            &format!(
+                                "File size mismatch: expected {file_size}, got {}",
+                                received_size + chunk_len
+                            ),
+                            FILE_UPLOAD_ERROR,
+                        )
+                        .await;
+                        return;
+                    }
                     if let Err(e) = file.write_all(&chunk).await {
                         warn!("Failed to write chunk: {}", e);
                         remove_partial_file(&full_path).await;
@@ -1685,7 +1700,7 @@ fn handle_file_upload_internal(
                         .await;
                         return;
                     }
-                    received_size += chunk.len() as u64;
+                    received_size += chunk_len;
                 } else if m.id == FILE_UPLOAD_COMPLETE {
                     if received_size != file_size {
                         remove_partial_file(&full_path).await;
