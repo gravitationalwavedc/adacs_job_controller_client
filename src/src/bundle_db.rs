@@ -83,6 +83,25 @@ fn get_bundle_db_error_or_abort(context: &str, bundle_hash: &str) -> Option<*mut
     Some(error_obj)
 }
 
+/// Handle a bundle-load failure in `get_job_by_id`: log the failure, then
+/// return the NULL pointer with the "Bundle not found in cache" error set on
+/// the bundle's error exception object. Returns NULL without setting a Python
+/// error if the exception object could not be created.
+///
+/// Extracted from `get_job_by_id` so the NULL-guard branch is directly
+/// unit-testable (the full load-failure path cannot run with the GIL held,
+/// which `BundleInterface::new` requires the caller to have released).
+fn get_job_by_id_load_failure(bundle_hash: &str, e: &str) -> *mut PyObject {
+    error!(
+        "DB: Bundle {} not found in cache during FFI callback: {}",
+        bundle_hash, e
+    );
+    let Some(error_obj) = get_bundle_db_error_or_abort("get_job_by_id", bundle_hash) else {
+        return ptr::null_mut();
+    };
+    set_db_error_and_return_null(error_obj, "Bundle not found in cache")
+}
+
 pub(crate) fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
     let mut errors = BUNDLE_DB_ERRORS
         .get_or_init(|| Mutex::new(HashMap::new()))
@@ -403,17 +422,7 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
 
     let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
         Ok(b) => b,
-        Err(e) => {
-            error!(
-                "DB: Bundle {} not found in cache during FFI callback: {}",
-                bundle_hash, e
-            );
-            let Some(error_obj) = get_bundle_db_error_or_abort("get_job_by_id", &bundle_hash)
-            else {
-                return ptr::null_mut();
-            };
-            return set_db_error_and_return_null(error_obj, "Bundle not found in cache");
-        }
+        Err(e) => return get_job_by_id_load_failure(&bundle_hash, &e),
     };
 
     let msg = build_bundle_get_by_id_message(job_id);
@@ -879,6 +888,128 @@ mod tests {
             crate::python_interface::Py_DecRef(extype);
             crate::python_interface::Py_DecRef(value);
             crate::python_interface::Py_DecRef(traceback);
+        }
+    }
+
+    #[test]
+    fn get_bundle_db_error_or_abort_returns_some_when_error_object_exists() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of get_bundle_db_error (which calls PyErr_NewException).
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let bundle_hash = "test_get_bundle_db_error_or_abort_some";
+            let error_obj = get_bundle_db_error(bundle_hash);
+            assert!(
+                !error_obj.is_null(),
+                "fallback RuntimeError should be non-null"
+            );
+            let result = get_bundle_db_error_or_abort("test_context", bundle_hash);
+            assert!(result.is_some(), "non-null error object should yield Some");
+            assert_eq!(
+                result.unwrap(),
+                error_obj,
+                "returned object should match the stored exception"
+            );
+        }
+    }
+
+    #[test]
+    fn get_bundle_db_error_or_abort_returns_none_when_error_object_null() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of get_bundle_db_error (which calls PyErr_NewException).
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let bundle_hash = "test_get_bundle_db_error_or_abort_none";
+            set_bundle_db_error(bundle_hash, ptr::null_mut());
+            let result = get_bundle_db_error_or_abort("test_context", bundle_hash);
+            assert!(result.is_none(), "NULL error object should yield None");
+        }
+    }
+
+    #[test]
+    fn load_bundle_and_job_id_returns_none_when_bundle_load_fails_and_error_object_missing() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_load_bundle_failure";
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        BundleManager::initialize(path_root.clone());
+        set_bundle_db_error(bundle_hash, ptr::null_mut());
+
+        // SAFETY: The bundle hash has no directory on disk, so `load_bundle`
+        // fails inside `load_bundle_and_job_id`. The NULL error object makes
+        // `get_bundle_db_error_or_abort` return None, so the `?` short-circuits
+        // before any Python C-API call (the dict is never dereferenced in this
+        // path). No GIL or PYTHON_MUTEX is held, matching the preconditions of
+        // `BundleInterface::new` (which acquires both itself).
+        let _bundle_guard =
+            crate::thread_bundle_map::ThreadBundleGuard::new(bundle_hash.to_string());
+        let result = unsafe { load_bundle_and_job_id(ptr::null_mut()) };
+        assert!(
+            result.is_none(),
+            "bundle-load failure with NULL error object should yield None"
+        );
+    }
+
+    #[test]
+    fn get_job_by_id_load_failure_returns_null_when_error_object_missing() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of set_db_error_and_return_null (which calls
+        // PyErr_SetString).
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let bundle_hash = "test_get_job_by_id_load_failure_null";
+            set_bundle_db_error(bundle_hash, ptr::null_mut());
+            let result = get_job_by_id_load_failure(bundle_hash, "test error");
+            assert!(
+                result.is_null(),
+                "NULL error object should return NULL without setting an error"
+            );
+            assert!(
+                crate::python_interface::PyErr_Occurred().is_null(),
+                "guard must return NULL without setting a Python error"
+            );
+        }
+    }
+
+    #[test]
+    fn get_job_by_id_load_failure_sets_error_when_error_object_exists() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of get_bundle_db_error and set_db_error_and_return_null.
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let bundle_hash = "test_get_job_by_id_load_failure_some";
+            let error_obj = get_bundle_db_error(bundle_hash);
+            assert!(
+                !error_obj.is_null(),
+                "fallback RuntimeError should be non-null"
+            );
+            let result = get_job_by_id_load_failure(bundle_hash, "test error");
+            assert!(result.is_null(), "error helper should return NULL");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "Python error should be set"
+            );
+            crate::python_interface::PyErr_Clear();
         }
     }
 }
