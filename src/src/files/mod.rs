@@ -1768,13 +1768,7 @@ fn build_file_ws_request(
 /// Wait for a `SERVER_READY` message with a 10-second timeout. Tests may
 /// shrink the deadline via [`set_server_ready_timeout_for_test`], mirroring
 /// [`validate_server_ready`].
-async fn wait_for_server_ready(
-    ws_receiver: &mut futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
-) -> Option<Message> {
+async fn wait_for_server_ready(ws_receiver: &mut WsReceiver) -> Option<Message> {
     let timeout = {
         #[cfg(test)]
         {
@@ -1819,19 +1813,7 @@ async fn connect_file_ws(
     uuid: &str,
     prefix: &str,
     operation: &str,
-) -> Option<(
-    futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        WsMessage,
-    >,
-    futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
-)> {
+) -> Option<(WsSender, WsReceiver)> {
     let (ws_sender, mut ws_receiver) =
         connect_file_ws_raw(ws_endpoint, uuid, prefix, operation).await?;
 
@@ -1854,19 +1836,7 @@ async fn connect_file_ws_raw(
     uuid: &str,
     prefix: &str,
     operation: &str,
-) -> Option<(
-    futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        WsMessage,
-    >,
-    futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
-)> {
+) -> Option<(WsSender, WsReceiver)> {
     let request = match build_file_ws_request(ws_endpoint, uuid) {
         Ok(request) => request,
         Err(e) => {
