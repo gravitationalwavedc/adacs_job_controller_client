@@ -724,8 +724,7 @@ impl BundleInterface {
     }
 
     /// Dispose a `PyObject`. Mirrors C++ `BundleInterface::disposeObject()`.
-    #[allow(clippy::unused_self)]
-    pub unsafe fn dispose_object(&self, obj: *mut PyObject) {
+    pub unsafe fn dispose_object(obj: *mut PyObject) {
         if !obj.is_null() {
             Py_DecRef(obj);
         }
@@ -957,10 +956,9 @@ mod bundle_interface_conversion_tests {
 
     #[test]
     fn dispose_object_is_safe_with_null_pointer() {
-        let bundle = null_bundle();
         // Should not crash or dereference null
         unsafe {
-            bundle.dispose_object(std::ptr::null_mut());
+            BundleInterface::dispose_object(std::ptr::null_mut());
         }
     }
 
