@@ -755,6 +755,63 @@ fn test_get_file_list_no_job_success() {
 }
 
 #[test_fork::test]
+fn test_get_file_list_no_job_leading_slash() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test8_leading_slash");
+
+        let state = create_mock_state();
+        let dir = TemporaryDirectoryFixture::new();
+        let working_dir = dir.get_temp_path().to_str().unwrap().to_string();
+
+        let fixture = BundleFixture::new();
+        let bundle_hash = "no_job_hash_leading_slash";
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        fixture.write_file_list_no_job_working_directory(bundle_hash, &working_dir);
+
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "test-uuid-leading-slash".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let msg = Message::from_data(data);
+                let _ = tx_clone.send(msg);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let mut msg_raw = Message::new(FILE_LIST, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(0); // No Job
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string(bundle_hash);
+        // Leading slash should be trimmed like download/upload paths
+        msg_raw.push_string("/.");
+        msg_raw.push_bool(false);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_list(msg);
+
+        let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("Timeout")
+            .expect("No response");
+        assert_eq!(response.id, FILE_LIST);
+        let mut response_msg = response;
+        assert_eq!(response_msg.pop_string(), test_uuid);
+        assert_eq!(response_msg.pop_uint(), 2); // file1.txt + subdir (symlinks are excluded)
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
 fn test_get_file_list_no_job_outside_working_directory() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
