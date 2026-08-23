@@ -42,14 +42,7 @@ const JOB_CHECK_INTERVAL_MINS: u64 = 1;
 const SHUTDOWN_TIMEOUT_SECS: u64 = 10;
 
 fn is_production() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        false
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        true
-    }
+    cfg!(not(debug_assertions))
 }
 
 pub fn restart_app() {
