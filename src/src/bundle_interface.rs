@@ -427,8 +427,7 @@ impl BundleInterface {
     }
 
     /// Convert a `PyObject` to a Rust String. Mirrors C++ `BundleInterface::toString()`.
-    #[allow(clippy::unused_self)]
-    pub unsafe fn to_string_py(&self, obj: *mut PyObject) -> String {
+    pub unsafe fn to_string_py(obj: *mut PyObject) -> String {
         if obj.is_null() {
             return String::new();
         }
@@ -443,8 +442,7 @@ impl BundleInterface {
     }
 
     /// Convert a `PyObject` to u64. Mirrors C++ `BundleInterface::toUint64()`.
-    #[allow(clippy::unused_self)]
-    pub unsafe fn to_uint64(&self, obj: *mut PyObject) -> u64 {
+    pub unsafe fn to_uint64(obj: *mut PyObject) -> u64 {
         if obj.is_null() {
             return 0;
         }
@@ -457,8 +455,7 @@ impl BundleInterface {
     }
 
     /// Convert a `PyObject` to bool. Mirrors C++ `BundleInterface::toBool()`.
-    #[allow(clippy::unused_self)]
-    pub unsafe fn to_bool(&self, obj: *mut PyObject) -> bool {
+    pub unsafe fn to_bool(obj: *mut PyObject) -> bool {
         if obj.is_null() {
             return false;
         }
@@ -504,7 +501,7 @@ impl BundleInterface {
             return Err("Error calling json.dumps".to_string());
         }
 
-        let result = self.to_string_py(p_value);
+        let result = Self::to_string_py(p_value);
 
         Py_DecRef(p_args);
         Py_XDECREF(p_func);
@@ -966,25 +963,22 @@ mod bundle_interface_conversion_tests {
 
     #[test]
     fn to_bool_returns_false_for_null_pointer() {
-        let bundle = null_bundle();
         unsafe {
-            assert!(!bundle.to_bool(std::ptr::null_mut()));
+            assert!(!BundleInterface::to_bool(std::ptr::null_mut()));
         }
     }
 
     #[test]
     fn to_uint64_returns_zero_for_null_pointer() {
-        let bundle = null_bundle();
         unsafe {
-            assert_eq!(bundle.to_uint64(std::ptr::null_mut()), 0);
+            assert_eq!(BundleInterface::to_uint64(std::ptr::null_mut()), 0);
         }
     }
 
     #[test]
     fn to_string_py_returns_empty_for_null_pointer() {
-        let bundle = null_bundle();
         unsafe {
-            assert_eq!(bundle.to_string_py(std::ptr::null_mut()), "");
+            assert_eq!(BundleInterface::to_string_py(std::ptr::null_mut()), "");
         }
     }
 

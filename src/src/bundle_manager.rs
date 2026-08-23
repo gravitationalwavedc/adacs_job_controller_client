@@ -252,7 +252,7 @@ impl BundleManager {
                     "run_bundle_string bundle.run returned for {}",
                     function_name
                 );
-                let result = bundle.to_string_py(result_obj);
+                let result = BundleInterface::to_string_py(result_obj);
                 BundleInterface::dispose_object(result_obj);
                 debug!(
                     "run_bundle_string completed {} - result len={}",
@@ -309,7 +309,7 @@ impl BundleManager {
                     "run_bundle_uint64 bundle.run returned for {}",
                     function_name
                 );
-                let result = bundle.to_uint64(result_obj);
+                let result = BundleInterface::to_uint64(result_obj);
                 BundleInterface::dispose_object(result_obj);
                 debug!(
                     "run_bundle_uint64 completed {} - result={}",
@@ -358,7 +358,7 @@ impl BundleManager {
             };
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!("run_bundle_bool bundle.run returned for {}", function_name);
-                let result = bundle.to_bool(result_obj);
+                let result = BundleInterface::to_bool(result_obj);
                 BundleInterface::dispose_object(result_obj);
                 debug!(
                     "run_bundle_bool completed {} - result={}",
