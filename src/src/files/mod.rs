@@ -1580,6 +1580,13 @@ fn handle_file_upload_internal(
                 "handle_file_upload_internal: Failed to send SERVER_READY ack: {}",
                 e
             );
+            let mut error_msg = Message::new(FILE_UPLOAD_ERROR, Priority::Highest, &uuid);
+            error_msg.push_string(&format!("Failed to send SERVER_READY ack: {e}"));
+            get_websocket_client().queue_message(
+                uuid.clone(),
+                error_msg.get_data().clone(),
+                Priority::Highest,
+            );
             return;
         }
 
