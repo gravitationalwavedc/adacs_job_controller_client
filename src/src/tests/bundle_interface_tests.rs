@@ -13,11 +13,12 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_tuple_new_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleNewFn, PyTupleSetItemFn, PyTuple_New,
+    PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input,
+    Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1486,6 +1487,89 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
         logs.contains("Error setting exception value in args tuple"),
         "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
     );
+}
+
+// ─── PyTuple_New failure-branch tests ────────────────────────────────────────
+//
+// The three `py_tuple_new` failure branches are unreachable through the public
+// API; these tests use the test-only override seam to force them.
+
+/// RAII guard installing a `py_tuple_new` override, restored on drop.
+struct PyTupleNewOverrideGuard(Option<PyTupleNewFn>);
+
+impl PyTupleNewOverrideGuard {
+    fn install(f: PyTupleNewFn) -> Self {
+        Self(set_py_tuple_new_override(Some(f)))
+    }
+}
+
+impl Drop for PyTupleNewOverrideGuard {
+    fn drop(&mut self) {
+        set_py_tuple_new_override(self.0);
+    }
+}
+
+/// Override that fails `PyTuple_New` only for size-2 tuples (`run` args).
+// SAFETY: Test-only; returns NULL to simulate an allocation failure.
+unsafe fn fail_size_two_tuple_new(len: Py_ssize_t) -> *mut PyObject {
+    if len == 2 {
+        std::ptr::null_mut()
+    } else {
+        PyTuple_New(len)
+    }
+}
+
+/// Override that fails `PyTuple_New` only for size-1 tuples (`json_dumps` /
+/// `json_loads` args).
+// SAFETY: Test-only; returns NULL to simulate an allocation failure.
+unsafe fn fail_size_one_tuple_new(len: Py_ssize_t) -> *mut PyObject {
+    if len == 1 {
+        std::ptr::null_mut()
+    } else {
+        PyTuple_New(len)
+    }
+}
+
+/// Forces `py_tuple_new(2)` in `run` to fail; it returns `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_when_args_tuple_allocation_fails() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyTupleNewOverrideGuard::install(fail_size_two_tuple_new);
+    let _guard = PYTHON_MUTEX.lock();
+    unsafe {
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let result = bundle.run("submit", &serde_json::json!({}), "");
+        assert!(result.is_err(), "PyTuple_New(2) failure should return Err");
+    }
+}
+
+/// Forces `py_tuple_new(1)` in `json_dumps` to fail; it returns Err.
+#[test]
+fn test_json_dumps_returns_err_when_args_tuple_allocation_fails() {
+    let bundle = load_bundle_for_exception_printer();
+    let _guard = PYTHON_MUTEX.lock();
+    unsafe {
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let obj = bundle.json_loads(r#"{"key": "value"}"#);
+        assert!(!obj.is_null(), "json_loads should succeed");
+        let _override = PyTupleNewOverrideGuard::install(fail_size_one_tuple_new);
+        let result = bundle.json_dumps(obj);
+        bundle.dispose_object(obj);
+        assert_eq!(result.unwrap_err(), "Failed to allocate argument tuple");
+    }
+}
+
+/// Forces `py_tuple_new(1)` in `json_loads` to fail; it returns NULL.
+#[test]
+fn test_json_loads_returns_null_when_args_tuple_allocation_fails() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyTupleNewOverrideGuard::install(fail_size_one_tuple_new);
+    let _guard = PYTHON_MUTEX.lock();
+    unsafe {
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let obj = bundle.json_loads(r#"{"key": "value"}"#);
+        assert!(obj.is_null(), "PyTuple_New(1) failure should return NULL");
+    }
 }
 
 /// DIRECT UNIT TEST for the `CString::new(job_data)` failure branch in
