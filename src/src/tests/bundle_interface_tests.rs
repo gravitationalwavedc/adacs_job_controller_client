@@ -1488,6 +1488,57 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
     );
 }
 
+/// DIRECT UNIT TEST — coverage gap in `BundleInterface::json_dumps`.
+///
+/// Forces `py_tuple_set_item(p_args, 0, obj)` (the size-1 `json.dumps` args
+/// tuple) to fail. The branch logs "Error setting object in args tuple" and
+/// returns `Err("Error calling json.dumps")`.
+#[test]
+fn test_json_dumps_returns_err_on_set_item_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _guard = PYTHON_MUTEX.lock();
+    // Build the object before installing the override: `json_loads` itself
+    // uses a size-1 args tuple, so it must run with the real SetItem.
+    let obj = unsafe {
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let obj = bundle.json_loads(r#"{"key": "value"}"#);
+        assert!(!obj.is_null(), "json_loads should succeed");
+        obj
+    };
+    let _override = TupleSetItemOverrideGuard::install(fail_size_one_tuple);
+    unsafe {
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let result = bundle.json_dumps(obj);
+        bundle.dispose_object(obj);
+        assert_eq!(
+            result,
+            Err("Error calling json.dumps".to_string()),
+            "json_dumps should return Err when the args-tuple SetItem fails"
+        );
+    }
+}
+
+/// DIRECT UNIT TEST — coverage gap in `BundleInterface::json_loads`.
+///
+/// Forces `py_tuple_set_item(p_args, 0, p_value)` (the size-1 `json.loads`
+/// args tuple) to fail. The branch logs "Error setting object in args tuple"
+/// and returns NULL.
+#[test]
+fn test_json_loads_returns_null_on_set_item_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = TupleSetItemOverrideGuard::install(fail_size_one_tuple);
+
+    let _guard = PYTHON_MUTEX.lock();
+    unsafe {
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let result = bundle.json_loads(r#"{"key": "value"}"#);
+        assert!(
+            result.is_null(),
+            "json_loads should return NULL when the args-tuple SetItem fails"
+        );
+    }
+}
+
 /// DIRECT UNIT TEST for the `CString::new(job_data)` failure branch in
 /// `BundleInterface::run` (reviewer comment on line 265).
 ///

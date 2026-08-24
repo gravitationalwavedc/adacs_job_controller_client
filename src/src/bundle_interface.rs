@@ -453,7 +453,7 @@ impl BundleInterface {
         Py_IncRef(obj);
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if PyTuple_SetItem(p_args, 0, obj) < 0 {
+        if py_tuple_set_item(p_args, 0, obj) < 0 {
             error!("Error setting object in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
@@ -516,7 +516,7 @@ impl BundleInterface {
         }
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if PyTuple_SetItem(p_args, 0, p_value) < 0 {
+        if py_tuple_set_item(p_args, 0, p_value) < 0 {
             error!("Error setting object in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
