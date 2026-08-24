@@ -1141,4 +1141,19 @@ mod tests {
 
         queue_job_update(42, SYSTEM_SOURCE, ERROR, "Job has failed");
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn check_job_status_returns_early_when_websocket_disconnected() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(true);
+        mock.expect_is_server_ready().return_const(false);
+        mock.expect_send_db_request().times(0);
+        mock.expect_queue_message().times(0);
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(check_job_status(make_job_model(), true));
+    }
 }
