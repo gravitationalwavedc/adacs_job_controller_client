@@ -1526,3 +1526,68 @@ def submit(details, job_data):
     }
     inner();
 }
+
+// ─── PyTuple_SetItem failure branches in BundleInterface::run ────────────────
+//
+// The two `py_tuple_set_item` failure branches in `BundleInterface::run`
+// (json_obj slot index 0, job_data slot index 1) are unreachable through the
+// public API: `PyTuple_SetItem` on a freshly-created tuple with a valid index
+// always succeeds. These tests use the test-only FFI override seam
+// (`set_py_tuple_set_item_override`) to force each branch and verify the
+// defensive error handling.
+
+/// DIRECT UNIT TEST — reviewer request on MR !315.
+///
+/// Forces `py_tuple_set_item(p_args, 0, json_obj)` in `BundleInterface::run`
+/// to fail. The branch logs "Error setting json object in args tuple" and
+/// returns `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_when_json_obj_set_item_fails() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = TupleSetItemOverrideGuard::install(fail_eo_args_index_zero);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let result = bundle.run("submit", &serde_json::json!({}), "job-data");
+            assert!(
+                result.is_err(),
+                "json_obj PyTuple_SetItem failure should make run return Err"
+            );
+        }
+    });
+
+    assert!(
+        logs.contains("Error setting json object in args tuple"),
+        "expected 'Error setting json object in args tuple' marker in logs, got:\n{logs}"
+    );
+}
+
+/// DIRECT UNIT TEST — reviewer request on MR !315.
+///
+/// Forces `py_tuple_set_item(p_args, 1, p_job_data)` in `BundleInterface::run`
+/// to fail. The branch logs "Error setting job data in args tuple" and
+/// returns `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_when_job_data_set_item_fails() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = TupleSetItemOverrideGuard::install(fail_eo_args_non_none_item);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let result = bundle.run("submit", &serde_json::json!({}), "job-data");
+            assert!(
+                result.is_err(),
+                "job_data PyTuple_SetItem failure should make run return Err"
+            );
+        }
+    });
+
+    assert!(
+        logs.contains("Error setting job data in args tuple"),
+        "expected 'Error setting job data in args tuple' marker in logs, got:\n{logs}"
+    );
+}

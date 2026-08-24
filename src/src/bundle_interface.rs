@@ -324,7 +324,7 @@ impl BundleInterface {
         }
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if PyTuple_SetItem(p_args, 0, json_obj) < 0 {
+        if py_tuple_set_item(p_args, 0, json_obj) < 0 {
             error!("Error setting json object in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
@@ -345,7 +345,7 @@ impl BundleInterface {
         }
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if PyTuple_SetItem(p_args, 1, p_job_data) < 0 {
+        if py_tuple_set_item(p_args, 1, p_job_data) < 0 {
             error!("Error setting job data in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
