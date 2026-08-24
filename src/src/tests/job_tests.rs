@@ -2596,3 +2596,42 @@ fn test_check_status_job_running_changed_status_multiple() {
     }
     inner();
 }
+
+#[test]
+#[serial_test::serial]
+fn test_handle_job_submit_skips_when_server_not_ready() {
+    crate::websocket::reset_websocket_client_for_test();
+    let state = Arc::new(std::sync::Mutex::new(MockDbState::default()));
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let mut mock = MockWebsocketClient::new();
+    mock.expect_is_connection_closed().return_const(false);
+    mock.expect_is_server_ready().returning(move || {
+        let _ = tx.send(());
+        false
+    });
+    mock.expect_send_db_request().times(0);
+    mock.expect_queue_message().times(0);
+    set_websocket_client(Arc::new(mock));
+
+    let mut msg_raw = Message::new(SUBMIT_JOB, Priority::Medium, SYSTEM_SOURCE);
+    msg_raw.push_uint(1234);
+    msg_raw.push_string("bundle-hash");
+    msg_raw.push_string("test params");
+    let msg = Message::from_data(msg_raw.get_data().clone());
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        handle_job_submit(msg);
+
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("Timed out waiting for is_server_ready call");
+    });
+
+    assert!(
+        state.lock().unwrap().jobs.is_empty(),
+        "No job should be created when the WebSocket is not ready"
+    );
+}
