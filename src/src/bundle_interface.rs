@@ -19,7 +19,7 @@ use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use tracing::{debug, error, info, trace};
 
 // The exact Python script used in C++ for stdout/stderr redirection.
@@ -59,6 +59,15 @@ unsafe impl Send for BundleInterfaceInner {}
 // SAFETY: Same invariants as Send — raw pointer fields are owned by the
 // sub-interpreter and only accessed while holding PYTHON_MUTEX.
 unsafe impl Sync for BundleInterfaceInner {}
+
+// SAFETY: The wrapped `*mut PyThreadState` is only accessed while holding
+// PYTHON_MUTEX (all accesses to STATE happen inside BundleInterface::new,
+// which holds the mutex), so moving it between threads is safe.
+struct SendPtr(*mut PyThreadState);
+unsafe impl Send for SendPtr {}
+// C++ static local: save/restore the main thread state across
+// sub-interpreter creations.
+static STATE: StdMutex<SendPtr> = StdMutex::new(SendPtr(std::ptr::null_mut()));
 
 #[derive(Clone)]
 pub struct BundleInterface {
@@ -100,7 +109,6 @@ impl BundleInterface {
     ///
     /// IMPORTANT: The `PYTHON_MUTEX` must NOT be held by the caller, and the
     /// main thread state must have been saved (GIL released) before calling this.
-    #[allow(clippy::items_after_statements)]
     pub unsafe fn new(bundle_hash: &str, bundle_path_root: &str) -> Result<Self, String> {
         let _guard = PYTHON_MUTEX.lock();
         debug!("BundleInterface::new start for {}", bundle_hash);
@@ -108,12 +116,6 @@ impl BundleInterface {
         // Set up the thread bundle hash map (needed for logging during load)
         let _bundle_guard = ThreadBundleGuard::new(bundle_hash.to_string());
 
-        // C++ static local: save/restore the main thread state across
-        // sub-interpreter creations.
-        use std::sync::{Mutex as StdMutex, PoisonError};
-        struct SendPtr(*mut PyThreadState);
-        unsafe impl Send for SendPtr {}
-        static STATE: StdMutex<SendPtr> = StdMutex::new(SendPtr(std::ptr::null_mut()));
         {
             let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
             if state.0.is_null() {
