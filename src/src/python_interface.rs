@@ -267,6 +267,35 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyUnicodeFromStringFn = unsafe fn(*const c_char) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_UNICODE_FROM_STRING_OVERRIDE: Mutex<Option<PyUnicodeFromStringFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_unicode_from_string`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_unicode_from_string_override(
+    f: Option<PyUnicodeFromStringFn>,
+) -> Option<PyUnicodeFromStringFn> {
+    let mut guard = PY_UNICODE_FROM_STRING_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyUnicode_FromString` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyUnicode_FromString`: caller holds `PYTHON_MUTEX`
+/// and the GIL; `obj` is a valid NUL-terminated C string.
+pub unsafe fn py_unicode_from_string(obj: *const c_char) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_UNICODE_FROM_STRING_OVERRIDE.lock() {
+        return f(obj);
+    }
+    PyUnicode_FromString(obj)
+}
+
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     PY_NONE_STRUCT
