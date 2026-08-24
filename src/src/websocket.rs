@@ -1289,6 +1289,31 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_message_db_response_dropped_receiver_removes_promise() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+
+        // Register a pending DB request promise whose oneshot receiver has already
+        // been dropped, so the send in handle_message must fail.
+        let (tx, rx) = oneshot::channel();
+        drop(rx);
+        client.db_request_promises.write().insert(42, tx);
+
+        // A DB_RESPONSE matching request_id 42 hits the failed-send warn branch.
+        // Parse via from_data (as handle_incoming_message does) so the request id
+        // is read from the payload rather than the message header.
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_uint(42);
+        let parsed = Message::from_data(response.get_data().clone());
+        client.handle_message(1, parsed);
+
+        assert!(
+            client.db_request_promises.read().is_empty(),
+            "a matched DB response must remove the promise even when the receiver is dropped"
+        );
+    }
+
+    #[test]
     fn test_handle_message_stale_connection_id_early_returns() {
         let client = TungsteniteWebsocketClient::new();
         client.connection_id.store(2, Ordering::SeqCst);
