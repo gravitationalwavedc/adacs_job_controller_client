@@ -175,6 +175,34 @@ async fn arrive_pre_close_send_barrier() {
     }
 }
 
+/// Test-only seam that parks the supervisor immediately before the
+/// `FILE_DOWNLOAD_DETAILS` send. Lets a test reset the peer transport so the
+/// details send deterministically fails, exercising the pre-transfer
+/// `"details send failed"` primary-error branch. The seam is a no-op when no
+/// barrier is installed.
+#[cfg(test)]
+static TEST_PRE_DETAILS_SEND_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_pre_details_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    let mut guard = TEST_PRE_DETAILS_SEND_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = barrier;
+}
+
+#[cfg(test)]
+async fn arrive_pre_details_send_barrier() {
+    let barrier = TEST_PRE_DETAILS_SEND_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(b) = barrier {
+        b.arrive_and_wait().await;
+    }
+}
+
 /// Test-only seam that exposes the supervisor's authoritative transfer result
 /// to integration tests. The supervisor sends the selected `TransferOutcome`
 /// at the start of unified cleanup — covering both transfer-loop results and
@@ -818,6 +846,11 @@ async fn run_download_supervisor(
     );
     let mut details_msg = Message::new(FILE_DOWNLOAD_DETAILS, Priority::Highest, &uuid);
     details_msg.push_ulong(file_size);
+    // Test seam: park before the DETAILS send so a test can reset the peer
+    // transport and make the details send deterministically fail. No-op when
+    // no barrier is installed.
+    #[cfg(test)]
+    arrive_pre_details_send_barrier().await;
     if let Err(e) = ws_sender
         .send(WsMessage::Binary(details_msg.get_data().clone().into()))
         .await

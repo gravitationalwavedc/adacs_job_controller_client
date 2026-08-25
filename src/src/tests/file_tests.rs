@@ -5,8 +5,8 @@ use crate::files::{
     handle_file_download, handle_file_list, handle_file_upload,
     set_cleanup_failure_observer_for_test, set_final_send_barrier_for_test,
     set_graceful_close_timeout_for_test, set_pre_close_send_barrier_for_test,
-    set_server_ready_timeout_for_test, set_transfer_outcome_observer_for_test,
-    set_zero_byte_eof_barrier_for_test, TransferOutcome,
+    set_pre_details_send_barrier_for_test, set_server_ready_timeout_for_test,
+    set_transfer_outcome_observer_for_test, set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
     Message, Priority, DB_JOBSTATUS_SAVE, DB_JOB_GET_BY_ID, DB_JOB_GET_BY_JOB_ID, DB_JOB_SAVE,
@@ -3401,6 +3401,7 @@ fn reset_download_test_seams() {
     set_zero_byte_eof_barrier_for_test(None);
     set_server_ready_timeout_for_test(None);
     set_pre_close_send_barrier_for_test(None);
+    set_pre_details_send_barrier_for_test(None);
     set_transfer_outcome_observer_for_test(None);
     set_cleanup_failure_observer_for_test(None);
 }
@@ -4002,6 +4003,101 @@ fn test_task4_close_send_failure_does_not_mask_primary_error() {
         assert_eq!(observer.live_connections(), 0);
         set_transfer_outcome_observer_for_test(None);
         set_cleanup_failure_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+
+/// Details-send failure selects the `"details send failed"` primary error.
+/// We park the supervisor just before the `FILE_DOWNLOAD_DETAILS` send via the
+/// pre-details-send barrier, reset the fixture peer transport (`SO_LINGER=0`
+/// RST) so the details send deterministically fails, release the barrier, and
+/// assert the authoritative result is `PrimaryError("details send failed")`
+/// and the connection is released.
+#[test_fork::test]
+fn test_task4_details_send_failure_selects_primary_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_details_send_failure");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("details_fail.bin");
+        let content = vec![0xEE; 32 * 1024];
+        fs::write(&path, &content).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8015i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_pre_details_send_barrier_for_test(Some(barrier.clone()));
+
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-task4-details-fail".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("details_fail.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        // Park the supervisor before the DETAILS send, then reset the peer
+        // transport so the DETAILS send deterministically fails.
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the pre-details-send barrier");
+        server.reset_connection().await;
+        // Give the client's reactor time to observe the transport reset so the
+        // DETAILS send fails rather than being buffered.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        barrier.release();
+
+        // The authoritative result must be the details-send primary error.
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::PrimaryError(ref m) if m == "details send failed"),
+            "details-send failure must select the primary error, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the details-send failure"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
         reset_download_test_seams();
     } // end inner()
     inner();
