@@ -1093,6 +1093,29 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn test_supervise_connections_missing_config_marks_closed_and_notifies_shutdown() {
+        let client = TungsteniteWebsocketClient::new();
+        assert!(
+            client.load_connection_config().is_none(),
+            "a fresh client should have no connection config"
+        );
+
+        let shutdown_notify = get_shutdown_notify();
+        let shutdown_notified = shutdown_notify.notified();
+
+        client.clone().supervise_connections().await;
+
+        assert!(
+            client.is_connection_closed(),
+            "missing connection config should mark the connection closed"
+        );
+        tokio::time::timeout(Duration::from_millis(100), shutdown_notified)
+            .await
+            .expect("shutdown waiters should be notified when connection config is missing");
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_send_db_request_prefixes_u32_request_id_before_payload() {
