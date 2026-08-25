@@ -1744,7 +1744,9 @@ fn build_file_ws_request(
     Ok(request)
 }
 
-/// Wait for a `SERVER_READY` message with a 10-second timeout.
+/// Wait for a `SERVER_READY` message with a 10-second timeout. Tests may
+/// shrink the deadline via [`set_server_ready_timeout_for_test`], mirroring
+/// [`validate_server_ready`].
 async fn wait_for_server_ready(
     ws_receiver: &mut futures_util::stream::SplitStream<
         tokio_tungstenite::WebSocketStream<
@@ -1752,11 +1754,17 @@ async fn wait_for_server_ready(
         >,
     >,
 ) -> Option<Message> {
-    let handshake = tokio::time::timeout(
-        Duration::from_secs(SERVER_READY_TIMEOUT_SECS),
-        ws_receiver.next(),
-    )
-    .await;
+    let timeout = {
+        #[cfg(test)]
+        {
+            server_ready_timeout()
+        }
+        #[cfg(not(test))]
+        {
+            Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
+        }
+    };
+    let handshake = tokio::time::timeout(timeout, ws_receiver.next()).await;
     match handshake {
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
             let msg = Message::from_data(data.to_vec());
@@ -1980,7 +1988,10 @@ where
 mod tests {
     use super::*;
     use crate::messaging::{DB_RESPONSE, UPLOAD_FILE};
-    use crate::tests::fixtures::websocket_server_fixture::WebsocketServerFixture;
+    use crate::tests::fixtures::websocket_server_fixture::{
+        CloseHandshakeBehaviour, ServerReadyBehaviour, WebsocketServerConfig,
+        WebsocketServerFixture,
+    };
     use crate::websocket::{
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
@@ -2897,6 +2908,33 @@ mod tests {
         );
 
         server_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn connect_file_ws_returns_none_on_readiness_failure_variants() {
+        set_server_ready_timeout_for_test(Some(Duration::from_millis(50)));
+        for behaviour in [
+            ServerReadyBehaviour::InvalidMessageId,
+            ServerReadyBehaviour::NonBinary,
+            ServerReadyBehaviour::PeerEof,
+            ServerReadyBehaviour::TransportReset,
+            ServerReadyBehaviour::Withheld,
+        ] {
+            let config = WebsocketServerConfig {
+                server_ready: behaviour,
+                close_handshake: CloseHandshakeBehaviour::Acknowledge,
+                drop_after_n_incoming: None,
+            };
+            let mut server = WebsocketServerFixture::with_config(config).await;
+            let url = format!("ws://127.0.0.1:{}/ws/", server.port);
+            let result = connect_file_ws(&url, "test-uuid", "", "file upload").await;
+            assert!(
+                result.is_none(),
+                "connect_file_ws must return None for readiness behaviour {behaviour:?}"
+            );
+            server.stop().await;
+        }
+        set_server_ready_timeout_for_test(None);
     }
 
     #[test]
