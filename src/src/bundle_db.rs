@@ -26,7 +26,7 @@ use crate::websocket::get_websocket_client;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use tracing::{debug, error, trace, warn};
 
 /// Wrapper around `*mut PyObject` that implements `Send` (needed for `Mutex` storage).
@@ -43,7 +43,7 @@ fn get_bundle_db_error(bundle_hash: &str) -> *mut crate::python_interface::PyObj
     let mut errors = BUNDLE_DB_ERRORS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
-        .unwrap();
+        .unwrap_or_else(PoisonError::into_inner);
     if let Some(exc) = errors.get(bundle_hash) {
         return exc.0;
     }
@@ -87,7 +87,7 @@ pub(crate) fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_int
     let mut errors = BUNDLE_DB_ERRORS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
-        .unwrap();
+        .unwrap_or_else(PoisonError::into_inner);
     errors.insert(bundle_hash.to_string(), SendPyObject(exc));
 }
 
