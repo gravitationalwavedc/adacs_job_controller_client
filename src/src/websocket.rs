@@ -2243,4 +2243,26 @@ mod tests {
             .await
             .expect_err("stale connection id must not notify disconnect waiters");
     }
+
+    #[tokio::test]
+    async fn test_handle_disconnect_already_closed_skips_notify() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(7, Ordering::SeqCst);
+        client.connection_closed.store(true, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+        client.reconnectable.store(true, Ordering::SeqCst);
+
+        let disconnect_notify = Arc::new(Notify::new());
+        let notified = disconnect_notify.notified();
+
+        client.handle_disconnect(7, &disconnect_notify);
+
+        assert!(
+            client.is_connection_closed(),
+            "connection_closed should remain set"
+        );
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .expect_err("already-closed disconnect must not re-notify waiters");
+    }
 }
