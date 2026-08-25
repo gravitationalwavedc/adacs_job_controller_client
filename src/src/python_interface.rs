@@ -459,6 +459,10 @@ impl SubInterpreter {
         let ts = Py_NewInterpreter();
         if ts.is_null() {
             error!("SubInterpreter::new - Py_NewInterpreter failed");
+            // Restore the original thread state (like C++ RestoreThreadStateScope
+            // destructor, which restores on both success and failure) so a failed
+            // sub-interpreter creation cannot leave this thread with a foreign state.
+            PyThreadState_Swap(saved_ts);
             return Err("Py_NewInterpreter failed".to_string());
         }
         debug!("SubInterpreter::new - sub-interpreter created: {:?}", ts);
