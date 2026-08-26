@@ -667,6 +667,11 @@ async fn run_download_supervisor(
     )
     .await
     else {
+        queue_file_error_on_main_ws(
+            &uuid,
+            "Failed to connect to file websocket",
+            FILE_DOWNLOAD_ERROR,
+        );
         return;
     };
 
@@ -1519,6 +1524,22 @@ where
     true
 }
 
+/// Queue a `FILE_DOWNLOAD_ERROR`/`FILE_UPLOAD_ERROR` on the primary WebSocket
+/// when the dedicated file WebSocket could not be established at all. The file
+/// connection is unusable in this case, so the error is delivered over the main
+/// connection to stop the client hanging on a transfer that will never start.
+fn queue_file_error_on_main_ws(uuid: &str, error_msg: &str, msg_id: u32) {
+    warn!("{uuid}: file websocket connect failed, notifying client: {error_msg}");
+    let mut error_message = Message::new(msg_id, Priority::Highest, uuid);
+    error_message.push_string(uuid);
+    error_message.push_string(error_msg);
+    get_websocket_client().queue_message(
+        uuid.to_string(),
+        error_message.get_data().clone(),
+        Priority::Highest,
+    );
+}
+
 struct UploadFields {
     uuid: String,
     job_id: i64,
@@ -1578,6 +1599,11 @@ fn handle_file_upload_internal(
         let Some((mut ws_sender, mut ws_receiver)) =
             connect_file_ws(&ws_endpoint, &uuid, "", "file upload").await
         else {
+            queue_file_error_on_main_ws(
+                &uuid,
+                "Failed to connect to file websocket",
+                FILE_UPLOAD_ERROR,
+            );
             return;
         };
 
@@ -2676,6 +2702,36 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn test_queue_file_error_on_main_ws_queues_error_message() {
+        reset_websocket_client_for_test();
+        let mut mock_ws = MockWebsocketClient::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "uuid-123".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let _ = tx_clone.send(data);
+            });
+        set_websocket_client(Arc::new(mock_ws));
+
+        queue_file_error_on_main_ws(&test_uuid, "boom", FILE_UPLOAD_ERROR);
+
+        let data = rx.try_recv().expect("expected a queued FILE_UPLOAD_ERROR");
+        let mut resp = Message::from_data(data);
+        assert_eq!(resp.id, FILE_UPLOAD_ERROR);
+        assert_eq!(resp.source, "uuid-123");
+        assert_eq!(resp.pop_string(), "uuid-123");
+        assert_eq!(resp.pop_string(), "boom");
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_send_file_error_sends_message() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
