@@ -291,10 +291,6 @@ enum AuthoritativeResult {
 }
 
 impl AuthoritativeResult {
-    fn is_pending(&self) -> bool {
-        matches!(self, Self::Pending)
-    }
-
     fn into_outcome(self) -> TransferOutcome {
         match self {
             Self::Pending => TransferOutcome::PeerTerminal("exited without result".to_string()),
