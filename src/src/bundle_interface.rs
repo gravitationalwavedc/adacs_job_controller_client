@@ -220,6 +220,11 @@ impl BundleInterface {
         if p_bundle_module.is_null() || !PyErr_Occurred().is_null() {
             error!("Error loading python bundle at path {:?}", bundle_path);
             PyErr_Print();
+            // Release the globals dict and the json/traceback module references
+            // so a failed bundle load does not leak them.
+            Py_DecRef(p_global);
+            Py_DecRef(json_module);
+            Py_DecRef(traceback_module);
             return Err("Failed to load bundle module".to_string());
         }
 
