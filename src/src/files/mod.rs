@@ -1488,6 +1488,33 @@ where
     }
 }
 
+/// Send the `SERVER_READY` acknowledgement for a file-upload connection. When
+/// the send fails, a `FILE_UPLOAD_ERROR` is queued on the primary WebSocket so
+/// the client is still notified even though the file connection is unusable.
+/// Returns `true` when the acknowledgement was sent, `false` on failure.
+async fn send_server_ready_ack<S, E>(ws_sender: &mut S, uuid: &str) -> bool
+where
+    S: Sink<WsMessage, Error = E> + Unpin,
+    E: std::fmt::Display,
+{
+    let ready_msg = Message::new(SERVER_READY, Priority::Highest, uuid);
+    if let Err(e) = ws_sender
+        .send(WsMessage::Binary(ready_msg.get_data().clone().into()))
+        .await
+    {
+        warn!("handle_file_upload_internal: Failed to send SERVER_READY ack: {e}");
+        let mut error_msg = Message::new(FILE_UPLOAD_ERROR, Priority::Highest, uuid);
+        error_msg.push_string(&format!("Failed to send SERVER_READY ack: {e}"));
+        get_websocket_client().queue_message(
+            uuid.to_string(),
+            error_msg.get_data().clone(),
+            Priority::Highest,
+        );
+        return false;
+    }
+    true
+}
+
 struct UploadFields {
     uuid: String,
     job_id: i64,
@@ -1550,15 +1577,7 @@ fn handle_file_upload_internal(
             return;
         };
 
-        let ready_msg = Message::new(SERVER_READY, Priority::Highest, &uuid);
-        if let Err(e) = ws_sender
-            .send(WsMessage::Binary(ready_msg.get_data().clone().into()))
-            .await
-        {
-            warn!(
-                "handle_file_upload_internal: Failed to send SERVER_READY ack: {}",
-                e
-            );
+        if !send_server_ready_ack(&mut ws_sender, &uuid).await {
             return;
         }
 
@@ -2550,6 +2569,44 @@ mod tests {
         assert_eq!(resp.source, "uuid-123");
         assert_eq!(resp.pop_string(), "uuid-123");
         assert_eq!(resp.pop_string(), "boom");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_server_ready_ack_send_failure_queues_file_upload_error() {
+        reset_websocket_client_for_test();
+        let mut mock_ws = MockWebsocketClient::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "uuid-123".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let _ = tx_clone.send(data);
+            });
+        set_websocket_client(Arc::new(mock_ws));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut sink = TestSink::new();
+            sink.fail_next = true;
+            let ok = send_server_ready_ack(&mut sink, &test_uuid).await;
+            assert!(!ok, "ack send failure should report failure");
+        });
+
+        let data = rx.try_recv().expect("expected a queued FILE_UPLOAD_ERROR");
+        let mut resp = Message::from_data(data);
+        assert_eq!(resp.id, FILE_UPLOAD_ERROR);
+        assert_eq!(resp.source, "uuid-123");
+        let error = resp.pop_string();
+        assert!(
+            error.starts_with("Failed to send SERVER_READY ack:"),
+            "unexpected error payload: {error}"
+        );
     }
 
     #[test]
