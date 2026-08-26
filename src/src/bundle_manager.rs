@@ -253,7 +253,7 @@ impl BundleManager {
                     function_name
                 );
                 let result = bundle.to_string_py(result_obj);
-                bundle.dispose_object(result_obj);
+                BundleInterface::dispose_object(result_obj);
                 debug!(
                     "run_bundle_string completed {} - result len={}",
                     function_name,
@@ -310,7 +310,7 @@ impl BundleManager {
                     function_name
                 );
                 let result = bundle.to_uint64(result_obj);
-                bundle.dispose_object(result_obj);
+                BundleInterface::dispose_object(result_obj);
                 debug!(
                     "run_bundle_uint64 completed {} - result={}",
                     function_name, result
@@ -359,7 +359,7 @@ impl BundleManager {
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!("run_bundle_bool bundle.run returned for {}", function_name);
                 let result = bundle.to_bool(result_obj);
-                bundle.dispose_object(result_obj);
+                BundleInterface::dispose_object(result_obj);
                 debug!(
                     "run_bundle_bool completed {} - result={}",
                     function_name, result
@@ -417,7 +417,7 @@ impl BundleManager {
                         .to_string()
                     }
                 };
-                bundle.dispose_object(result_obj);
+                BundleInterface::dispose_object(result_obj);
                 let result = serde_json::from_str(&json_str).unwrap_or(Value::Null);
                 debug!(
                     "run_bundle_json completed {} - result={}",

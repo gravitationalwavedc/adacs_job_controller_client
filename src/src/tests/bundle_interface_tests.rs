@@ -594,7 +594,7 @@ fn test_run_success() {
             let dumped = bundle
                 .json_dumps(result)
                 .expect("json_dumps should succeed");
-            bundle.dispose_object(result);
+            BundleInterface::dispose_object(result);
             let parsed: serde_json::Value = serde_json::from_str(&dumped).unwrap();
             assert_eq!(parsed["ok"], true);
             assert_eq!(parsed["job_data"], "job-data");
@@ -805,7 +805,7 @@ fn test_json_loads_parses_valid_json() {
                 "valid JSON should parse to a non-null PyObject"
             );
             let dumped = bundle.json_dumps(obj).expect("json_dumps should succeed");
-            bundle.dispose_object(obj);
+            BundleInterface::dispose_object(obj);
             let parsed: serde_json::Value = serde_json::from_str(&dumped).unwrap();
             assert_eq!(parsed["key"], "value");
             assert_eq!(parsed["n"], 42);
@@ -1005,7 +1005,7 @@ fn test_json_dumps_returns_err_when_dumps_lookup_fails() {
             let obj = bundle.json_loads(r#"{"key": "value"}"#);
             assert!(!obj.is_null(), "json_loads should succeed");
             let result = bundle.json_dumps(obj);
-            bundle.dispose_object(obj);
+            BundleInterface::dispose_object(obj);
             assert_eq!(
                 result,
                 Err("Failed to get json.dumps function".to_string()),
