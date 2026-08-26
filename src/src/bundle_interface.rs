@@ -6,14 +6,14 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
-    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
-    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_object_get_attr_string,
+    py_tuple_set_item, MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString,
+    PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins,
+    PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule, PyIter_Next, PyList_Append,
+    PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject, PyObject_GetAttrString,
+    PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject, PyThreadState,
+    PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef,
+    Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -775,7 +775,7 @@ impl BundleInterface {
 // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
 // `extype` is a live type object from `PyErr_Fetch` on this thread.
 unsafe fn extract_type_name(extype: *mut PyObject) -> String {
-    let type_str = PyObject_GetAttrString(extype, c"__name__".as_ptr());
+    let type_str = py_object_get_attr_string(extype, c"__name__".as_ptr());
     if type_str.is_null() {
         swallow_python_error();
         return "unknown".to_string();
@@ -946,8 +946,10 @@ mod fallback_value_text_tests {
 mod bundle_interface_conversion_tests {
     use super::*;
     use crate::python_interface::{
-        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, Py_eval_input,
+        set_py_object_get_attr_string_override, PyLong_FromUnsignedLongLong,
+        PyObjectGetAttrStringFn, PyObject_SetAttrString, Py_eval_input,
     };
+    use std::os::raw::c_char;
 
     /// Helper: create a minimal `BundleInterface` with null pointer fields.
     /// Safe for testing null-object paths that don't dereference inner fields.
@@ -1110,6 +1112,52 @@ mod bundle_interface_conversion_tests {
             Py_DecRef(int_obj);
             Py_DecRef(instance);
             Py_DecRef(globals);
+        }
+    }
+
+    /// RAII guard that installs a `py_object_get_attr_string` override for the
+    /// duration of a test and restores the previous override on drop.
+    struct GetAttrOverrideGuard(Option<PyObjectGetAttrStringFn>);
+
+    impl GetAttrOverrideGuard {
+        fn install(f: PyObjectGetAttrStringFn) -> Self {
+            Self(set_py_object_get_attr_string_override(Some(f)))
+        }
+    }
+
+    impl Drop for GetAttrOverrideGuard {
+        fn drop(&mut self) {
+            set_py_object_get_attr_string_override(self.0);
+        }
+    }
+
+    /// Override that always fails `PyObject_GetAttrString` (returns NULL) to
+    /// exercise the `type_str.is_null()` branch of `extract_type_name`.
+    // SAFETY: Test-only; ignores `obj` and returns NULL without touching the
+    // Python error indicator.
+    unsafe fn always_null_get_attr(_obj: *mut PyObject, _name: *const c_char) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
+
+    /// `extract_type_name` must return `"unknown"` and swallow the Python error
+    /// when the `__name__` attribute lookup itself fails (returns NULL).
+    #[test]
+    fn extract_type_name_returns_unknown_when_get_attr_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `extract_type_name` and `swallow_python_error`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let _override = GetAttrOverrideGuard::install(always_null_get_attr);
+            let instance = my_py_true_struct();
+            assert_eq!(extract_type_name(instance), "unknown");
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from failed attribute lookup must be cleared"
+            );
         }
     }
 }

@@ -242,6 +242,13 @@ pub type PyTupleSetItemFn = unsafe fn(*mut PyObject, Py_ssize_t, *mut PyObject) 
 #[cfg(test)]
 static PY_TUPLE_SET_ITEM_OVERRIDE: Mutex<Option<PyTupleSetItemFn>> = Mutex::new(None);
 
+#[cfg(test)]
+pub type PyObjectGetAttrStringFn = unsafe fn(*mut PyObject, *const c_char) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_OBJECT_GET_ATTR_STRING_OVERRIDE: Mutex<Option<PyObjectGetAttrStringFn>> =
+    Mutex::new(None);
+
 /// Test-only: install an override for `py_tuple_set_item`, returning the
 /// previously-installed override (if any). Pass `None` to clear it.
 #[cfg(test)]
@@ -265,6 +272,29 @@ pub unsafe fn py_tuple_set_item(
         return f(tuple, pos, item);
     }
     PyTuple_SetItem(tuple, pos, item)
+}
+
+/// Test-only: install an override for `py_object_get_attr_string`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_object_get_attr_string_override(
+    f: Option<PyObjectGetAttrStringFn>,
+) -> Option<PyObjectGetAttrStringFn> {
+    let mut guard = PY_OBJECT_GET_ATTR_STRING_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyObject_GetAttrString` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyObject_GetAttrString`: caller holds `PYTHON_MUTEX`
+/// and the GIL; `obj` is a live object, `name` is a null-terminated C string.
+pub unsafe fn py_object_get_attr_string(obj: *mut PyObject, name: *const c_char) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_OBJECT_GET_ATTR_STRING_OVERRIDE.lock() {
+        return f(obj, name);
+    }
+    PyObject_GetAttrString(obj, name)
 }
 
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
