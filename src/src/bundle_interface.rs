@@ -226,6 +226,7 @@ impl BundleInterface {
         if traceback_module.is_null() {
             error!("Error importing traceback module");
             PyErr_Print();
+            Py_DecRef(json_module);
             Py_DecRef(p_global);
             return Err("Failed to import traceback module".to_string());
         }
