@@ -110,12 +110,12 @@ impl BundleInterface {
 
         // C++ static local: save/restore the main thread state across
         // sub-interpreter creations.
-        use std::sync::Mutex as StdMutex;
+        use std::sync::{Mutex as StdMutex, PoisonError};
         struct SendPtr(*mut PyThreadState);
         unsafe impl Send for SendPtr {}
         static STATE: StdMutex<SendPtr> = StdMutex::new(SendPtr(std::ptr::null_mut()));
         {
-            let mut state = STATE.lock().unwrap();
+            let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
             if state.0.is_null() {
                 state.0 = get_main_ts();
             }
@@ -131,7 +131,7 @@ impl BundleInterface {
         debug!("BundleInterface::new created sub-interpreter");
 
         {
-            let mut state = STATE.lock().unwrap();
+            let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
             if state.0.is_null() {
                 info!("BundleInterface::new saving main thread state");
                 state.0 = PyEval_SaveThread();
