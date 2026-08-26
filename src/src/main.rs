@@ -249,8 +249,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         crate::db_bridge::DbBridge::start();
 
-        let ws_url =
-            ensure_websocket_endpoint_trailing_slash(config["websocketEndpoint"].as_str().unwrap());
+        let ws_url = ensure_websocket_endpoint_trailing_slash(
+            config["websocketEndpoint"]
+                .as_str()
+                .unwrap_or("ws://127.0.0.1:8001/ws/"),
+        );
 
         info!("Connecting to WebSocket endpoint: {}", ws_url);
 
