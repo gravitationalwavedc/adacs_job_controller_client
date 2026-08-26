@@ -1587,14 +1587,7 @@ fn handle_file_upload_internal(
                 Ok(working_directory) => working_directory,
                 Err(err) => {
                     log_job_lookup_error("handle_file_upload_internal", job_id, &err);
-                    send_file_error(
-                        &mut ws_sender,
-                        &uuid,
-                        &err.client_message(),
-                        FILE_UPLOAD_ERROR,
-                    )
-                    .await;
-                    return;
+                    return fail_upload(&mut ws_sender, &uuid, &err.client_message(), None).await;
                 }
             }
         } else {
@@ -1612,14 +1605,13 @@ fn handle_file_upload_internal(
         let full_path = Path::new(&working_directory).join(&target_path);
 
         if !validate_path_is_within(&full_path, &working_directory).await {
-            send_file_error(
+            return fail_upload(
                 &mut ws_sender,
                 &uuid,
                 "Target path for file upload is outside the working directory",
-                FILE_UPLOAD_ERROR,
+                None,
             )
             .await;
-            return;
         }
 
         // Create parent directories if needed
@@ -1629,14 +1621,13 @@ fn handle_file_upload_internal(
                     "handle_file_upload_internal: Failed to create parent directory {:?}: {}",
                     parent, e
                 );
-                send_file_error(
+                return fail_upload(
                     &mut ws_sender,
                     &uuid,
                     &format!("Failed to create parent directory: {e}"),
-                    FILE_UPLOAD_ERROR,
+                    None,
                 )
                 .await;
-                return;
             }
         }
 
@@ -1644,14 +1635,13 @@ fn handle_file_upload_internal(
             Ok(f) => f,
             Err(e) => {
                 warn!("Failed to create file: {}", e);
-                send_file_error(
+                return fail_upload(
                     &mut ws_sender,
                     &uuid,
                     "Failed to open target file for writing",
-                    FILE_UPLOAD_ERROR,
+                    None,
                 )
                 .await;
-                return;
             }
         };
 
@@ -1675,30 +1665,26 @@ fn handle_file_upload_internal(
                     let chunk = m.pop_bytes();
                     if let Err(e) = file.write_all(&chunk).await {
                         warn!("Failed to write chunk: {}", e);
-                        remove_partial_file(&full_path).await;
-                        send_file_error(
+                        return fail_upload(
                             &mut ws_sender,
                             &uuid,
                             "Failed to write chunk to file",
-                            FILE_UPLOAD_ERROR,
+                            Some(&full_path),
                         )
                         .await;
-                        return;
                     }
                     received_size += chunk.len() as u64;
                 } else if m.id == FILE_UPLOAD_COMPLETE {
                     if received_size != file_size {
-                        remove_partial_file(&full_path).await;
-                        send_file_error(
+                        return fail_upload(
                             &mut ws_sender,
                             &uuid,
                             &format!(
                                 "File size mismatch: expected {file_size}, got {received_size}"
                             ),
-                            FILE_UPLOAD_ERROR,
+                            Some(&full_path),
                         )
                         .await;
-                        return;
                     }
                     if !finalize_upload_file(&mut file, &full_path, &mut ws_sender, &uuid).await {
                         return;
@@ -1729,6 +1715,25 @@ fn handle_file_upload_internal(
         warn!("handle_file_upload: connection dropped before FILE_UPLOAD_COMPLETE, removing partial file");
         remove_partial_file(&full_path).await;
     });
+}
+
+/// Shared post-connect error path for [`handle_file_upload_internal`]: remove
+/// the partial file (when `partial_path` is `Some`), send the
+/// `FILE_UPLOAD_ERROR` message, then return. The caller returns immediately
+/// after this call.
+async fn fail_upload<S, E>(
+    ws_sender: &mut S,
+    uuid: &str,
+    error_msg: &str,
+    partial_path: Option<&Path>,
+) where
+    S: Sink<WsMessage, Error = E> + Unpin,
+    E: std::fmt::Display,
+{
+    if let Some(full_path) = partial_path {
+        remove_partial_file(full_path).await;
+    }
+    send_file_error(ws_sender, uuid, error_msg, FILE_UPLOAD_ERROR).await;
 }
 
 fn build_file_ws_request(
