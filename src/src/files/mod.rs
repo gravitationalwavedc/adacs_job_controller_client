@@ -57,6 +57,11 @@ fn server_ready_timeout() -> Duration {
     guard.unwrap_or(Duration::from_secs(SERVER_READY_TIMEOUT_SECS))
 }
 
+#[cfg(not(test))]
+fn server_ready_timeout() -> Duration {
+    Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
+}
+
 const GRACEFUL_CLOSE_TIMEOUT_SECS: u64 = 5;
 
 /// Test-only override for [`graceful_close_timeout`]. When `None` the
@@ -889,16 +894,7 @@ async fn run_download_supervisor(
 /// reason string on any readiness failure shape (invalid ID, non-binary,
 /// receive error, peer EOF, timeout).
 async fn validate_server_ready(ws_receiver: &mut WsReceiver) -> Result<(), String> {
-    let timeout = {
-        #[cfg(test)]
-        {
-            server_ready_timeout()
-        }
-        #[cfg(not(test))]
-        {
-            Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
-        }
-    };
+    let timeout = server_ready_timeout();
     let handshake = tokio::time::timeout(timeout, ws_receiver.next()).await;
     match handshake {
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
@@ -1771,16 +1767,7 @@ fn build_file_ws_request(
 /// shrink the deadline via [`set_server_ready_timeout_for_test`], mirroring
 /// [`validate_server_ready`].
 async fn wait_for_server_ready(ws_receiver: &mut WsReceiver) -> Option<Message> {
-    let timeout = {
-        #[cfg(test)]
-        {
-            server_ready_timeout()
-        }
-        #[cfg(not(test))]
-        {
-            Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
-        }
-    };
+    let timeout = server_ready_timeout();
     let handshake = tokio::time::timeout(timeout, ws_receiver.next()).await;
     match handshake {
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
