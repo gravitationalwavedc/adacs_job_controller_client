@@ -127,7 +127,21 @@ impl BundleInterface {
         }
 
         debug!("BundleInterface::new creating sub-interpreter");
-        let python_interpreter = SubInterpreter::new()?;
+        let python_interpreter = match SubInterpreter::new() {
+            Ok(interp) => interp,
+            Err(e) => {
+                // Mirror the success path below: the main thread state was
+                // restored (GIL acquired) above, so re-save it before
+                // propagating the error, or the GIL is leaked and all
+                // subsequent Python FFI calls deadlock.
+                let mut state = STATE.lock().unwrap();
+                if state.0.is_null() {
+                    info!("BundleInterface::new saving main thread state");
+                    state.0 = PyEval_SaveThread();
+                }
+                return Err(e);
+            }
+        };
         debug!("BundleInterface::new created sub-interpreter");
 
         {
