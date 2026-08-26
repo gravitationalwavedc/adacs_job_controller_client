@@ -1243,12 +1243,16 @@ fn handle_incoming_event(
 /// transfer phases so a Pause that arrives while a chunk send is in flight is
 /// honoured promptly instead of being deferred until the transfer reaches EOF
 /// on a fast socket. Returns `None` when no message is immediately ready.
-fn drain_pending_incoming(
-    ws_receiver: &mut WsReceiver,
+fn drain_pending_incoming<S>(
+    ws_receiver: &mut S,
     is_paused: &Arc<AtomicBool>,
     resume_notify: &Arc<Notify>,
     state: &mut TransferState,
-) -> Option<LoopStep> {
+) -> Option<LoopStep>
+where
+    S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+        + Unpin,
+{
     use futures_util::FutureExt;
     loop {
         match ws_receiver.next().now_or_never() {
@@ -2473,6 +2477,183 @@ mod tests {
         assert!(matches!(
             classify_incoming(incoming),
             IncomingEvent::Error(_)
+        ));
+    }
+
+    fn drain_stream(
+        items: Vec<Result<WsMessage, tokio_tungstenite::tungstenite::Error>>,
+        is_paused: &Arc<AtomicBool>,
+        resume_notify: &Arc<Notify>,
+        state: &mut TransferState,
+    ) -> Option<LoopStep> {
+        // Chain with `pending()` so the stream never ends: after the buffered
+        // items are drained, `next()` pends instead of signalling EOF, letting
+        // the test exercise non-terminal branches.
+        let mut stream = futures_util::stream::iter(items).chain(futures_util::stream::pending());
+        drain_pending_incoming(&mut stream, is_paused, resume_notify, state)
+    }
+
+    fn pause_message() -> WsMessage {
+        let msg = Message::new(PAUSE_FILE_CHUNK_STREAM, Priority::Lowest, "server");
+        WsMessage::Binary(msg.get_data().clone().into())
+    }
+
+    fn resume_message() -> WsMessage {
+        let msg = Message::new(RESUME_FILE_CHUNK_STREAM, Priority::Lowest, "server");
+        WsMessage::Binary(msg.get_data().clone().into())
+    }
+
+    #[test]
+    fn drain_pending_incoming_no_ready_message_returns_none() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let mut stream = futures_util::stream::pending::<
+            Result<WsMessage, tokio_tungstenite::tungstenite::Error>,
+        >();
+        let step = drain_pending_incoming(&mut stream, &is_paused, &resume_notify, &mut state);
+        assert!(
+            step.is_none(),
+            "a pending stream (no ready message) must yield no immediate step"
+        );
+    }
+
+    #[test]
+    fn drain_pending_incoming_pause_sets_flag_and_returns_none() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let step = drain_stream(
+            vec![Ok(pause_message())],
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(step.is_none(), "Pause alone must not finish the transfer");
+        assert!(
+            is_paused.load(Ordering::Acquire),
+            "Pause must set the paused flag"
+        );
+    }
+
+    #[test]
+    fn drain_pending_incoming_resume_clears_flag_and_notifies() {
+        use futures_util::FutureExt;
+        let is_paused = Arc::new(AtomicBool::new(true));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let notified = resume_notify.notified();
+        // Pin the waiter so it can be polled after the drain.
+        let mut notified = Box::pin(notified);
+        let step = drain_stream(
+            vec![Ok(resume_message())],
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(step.is_none(), "Resume alone must not finish the transfer");
+        assert!(
+            !is_paused.load(Ordering::Acquire),
+            "Resume must clear the paused flag"
+        );
+        assert!(
+            notified.as_mut().now_or_never().is_some(),
+            "Resume must notify the resume waiter"
+        );
+    }
+
+    #[test]
+    fn drain_pending_incoming_close_finishes_with_peer_close() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let step = drain_stream(
+            vec![Ok(WsMessage::Close(None))],
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(matches!(
+            step,
+            Some(LoopStep::Finish(AuthoritativeResult::PeerTerminal(msg)))
+                if msg == "peer Close"
+        ));
+    }
+
+    #[test]
+    fn drain_pending_incoming_eof_finishes_with_peer_eof() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        // An exhausted `iter` stream yields `None` (stream end), which
+        // `classify_incoming` maps to `Eof`.
+        let mut stream = futures_util::stream::iter(Vec::<
+            Result<WsMessage, tokio_tungstenite::tungstenite::Error>,
+        >::new());
+        let step = drain_pending_incoming(&mut stream, &is_paused, &resume_notify, &mut state);
+        assert!(matches!(
+            step,
+            Some(LoopStep::Finish(AuthoritativeResult::PeerTerminal(msg)))
+                if msg == "peer EOF"
+        ));
+    }
+
+    #[test]
+    fn drain_pending_incoming_error_finishes_with_peer_receive_error() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let step = drain_stream(
+            vec![Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed)],
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(matches!(
+            step,
+            Some(LoopStep::Finish(AuthoritativeResult::PeerTerminal(msg)))
+                if msg == "peer receive error: Connection closed normally"
+        ));
+    }
+
+    #[test]
+    fn drain_pending_incoming_ignored_messages_are_skipped() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let ignored = Message::new(FILE_CHUNK, Priority::Lowest, "server");
+        let step = drain_stream(
+            vec![Ok(WsMessage::Binary(ignored.get_data().clone().into()))],
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(
+            step.is_none(),
+            "ignored messages must be skipped without finishing"
+        );
+        assert!(
+            !is_paused.load(Ordering::Acquire),
+            "ignored messages must not change pause state"
+        );
+    }
+
+    #[test]
+    fn drain_pending_incoming_applies_pause_before_later_close() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let step = drain_stream(
+            vec![Ok(pause_message()), Ok(WsMessage::Close(None))],
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(is_paused.load(Ordering::Acquire), "Pause must be applied");
+        assert!(matches!(
+            step,
+            Some(LoopStep::Finish(AuthoritativeResult::PeerTerminal(msg)))
+                if msg == "peer Close"
         ));
     }
 
