@@ -86,7 +86,7 @@ async fn get_job_by_message(
         })?;
     let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
-    let count = resp.pop_uint();
+    let count = (resp.pop_uint() as usize).min(resp.remaining_len());
     if count == 0 {
         debug!("DB: {} - id={} not found", context, id);
         return Ok(None);
@@ -835,6 +835,24 @@ mod tests {
 
             let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
             resp.push_uint(0);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let job = rt.block_on(async { get_job_by_id(42).await }).unwrap();
+
+        assert!(job.is_none());
+    }
+
+    #[test]
+    fn get_job_by_id_clamps_count_to_remaining_bytes() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_uint(u32::MAX);
             Box::pin(async move { Ok(resp) })
         });
         set_websocket_client(Arc::new(mock));
