@@ -662,10 +662,6 @@ async fn run_download_supervisor(
     ws_endpoint: String,
 ) {
     debug!(
-        "handle_file_download: SPAWNED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
-        job_id, uuid, bundle_hash, file_path
-    );
-    debug!(
         "handle_file_download: STARTED - job_id={}, uuid={}, bundle_hash={}, file_path={}",
         job_id, uuid, bundle_hash, file_path
     );
