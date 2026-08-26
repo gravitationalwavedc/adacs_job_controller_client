@@ -1766,11 +1766,17 @@ async fn wait_for_server_ready(
         >,
     >,
 ) -> Option<Message> {
-    let handshake = tokio::time::timeout(
-        Duration::from_secs(SERVER_READY_TIMEOUT_SECS),
-        ws_receiver.next(),
-    )
-    .await;
+    let timeout = {
+        #[cfg(test)]
+        {
+            server_ready_timeout()
+        }
+        #[cfg(not(test))]
+        {
+            Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
+        }
+    };
+    let handshake = tokio::time::timeout(timeout, ws_receiver.next()).await;
     match handshake {
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
             let msg = Message::from_data(data.to_vec());
@@ -2869,6 +2875,34 @@ mod tests {
             .await
             .expect("Expected SERVER_READY handshake");
         assert_eq!(msg.id, SERVER_READY);
+    }
+
+    #[tokio::test]
+    async fn wait_for_server_ready_times_out_when_server_never_sends_ready() {
+        set_server_ready_timeout_for_test(Some(Duration::from_millis(50)));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ws_stream = accept_async(stream).await.unwrap();
+            // Never send SERVER_READY; hold the connection open past the timeout.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+
+        let url = format!("ws://127.0.0.1:{port}/ws/");
+        let request = build_file_ws_request(&url, "test-token").unwrap();
+        let (ws_stream, _) = connect_async(request).await.unwrap();
+        let (_ws_sender, mut ws_receiver) = ws_stream.split();
+
+        let result = wait_for_server_ready(&mut ws_receiver).await;
+        assert!(
+            result.is_none(),
+            "Expected None when SERVER_READY times out"
+        );
+
+        server_handle.await.unwrap();
+        set_server_ready_timeout_for_test(None);
     }
 
     #[tokio::test]
