@@ -6,9 +6,9 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_new, py_tuple_set_item,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
+    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
     PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
@@ -631,7 +631,7 @@ impl BundleInterface {
                 Py_XDECREF(traceback);
                 swallow_python_error();
             } else {
-                let tb_args = PyTuple_New(1);
+                let tb_args = py_tuple_new(1);
                 if tb_args.is_null() {
                     // The `traceback` ref is still owned here; release it and
                     // the function ref before falling through to the header.
@@ -694,7 +694,7 @@ impl BundleInterface {
                 fallback_value_text(&value_display, &value_str)
             );
         } else {
-            let eo_args = PyTuple_New(2);
+            let eo_args = py_tuple_new(2);
             if eo_args.is_null() {
                 // The `extype` and `value` refs are still owned here; release
                 // them and the function ref before the fallback.

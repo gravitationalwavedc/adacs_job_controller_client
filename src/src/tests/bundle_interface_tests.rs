@@ -13,11 +13,12 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_tuple_new_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleNewFn, PyTupleSetItemFn, PyTuple_New,
+    PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input,
+    Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1485,6 +1486,108 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
     assert!(
         logs.contains("Error setting exception value in args tuple"),
         "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
+    );
+}
+
+// ─── PyTuple_New failure-branch tests ────────────────────────────────────────
+//
+// The two `py_tuple_new` failure branches in `print_last_python_exception` are
+// unreachable through the public API; these tests use the override seam.
+
+/// RAII guard that installs a `py_tuple_new` override for the test duration.
+struct TupleNewOverrideGuard(Option<PyTupleNewFn>);
+
+impl TupleNewOverrideGuard {
+    fn install(f: PyTupleNewFn) -> Self {
+        Self(set_py_tuple_new_override(Some(f)))
+    }
+}
+
+impl Drop for TupleNewOverrideGuard {
+    fn drop(&mut self) {
+        set_py_tuple_new_override(self.0);
+    }
+}
+
+/// Fails `py_tuple_new` only for size-1 tuples (the `tb_args` tuple).
+// SAFETY: Test-only; the returned pointer is NULL or a new reference.
+unsafe fn fail_size_one_tuple_new(len: Py_ssize_t) -> *mut PyObject {
+    if len == 1 {
+        std::ptr::null_mut()
+    } else {
+        PyTuple_New(len)
+    }
+}
+
+/// Fails `py_tuple_new` only for size-2 tuples (the `eo_args` tuple).
+// SAFETY: Test-only; the returned pointer is NULL or a new reference.
+unsafe fn fail_size_two_tuple_new(len: Py_ssize_t) -> *mut PyObject {
+    if len == 2 {
+        std::ptr::null_mut()
+    } else {
+        PyTuple_New(len)
+    }
+}
+
+/// Forces `py_tuple_new(1)` (the `tb_args` tuple) to fail; the branch logs
+/// "Error formatting python traceback frames" and still produces the header.
+#[test]
+fn test_print_last_python_exception_handles_tb_args_creation_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = TupleNewOverrideGuard::install(fail_size_one_tuple_new);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            // Raise a Python exception WITH a traceback; error indicator left set.
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "PyDict_New should succeed");
+            PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
+            let code = c"def f():\n    raise RuntimeError('boom')\nf()";
+            let _result = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_file_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            Py_DecRef(globals);
+            bundle.print_last_python_exception();
+        }
+    });
+
+    assert!(
+        logs.contains("Error formatting python traceback frames (type was RuntimeError)"),
+        "expected traceback-format failure marker in logs, got:\n{logs}"
+    );
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected exception header after tb_args creation failure, got:\n{logs}"
+    );
+}
+
+/// Forces `py_tuple_new(2)` (the `eo_args` tuple) to fail; the branch logs the
+/// synthesized fallback header and returns.
+#[test]
+fn test_print_last_python_exception_handles_eo_args_creation_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = TupleNewOverrideGuard::install(fail_size_two_tuple_new);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let exc = runtime_error_type();
+            PyErr_SetString(exc, c"boom".as_ptr());
+            Py_DecRef(exc);
+            bundle.print_last_python_exception();
+        }
+    });
+
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected fallback exception header after eo_args creation failure, got:\n{logs}"
     );
 }
 
