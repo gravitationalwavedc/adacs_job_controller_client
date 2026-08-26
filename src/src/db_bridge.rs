@@ -139,10 +139,9 @@ impl DbBridge {
             })?;
         trace!("DbBridge: request sent to channel");
         let result_start = std::time::Instant::now();
-        let result = rx.recv().map_err(|_| {
-            self.queue_depth.fetch_sub(1, Ordering::SeqCst);
-            "DbBridge response channel closed".to_string()
-        })?;
+        let result = rx
+            .recv()
+            .map_err(|_| "DbBridge response channel closed".to_string())?;
         let elapsed = send_start.elapsed();
         let wait_time = result_start.elapsed();
         debug!(
@@ -354,8 +353,10 @@ mod tests {
             queue_depth: Arc::clone(&queue_depth),
         };
 
+        let qd = Arc::clone(&queue_depth);
         std::thread::spawn(move || {
             if let Ok(req) = rx.recv() {
+                qd.fetch_sub(1, Ordering::SeqCst);
                 drop(req.response_tx);
             }
         });
