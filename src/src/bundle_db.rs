@@ -470,6 +470,7 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
                 job_id,
                 error_obj,
             ) {
+                Py_DecRef(dict);
                 return ptr::null_mut();
             }
 
