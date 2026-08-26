@@ -134,7 +134,7 @@ impl BundleInterface {
                 // restored (GIL acquired) above, so re-save it before
                 // propagating the error, or the GIL is leaked and all
                 // subsequent Python FFI calls deadlock.
-                let mut state = STATE.lock().unwrap();
+                let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
                 if state.0.is_null() {
                     info!("BundleInterface::new saving main thread state");
                     state.0 = PyEval_SaveThread();
