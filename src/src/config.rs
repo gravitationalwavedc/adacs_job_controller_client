@@ -4,10 +4,15 @@ use std::fs::File;
 use std::io::BufReader;
 #[cfg(test)]
 use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 #[cfg(test)]
 pub static TEST_CONFIG: LazyLock<std::sync::Mutex<Option<Value>>> =
     LazyLock::new(|| std::sync::Mutex::new(None));
+
+// The daemon has no config-reload mechanism (config is validated once at
+// startup), so the parsed config can be cached for the process lifetime.
+static CACHED_CONFIG: OnceLock<Value> = OnceLock::new();
 
 pub fn read_client_config() -> Value {
     #[cfg(test)]
@@ -17,24 +22,28 @@ pub fn read_client_config() -> Value {
         }
     }
 
-    let mut config_path = get_executable_path();
-    config_path.pop(); // Remove binary name
-    config_path.push("config.json");
-    let path_str = config_path.to_string_lossy().to_string();
+    CACHED_CONFIG
+        .get_or_init(|| {
+            let mut config_path = get_executable_path();
+            config_path.pop(); // Remove binary name
+            config_path.push("config.json");
+            let path_str = config_path.to_string_lossy().to_string();
 
-    let Ok(file) = File::open(&config_path) else {
-        eprintln!("Error: config.json not found at {path_str}");
-        std::process::exit(1);
-    };
+            let Ok(file) = File::open(&config_path) else {
+                eprintln!("Error: config.json not found at {path_str}");
+                std::process::exit(1);
+            };
 
-    let reader = BufReader::new(file);
-    match serde_json::from_reader(reader) {
-        Ok(value) => value,
-        Err(e) => {
-            eprintln!("Error: config.json parse error at {path_str}: {e}");
-            std::process::exit(1);
-        }
-    }
+            let reader = BufReader::new(file);
+            match serde_json::from_reader(reader) {
+                Ok(value) => value,
+                Err(e) => {
+                    eprintln!("Error: config.json parse error at {path_str}: {e}");
+                    std::process::exit(1);
+                }
+            }
+        })
+        .clone()
 }
 
 pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
