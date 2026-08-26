@@ -446,39 +446,19 @@ pub fn handle_file_list(mut msg: Message) {
         if is_recursive {
             let mut stack = vec![abs_path.clone()];
             while let Some(current_dir) = stack.pop() {
-                match fs::read_dir(&current_dir).await {
-                    Ok(mut entries) => {
-                        let mut handler = RecursiveFileListHandler {
-                            file_list: &mut file_list,
-                            stack: &mut stack,
-                            working_directory: &working_directory,
-                        };
-                        for_each_dir_entry(&mut entries, &current_dir, &mut handler).await;
-                    }
-                    Err(e) => {
-                        warn!(
-                            "handle_file_list: failed to read directory {:?}: {}",
-                            current_dir, e
-                        );
-                    }
-                }
+                let mut handler = RecursiveFileListHandler {
+                    file_list: &mut file_list,
+                    stack: &mut stack,
+                    working_directory: &working_directory,
+                };
+                read_dir_into(&current_dir, &mut handler).await;
             }
         } else {
-            match fs::read_dir(&abs_path).await {
-                Ok(mut entries) => {
-                    let mut handler = FileListHandler {
-                        file_list: &mut file_list,
-                        working_directory: &working_directory,
-                    };
-                    for_each_dir_entry(&mut entries, &abs_path, &mut handler).await;
-                }
-                Err(e) => {
-                    warn!(
-                        "handle_file_list: failed to read directory {:?}: {}",
-                        abs_path, e
-                    );
-                }
-            }
+            let mut handler = FileListHandler {
+                file_list: &mut file_list,
+                working_directory: &working_directory,
+            };
+            read_dir_into(&abs_path, &mut handler).await;
         }
 
         let mut result = Message::new(FILE_LIST, Priority::Highest, &uuid);
@@ -556,6 +536,22 @@ impl DirEntrySource for fs::ReadDir {
 /// Handles a single directory entry during iteration.
 trait DirEntryHandler {
     async fn handle(&mut self, entry: fs::DirEntry);
+}
+
+/// Read a directory and feed each entry to `handler`. Logs a warning and
+/// skips the directory if `read_dir` fails.
+async fn read_dir_into<H: DirEntryHandler>(dir: &Path, handler: &mut H) {
+    match fs::read_dir(dir).await {
+        Ok(mut entries) => {
+            for_each_dir_entry(&mut entries, dir, handler).await;
+        }
+        Err(e) => {
+            warn!(
+                "handle_file_list: failed to read directory {:?}: {}",
+                dir, e
+            );
+        }
+    }
 }
 
 /// Iterate a directory stream, invoking `handler` for each entry. Logs a warning
