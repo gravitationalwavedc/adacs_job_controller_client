@@ -157,6 +157,7 @@ impl BundleInterface {
         if PyDict_SetItemString(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins()) < 0 {
             error!("Error setting __builtins__ in globals dict");
             PyErr_Print();
+            Py_DecRef(p_global);
             return Err("Failed to set __builtins__ in globals dict".to_string());
         }
 
@@ -165,6 +166,7 @@ impl BundleInterface {
         if p_local.is_null() {
             error!("Error creating local dict");
             PyErr_Print();
+            Py_DecRef(p_global);
             return Err("Failed to create local dict".to_string());
         }
         let c_redirect = CString::new(STDOUT_REDIRECTION).unwrap();
@@ -179,6 +181,8 @@ impl BundleInterface {
         if result.is_null() {
             error!("Error installing stdout/stderr redirection");
             PyErr_Print();
+            Py_DecRef(p_global);
+            Py_DecRef(p_local);
             return Err("Failed to install stdout/stderr redirection".to_string());
         }
 
@@ -191,12 +195,14 @@ impl BundleInterface {
         if json_module.is_null() {
             error!("Error importing json module");
             PyErr_Print();
+            Py_DecRef(p_global);
             return Err("Failed to import json module".to_string());
         }
         if PyDict_SetItemString(p_global, c"json".as_ptr(), json_module) < 0 {
             error!("Error setting json module in globals dict");
             PyErr_Print();
             Py_DecRef(json_module);
+            Py_DecRef(p_global);
             return Err("Failed to set json module in globals dict".to_string());
         }
 
@@ -206,13 +212,19 @@ impl BundleInterface {
         if traceback_module.is_null() {
             error!("Error importing traceback module");
             PyErr_Print();
+            Py_DecRef(p_global);
             return Err("Failed to import traceback module".to_string());
         }
 
         // Add the bundle path to the system path
         info!("BundleInterface::new appending bundle path to sys.path");
         let p_path = PySys_GetObject(c"path".as_ptr());
-        Self::append_bundle_path_to_sys_path(p_path, &bundle_path)?;
+        if let Err(e) = Self::append_bundle_path_to_sys_path(p_path, &bundle_path) {
+            Py_DecRef(p_global);
+            Py_DecRef(json_module);
+            Py_DecRef(traceback_module);
+            return Err(e);
+        }
 
         // Import the bundle module
         debug!("BundleInterface::new importing bundle module");
