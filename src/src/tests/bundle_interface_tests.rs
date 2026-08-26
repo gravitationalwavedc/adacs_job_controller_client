@@ -952,7 +952,7 @@ fn test_to_string_py_clears_stale_error_for_non_string_object() {
                 .expect("thread scope should be created");
             let int_obj = PyLong_FromUnsignedLongLong(42);
             assert!(!int_obj.is_null(), "int object should be created");
-            let s = bundle.to_string_py(int_obj);
+            let s = BundleInterface::to_string_py(int_obj);
             assert_eq!(s, "", "non-string object should convert to empty string");
             assert!(
                 PyErr_Occurred().is_null(),
@@ -1044,7 +1044,7 @@ fn test_to_uint64_clears_stale_error_for_non_integer_object() {
                 .expect("thread scope should be created");
             let str_obj = PyUnicode_FromString(c"not-an-int".as_ptr());
             assert!(!str_obj.is_null(), "str object should be created");
-            let value = bundle.to_uint64(str_obj);
+            let value = BundleInterface::to_uint64(str_obj);
             assert_eq!(value, 0, "non-integer object should convert to 0");
             assert!(
                 PyErr_Occurred().is_null(),
