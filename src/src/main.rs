@@ -187,7 +187,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let result = rt.block_on(async {
         info!(
             "Using config file: {}",
-            executable_path.join("config.json").display()
+            executable_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("config.json")
+                .display()
         );
         if let Err(errors) = validate_config(&config) {
             for e in &errors {
