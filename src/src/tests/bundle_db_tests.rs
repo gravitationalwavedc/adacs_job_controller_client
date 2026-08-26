@@ -92,6 +92,38 @@ fn test_create_or_update_job_failure() {
 }
 
 #[test]
+fn test_create_or_update_job_send_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        fixture.write_bundle_db_create_or_update_job(&bundle_hash, r#"{"test": 1}"#);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(1).returning(|_msg| {
+            Box::pin(async move {
+                Err::<Message, Box<dyn std::error::Error + Send + Sync>>("db send failed".into())
+            })
+        });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+
+        assert!(result["error"].as_str().unwrap().contains("db send failed"));
+    }
+    inner();
+}
+
+#[test]
 fn test_get_job_by_id() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
@@ -154,6 +186,38 @@ fn test_get_job_by_id_failure() {
         );
 
         assert!(result["error"].as_str().unwrap().contains("does not exist"));
+    }
+    inner();
+}
+
+#[test]
+fn test_get_job_by_id_send_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        fixture.write_bundle_db_get_job_by_id(&bundle_hash, 1234);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(1).returning(|_msg| {
+            Box::pin(async move {
+                Err::<Message, Box<dyn std::error::Error + Send + Sync>>("db send failed".into())
+            })
+        });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+
+        assert!(result["error"].as_str().unwrap().contains("db send failed"));
     }
     inner();
 }
