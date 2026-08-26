@@ -1653,6 +1653,25 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_pong_without_prior_ping_still_updates_pong_timestamp() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(5, Ordering::SeqCst);
+        assert_eq!(
+            client.ping_timestamp.load(Ordering::SeqCst),
+            0,
+            "precondition: no ping has been sent yet"
+        );
+
+        client.handle_pong(5);
+
+        assert_ne!(
+            client.get_pong_timestamp(),
+            0,
+            "a pong received before any ping was sent should still update pong_timestamp"
+        );
+    }
+
+    #[test]
     fn test_prune_sources_removes_empty_queues() {
         let client = TungsteniteWebsocketClient::new();
 
