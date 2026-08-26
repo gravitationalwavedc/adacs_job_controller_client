@@ -6,9 +6,9 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, py_unicode_from_string,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
+    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
     PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
@@ -294,7 +294,7 @@ impl BundleInterface {
         }
         let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
             .map_err(|_| "Bundle path contains NUL byte".to_string())?;
-        let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
+        let p_bundle_path = py_unicode_from_string(c_bundle_path.as_ptr());
         if p_bundle_path.is_null() {
             error!("Error creating bundle path string");
             PyErr_Print();
@@ -1262,8 +1262,34 @@ mod set_exception_value_slot_tests {
 mod append_bundle_path_to_sys_path_tests {
     use super::*;
     use crate::bundle_manager::BundleManager;
+    use crate::python_interface::{set_py_unicode_from_string_override, PyUnicodeFromStringFn};
     use crate::tests::fixtures::bundle_fixture::BundleFixture;
+    use std::os::raw::c_char;
     use uuid::Uuid;
+
+    /// RAII guard that installs a `py_unicode_from_string` override for the
+    /// duration of a test and restores the previous override on drop.
+    struct PyUnicodeFromStringOverrideGuard(Option<PyUnicodeFromStringFn>);
+
+    impl PyUnicodeFromStringOverrideGuard {
+        fn install(f: PyUnicodeFromStringFn) -> Self {
+            Self(set_py_unicode_from_string_override(Some(f)))
+        }
+    }
+
+    impl Drop for PyUnicodeFromStringOverrideGuard {
+        fn drop(&mut self) {
+            set_py_unicode_from_string_override(self.0);
+        }
+    }
+
+    /// Override that always fails `PyUnicode_FromString` (returns NULL) to
+    /// exercise the `p_bundle_path.is_null()` failure branch.
+    // SAFETY: Test-only; ignores `obj` and returns NULL without touching the
+    // Python error indicator.
+    unsafe fn always_null_unicode_from_string(_obj: *const c_char) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
 
     /// Load a real bundle so the sub-interpreter has a live `sys.path`.
     fn load_test_bundle() -> BundleInterface {
@@ -1330,6 +1356,27 @@ mod append_bundle_path_to_sys_path_tests {
                 Path::new("/some/bundle/path"),
             );
             assert!(result.is_ok(), "append should succeed: {result:?}");
+        }
+    }
+
+    #[test]
+    fn returns_err_when_unicode_from_string_fails() {
+        let bundle = load_test_bundle();
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _override =
+                PyUnicodeFromStringOverrideGuard::install(always_null_unicode_from_string);
+            let p_path = PySys_GetObject(c"path".as_ptr());
+            assert!(!p_path.is_null(), "sys.path should exist");
+            let result = BundleInterface::append_bundle_path_to_sys_path(
+                p_path,
+                Path::new("/some/bundle/path"),
+            );
+            assert!(
+                result.is_err(),
+                "PyUnicode_FromString failure should make append return Err"
+            );
         }
     }
 }
