@@ -294,7 +294,10 @@ impl BundleInterface {
         job_data: &str,
     ) -> Result<*mut PyObject, NoneException> {
         // First create a python object from the details json
-        let json_obj = self.json_loads(&serde_json::to_string(details).unwrap());
+        let Ok(json_str) = serde_json::to_string(details) else {
+            return Err(NoneException);
+        };
+        let json_obj = self.json_loads(&json_str);
         if json_obj.is_null() {
             return Err(NoneException);
         }
