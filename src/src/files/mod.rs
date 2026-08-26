@@ -1003,27 +1003,7 @@ async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferSt
     tokio::select! {
         biased;
         incoming = ctx.ws_receiver.next() => {
-            match classify_incoming(incoming) {
-                IncomingEvent::Pause => {
-                    ctx.is_paused.store(true, Ordering::Release);
-                    LoopStep::Continue
-                }
-                IncomingEvent::Resume => {
-                    ctx.is_paused.store(false, Ordering::Release);
-                    ctx.resume_notify.notify_one();
-                    LoopStep::Continue
-                }
-                IncomingEvent::Close => {
-                    // Peer Close during transfer becomes the authoritative
-                    // terminal event. Drops both halves during cleanup.
-                    LoopStep::Finish(state.peer_terminal("peer Close".to_string()))
-                }
-                IncomingEvent::Eof => LoopStep::Finish(state.peer_terminal("peer EOF".to_string())),
-                IncomingEvent::Error(msg) => {
-                    LoopStep::Finish(state.peer_terminal(format!("peer receive error: {msg}")))
-                }
-                IncomingEvent::Ignored => LoopStep::Continue,
-            }
+            handle_incoming_event(incoming, ctx.is_paused, ctx.resume_notify, state)
         }
         read_result = &mut read_fut => {
             match read_result {
@@ -1149,23 +1129,7 @@ async fn run_sending_phase(
         incoming = ws_receiver.next() => {
             // Restore the chunk so the next Sending phase can retry.
             state.pending_chunk_bytes = Some(pending_bytes);
-            match classify_incoming(incoming) {
-                IncomingEvent::Pause => {
-                    is_paused.store(true, Ordering::Release);
-                    LoopStep::Continue
-                }
-                IncomingEvent::Resume => {
-                    is_paused.store(false, Ordering::Release);
-                    resume_notify.notify_one();
-                    LoopStep::Continue
-                }
-                IncomingEvent::Close => LoopStep::Finish(state.peer_terminal("peer Close".to_string())),
-                IncomingEvent::Eof => LoopStep::Finish(state.peer_terminal("peer EOF".to_string())),
-                IncomingEvent::Error(msg) => LoopStep::Finish(
-                    state.peer_terminal(format!("peer receive error: {msg}"))
-                ),
-                IncomingEvent::Ignored => LoopStep::Continue,
-            }
+            handle_incoming_event(incoming, is_paused, resume_notify, state)
         }
         send_result = &mut send_fut => {
             state.pending_chunk_bytes = None;
@@ -1213,22 +1177,8 @@ async fn wait_for_terminal_or_resume(
 ) -> LoopStep {
     tokio::select! {
         biased;
-        incoming = ws_receiver.next() => match classify_incoming(incoming) {
-            IncomingEvent::Pause => {
-                is_paused.store(true, Ordering::Release);
-                LoopStep::Continue
-            }
-            IncomingEvent::Resume => {
-                is_paused.store(false, Ordering::Release);
-                resume_notify.notify_one();
-                LoopStep::Continue
-            }
-            IncomingEvent::Close => LoopStep::Finish(state.peer_terminal("peer Close".to_string())),
-            IncomingEvent::Eof => LoopStep::Finish(state.peer_terminal("peer EOF".to_string())),
-            IncomingEvent::Error(msg) => {
-                LoopStep::Finish(state.peer_terminal(format!("peer receive error: {msg}")))
-            }
-            IncomingEvent::Ignored => LoopStep::Continue,
+        incoming = ws_receiver.next() => {
+            handle_incoming_event(incoming, is_paused, resume_notify, state)
         },
         () = resume_notify.notified(), if is_paused.load(Ordering::Acquire) => {
             is_paused.store(false, Ordering::Release);
@@ -1255,6 +1205,35 @@ fn classify_incoming(
         }
         Some(Ok(_)) => IncomingEvent::Ignored,
         Some(Err(e)) => IncomingEvent::Error(e.to_string()),
+    }
+}
+
+/// Apply a single incoming WebSocket event to the transfer state, updating the
+/// pause flag and resume notification, and returning the `LoopStep` the
+/// transfer loop should take. Peer Close/EOF/error events become the
+/// authoritative terminal result.
+fn handle_incoming_event(
+    incoming: Option<Result<WsMessage, tokio_tungstenite::tungstenite::Error>>,
+    is_paused: &Arc<AtomicBool>,
+    resume_notify: &Arc<Notify>,
+    state: &mut TransferState,
+) -> LoopStep {
+    match classify_incoming(incoming) {
+        IncomingEvent::Pause => {
+            is_paused.store(true, Ordering::Release);
+            LoopStep::Continue
+        }
+        IncomingEvent::Resume => {
+            is_paused.store(false, Ordering::Release);
+            resume_notify.notify_one();
+            LoopStep::Continue
+        }
+        IncomingEvent::Close => LoopStep::Finish(state.peer_terminal("peer Close".to_string())),
+        IncomingEvent::Eof => LoopStep::Finish(state.peer_terminal("peer EOF".to_string())),
+        IncomingEvent::Error(msg) => {
+            LoopStep::Finish(state.peer_terminal(format!("peer receive error: {msg}")))
+        }
+        IncomingEvent::Ignored => LoopStep::Continue,
     }
 }
 
