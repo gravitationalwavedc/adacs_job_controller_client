@@ -251,6 +251,7 @@ impl BundleInterface {
             Py_DecRef(p_global);
             Py_DecRef(json_module);
             Py_DecRef(traceback_module);
+            Py_XDECREF(p_bundle_module);
             return Err("Failed to load bundle module".to_string());
         }
 
