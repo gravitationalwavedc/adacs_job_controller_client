@@ -394,7 +394,7 @@ pub fn handle_file_list(mut msg: Message) {
             .await
         };
 
-        let full_path = Path::new(&working_directory).join(&dir_path);
+        let full_path = Path::new(&working_directory).join(dir_path.trim_start_matches('/'));
         let abs_path = match fs::canonicalize(&full_path).await {
             Ok(path) => path,
             Err(e) => {
