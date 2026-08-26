@@ -1246,6 +1246,40 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn test_send_db_request_returns_error_when_promise_sender_dropped() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+
+        let mut msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Highest, "database");
+        msg.push_ulong(42);
+
+        let response_fut = client.send_db_request(msg);
+
+        assert_eq!(
+            client.db_request_promises.read().len(),
+            1,
+            "send_db_request should register a pending promise"
+        );
+
+        // Simulate the disconnect path (handle_disconnect): drop all pending
+        // oneshot senders so the in-flight future resolves instead of hanging.
+        std::mem::take(&mut *client.db_request_promises.write());
+
+        let result = tokio::time::timeout(Duration::from_secs(2), response_fut)
+            .await
+            .expect("in-flight DB request must not hang when the sender is dropped");
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "channel closed",
+            "dropped oneshot sender should surface as a channel error"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn test_handle_db_response_uses_u32_request_id() {
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
