@@ -1339,7 +1339,7 @@ mod append_bundle_path_to_sys_path_tests {
 #[cfg(test)]
 mod log_python_lines_tests {
     use super::*;
-    use crate::python_interface::Py_eval_input;
+    use crate::python_interface::{PyLong_FromUnsignedLongLong, Py_eval_input};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;
@@ -1447,6 +1447,79 @@ mod log_python_lines_tests {
                 logs.is_empty(),
                 "NULL input should log nothing, got:\n{logs}"
             );
+        }
+    }
+
+    /// `log_python_lines` must swallow the `TypeError` raised by
+    /// `PyObject_GetIter` on a non-iterable object and log nothing, leaving no
+    /// stale error set for the next Python C-API call.
+    #[test]
+    fn returns_silently_on_non_iterable_input() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `log_python_lines` and the Python C-API calls used
+        // to build the input int.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let non_iterable = PyLong_FromUnsignedLongLong(42);
+            assert!(!non_iterable.is_null(), "int object should be created");
+            let logs = capture_logs(|| log_python_lines(non_iterable));
+            assert!(
+                logs.is_empty(),
+                "non-iterable input should log nothing, got:\n{logs}"
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyObject_GetIter must be swallowed"
+            );
+            Py_DecRef(non_iterable);
+        }
+    }
+
+    /// `log_python_lines` must swallow the `TypeError` raised by
+    /// `PyUnicode_AsUTF8` on a non-str list element, log nothing for that
+    /// element, and leave no stale error set for the next Python C-API call.
+    #[test]
+    fn swallows_error_and_logs_nothing_for_non_str_element() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `log_python_lines` and the Python C-API calls used
+        // to build the input list.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "globals dict should be created");
+            assert_eq!(
+                PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins()),
+                0,
+                "setting __builtins__ should succeed"
+            );
+            let code = c"[42]";
+            let list = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_eval_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            assert!(!list.is_null(), "list literal should evaluate");
+            let logs = capture_logs(|| log_python_lines(list));
+            assert!(
+                logs.is_empty(),
+                "list with non-str element should log nothing, got:\n{logs}"
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyUnicode_AsUTF8 must be swallowed"
+            );
+            Py_DecRef(list);
+            Py_DecRef(globals);
         }
     }
 }
