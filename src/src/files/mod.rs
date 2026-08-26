@@ -868,17 +868,16 @@ async fn run_download_supervisor(
     let download_start = std::time::Instant::now();
     let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
 
-    let state = run_transfer_loop(
-        &mut ws_sender,
-        &mut ws_receiver,
-        &mut file,
-        &mut buffer,
-        file_size,
-        &is_paused,
-        &resume_notify,
-        &uuid,
-    )
-    .await;
+    let mut ctx = TransferContext {
+        ws_sender: &mut ws_sender,
+        ws_receiver: &mut ws_receiver,
+        file: &mut file,
+        buffer: &mut buffer,
+        is_paused: &is_paused,
+        resume_notify: &resume_notify,
+        uuid: &uuid,
+    };
+    let state = run_transfer_loop(&mut ctx, file_size).await;
 
     // --- User-facing reporting from the authoritative result (cleanup below
     // never replaces this).
@@ -939,42 +938,37 @@ async fn validate_server_ready(ws_receiver: &mut WsReceiver) -> Result<(), Strin
     }
 }
 
+struct TransferContext<'a> {
+    ws_sender: &'a mut WsSender,
+    ws_receiver: &'a mut WsReceiver,
+    file: &'a mut File,
+    buffer: &'a mut [u8],
+    is_paused: &'a Arc<AtomicBool>,
+    resume_notify: &'a Arc<Notify>,
+    uuid: &'a str,
+}
+
 /// Drive file reads, chunk sends, pause/resume input, and peer terminal
 /// events in one ordered event loop. Transmitted bytes advance only after a
 /// chunk send resolves successfully. `COMPLETED` requires clean EOF plus
 /// expected-size equality. Once a primary error is selected, later peer
 /// terminal events cannot replace it.
-async fn run_transfer_loop(
-    ws_sender: &mut WsSender,
-    ws_receiver: &mut WsReceiver,
-    file: &mut File,
-    buffer: &mut [u8],
-    file_size: u64,
-    is_paused: &Arc<AtomicBool>,
-    resume_notify: &Arc<Notify>,
-    uuid: &str,
-) -> TransferState {
+async fn run_transfer_loop(ctx: &mut TransferContext<'_>, file_size: u64) -> TransferState {
     let mut state = TransferState::new(file_size);
     let mut chunk_state = ChunkState::Reading;
 
     loop {
         let step = match chunk_state {
-            ChunkState::Reading => {
-                run_reading_phase(
-                    ws_sender,
-                    ws_receiver,
-                    file,
-                    buffer,
-                    is_paused,
-                    resume_notify,
-                    uuid,
+            ChunkState::Reading => run_reading_phase(ctx, &mut state).await,
+            ChunkState::Sending => {
+                run_sending_phase(
+                    ctx.ws_sender,
+                    ctx.ws_receiver,
+                    ctx.is_paused,
+                    ctx.resume_notify,
                     &mut state,
                 )
                 .await
-            }
-            ChunkState::Sending => {
-                run_sending_phase(ws_sender, ws_receiver, is_paused, resume_notify, &mut state)
-                    .await
             }
         };
 
@@ -991,47 +985,52 @@ async fn run_transfer_loop(
     state
 }
 
-async fn run_reading_phase(
-    ws_sender: &mut WsSender,
-    ws_receiver: &mut WsReceiver,
-    file: &mut File,
-    buffer: &mut [u8],
-    is_paused: &Arc<AtomicBool>,
-    resume_notify: &Arc<Notify>,
-    uuid: &str,
-    state: &mut TransferState,
-) -> LoopStep {
+async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferState) -> LoopStep {
     // If a primary error already exists, only listen for peer terminal events
     // and resume notifications so we do not waste file work.
     if state.authoritative.is_primary() {
-        return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
+        return wait_for_terminal_or_resume(
+            ctx.ws_receiver,
+            ctx.is_paused,
+            ctx.resume_notify,
+            state,
+        )
+        .await;
     }
 
     // Process any Pause/Resume/terminal messages already buffered before
     // arming a file read, so a Pause that arrived during the previous send is
     // honoured promptly.
-    if let Some(step) = drain_pending_incoming(ws_receiver, is_paused, resume_notify, state) {
+    if let Some(step) =
+        drain_pending_incoming(ctx.ws_receiver, ctx.is_paused, ctx.resume_notify, state)
+    {
         return step;
     }
 
-    if is_paused.load(Ordering::Acquire) {
+    if ctx.is_paused.load(Ordering::Acquire) {
         // While paused we do not arm a file read; we just wait for resume or a
         // peer terminal event.
-        return wait_for_terminal_or_resume(ws_receiver, is_paused, resume_notify, state).await;
+        return wait_for_terminal_or_resume(
+            ctx.ws_receiver,
+            ctx.is_paused,
+            ctx.resume_notify,
+            state,
+        )
+        .await;
     }
 
-    let mut read_fut = Box::pin(file.read(buffer));
+    let mut read_fut = Box::pin(ctx.file.read(ctx.buffer));
     tokio::select! {
         biased;
-        incoming = ws_receiver.next() => {
+        incoming = ctx.ws_receiver.next() => {
             match classify_incoming(incoming) {
                 IncomingEvent::Pause => {
-                    is_paused.store(true, Ordering::Release);
+                    ctx.is_paused.store(true, Ordering::Release);
                     LoopStep::Continue
                 }
                 IncomingEvent::Resume => {
-                    is_paused.store(false, Ordering::Release);
-                    resume_notify.notify_one();
+                    ctx.is_paused.store(false, Ordering::Release);
+                    ctx.resume_notify.notify_one();
                     LoopStep::Continue
                 }
                 IncomingEvent::Close => {
@@ -1068,7 +1067,7 @@ async fn run_reading_phase(
                         // clean-EOF boundary. Events that are still pending
                         // belong to cleanup, not transfer-result selection.
                         use futures_util::FutureExt;
-                        match ws_receiver.next().now_or_never() {
+                        match ctx.ws_receiver.next().now_or_never() {
                             Some(Some(Ok(WsMessage::Close(_)))) => LoopStep::Finish(
                                 state.peer_terminal("peer Close".to_string()),
                             ),
@@ -1092,8 +1091,8 @@ async fn run_reading_phase(
                             "handle_file_download: File size mismatch: expected {expected} bytes, got {transmitted} bytes (file truncated or modified during download)"
                         );
                         send_file_error(
-                            ws_sender,
-                            uuid,
+                            ctx.ws_sender,
+                            ctx.uuid,
                             &format!("File size mismatch: expected {expected}, got {transmitted}"),
                             FILE_DOWNLOAD_ERROR,
                         )
@@ -1106,8 +1105,8 @@ async fn run_reading_phase(
                 Ok(n) => {
                     trace!("handle_file_download: Read {} bytes from file", n);
                     // Build the chunk message bytes and arm the Sending phase.
-                    let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, uuid);
-                    chunk_msg.push_bytes(&buffer[..n]);
+                    let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, ctx.uuid);
+                    chunk_msg.push_bytes(&ctx.buffer[..n]);
                     let bytes: Bytes = chunk_msg.get_data().clone().into();
                     state.pending_chunk_bytes = Some(bytes);
                     state.pending_chunk_len = n;
@@ -1116,8 +1115,8 @@ async fn run_reading_phase(
                 Err(e) => {
                     warn!("Error reading file: {}", e);
                     send_file_error(
-                        ws_sender,
-                        uuid,
+                        ctx.ws_sender,
+                        ctx.uuid,
                         "Exception reading file",
                         FILE_DOWNLOAD_ERROR,
                     )
@@ -3090,5 +3089,273 @@ mod tests {
             state.authoritative(),
             AuthoritativeResult::CleanEof
         ));
+    }
+
+    // ---------------------------------------------------------------
+    // Reading-phase branch coverage requested during review of the
+    // TransferContext refactor. Each test drives `run_reading_phase` /
+    // `run_transfer_loop` directly against a real WebSocket fixture so the
+    // specific branch is exercised deterministically.
+    // ---------------------------------------------------------------
+
+    /// Connect a client to the fixture and consume the `SERVER_READY`
+    /// handshake so it cannot be misread as a transfer control frame.
+    async fn connect_reading_phase_client(
+        server: &WebsocketServerFixture,
+    ) -> (WsSender, WsReceiver) {
+        let url = format!("ws://127.0.0.1:{}/ws/", server.port);
+        let request = build_file_ws_request(&url, "test-token").unwrap();
+        let (ws_stream, _) = connect_async(request).await.unwrap();
+        let (ws_sender, mut ws_receiver) = ws_stream.split();
+        let _ = tokio::time::timeout(Duration::from_secs(2), ws_receiver.next()).await;
+        (ws_sender, ws_receiver)
+    }
+
+    /// Create a FIFO whose reads block until data is written, keeping the
+    /// reading phase's select alive so an injected control frame wins the
+    /// biased incoming branch deterministically.
+    async fn make_blocking_fifo(dir: &Path) -> (File, std::fs::File) {
+        let fifo_path = dir.join("blocking.bin");
+        let c_path = std::ffi::CString::new(fifo_path.to_str().unwrap()).unwrap();
+        // SAFETY: `c_path` is a valid NUL-terminated path and `0o600` is a
+        // valid mode; mkfifo only creates the node and cannot alias memory.
+        let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo failed");
+        let writer_path = fifo_path.clone();
+        let writer_task = tokio::task::spawn_blocking(move || {
+            std::fs::OpenOptions::new().write(true).open(&writer_path)
+        });
+        let reader = File::open(&fifo_path).await.unwrap();
+        let writer = writer_task.await.unwrap().unwrap();
+        (reader, writer)
+    }
+
+    #[tokio::test]
+    async fn reading_phase_with_primary_error_waits_for_terminal_or_resume() {
+        let server = WebsocketServerFixture::new().await;
+        let (mut ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
+
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("data.bin");
+        std::fs::write(&file_path, vec![0u8; 64]).unwrap();
+        let mut file = File::open(&file_path).await.unwrap();
+        let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let uuid = "test-uuid-primary-error";
+
+        let mut ctx = TransferContext {
+            ws_sender: &mut ws_sender,
+            ws_receiver: &mut ws_receiver,
+            file: &mut file,
+            buffer: &mut buffer,
+            is_paused: &is_paused,
+            resume_notify: &resume_notify,
+            uuid,
+        };
+
+        let mut state = TransferState::new(64);
+        state.primary("chunk send failed");
+
+        let server = server;
+        let pause_msg = Message::new(PAUSE_FILE_CHUNK_STREAM, Priority::Highest, uuid);
+        server.msg_tx.send(pause_msg.get_data().clone()).unwrap();
+
+        let step = run_reading_phase(&mut ctx, &mut state).await;
+        assert!(matches!(step, LoopStep::Continue));
+        assert!(
+            is_paused.load(Ordering::Acquire),
+            "a Pause arriving while a primary error exists must be honoured by wait_for_terminal_or_resume"
+        );
+    }
+
+    #[tokio::test]
+    async fn reading_phase_handles_pause_during_select() {
+        let server = WebsocketServerFixture::new().await;
+        let (mut ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
+
+        let tmp = TempDir::new().unwrap();
+        let (mut file, _writer) = make_blocking_fifo(tmp.path()).await;
+        let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let uuid = "test-uuid-pause-select";
+
+        let mut ctx = TransferContext {
+            ws_sender: &mut ws_sender,
+            ws_receiver: &mut ws_receiver,
+            file: &mut file,
+            buffer: &mut buffer,
+            is_paused: &is_paused,
+            resume_notify: &resume_notify,
+            uuid,
+        };
+        let mut state = TransferState::new(1024);
+
+        // Queue the Pause before entering the phase. It is still in transit
+        // through the fixture when `drain_pending_incoming` runs, so the
+        // FIFO-blocked select's biased incoming branch handles it.
+        let server = server;
+        let pause_msg = Message::new(PAUSE_FILE_CHUNK_STREAM, Priority::Highest, uuid);
+        server.msg_tx.send(pause_msg.get_data().clone()).unwrap();
+
+        let step = run_reading_phase(&mut ctx, &mut state).await;
+        assert!(matches!(step, LoopStep::Continue));
+        assert!(
+            is_paused.load(Ordering::Acquire),
+            "a Pause arriving during the reading phase must set the paused flag"
+        );
+    }
+
+    #[tokio::test]
+    async fn reading_phase_handles_resume_during_select() {
+        use futures_util::FutureExt;
+
+        let server = WebsocketServerFixture::new().await;
+        let (mut ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
+
+        let tmp = TempDir::new().unwrap();
+        let (mut file, _writer) = make_blocking_fifo(tmp.path()).await;
+        let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let uuid = "test-uuid-resume-select";
+
+        let notified = Box::pin(resume_notify.notified());
+
+        let mut ctx = TransferContext {
+            ws_sender: &mut ws_sender,
+            ws_receiver: &mut ws_receiver,
+            file: &mut file,
+            buffer: &mut buffer,
+            is_paused: &is_paused,
+            resume_notify: &resume_notify,
+            uuid,
+        };
+        let mut state = TransferState::new(1024);
+
+        let server = server;
+        let resume_msg = Message::new(RESUME_FILE_CHUNK_STREAM, Priority::Highest, uuid);
+        server.msg_tx.send(resume_msg.get_data().clone()).unwrap();
+
+        let step = run_reading_phase(&mut ctx, &mut state).await;
+        assert!(matches!(step, LoopStep::Continue));
+        assert!(!is_paused.load(Ordering::Acquire));
+        assert!(
+            notified.now_or_never().is_some(),
+            "a Resume arriving during the reading phase must notify the resume waiter"
+        );
+    }
+
+    #[test]
+    fn transfer_loop_reports_size_mismatch_on_short_file() {
+        let logs = capture_logs(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let server = WebsocketServerFixture::new().await;
+                let (mut ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
+
+                let tmp = TempDir::new().unwrap();
+                let file_path = tmp.path().join("short.bin");
+                std::fs::write(&file_path, vec![0u8; 4]).unwrap();
+                let mut file = File::open(&file_path).await.unwrap();
+                let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
+                let is_paused = Arc::new(AtomicBool::new(false));
+                let resume_notify = Arc::new(Notify::new());
+                let uuid = "test-uuid-size-mismatch";
+
+                let mut ctx = TransferContext {
+                    ws_sender: &mut ws_sender,
+                    ws_receiver: &mut ws_receiver,
+                    file: &mut file,
+                    buffer: &mut buffer,
+                    is_paused: &is_paused,
+                    resume_notify: &resume_notify,
+                    uuid,
+                };
+
+                let state = run_transfer_loop(&mut ctx, 8).await;
+                assert!(
+                    matches!(
+                        state.authoritative(),
+                        AuthoritativeResult::PrimaryError(msg)
+                            if msg.contains("unexpected EOF: transmitted 4 of 8 bytes")
+                    ),
+                    "expected size-mismatch primary error, got {:?}",
+                    state.authoritative()
+                );
+
+                let mut server = server;
+                let first = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+                    .await
+                    .expect("timeout waiting for FILE_CHUNK")
+                    .expect("no FILE_CHUNK");
+                assert_eq!(first.id, FILE_CHUNK);
+
+                let err = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+                    .await
+                    .expect("timeout waiting for FILE_DOWNLOAD_ERROR")
+                    .expect("no FILE_DOWNLOAD_ERROR");
+                assert_eq!(err.id, FILE_DOWNLOAD_ERROR);
+                let mut err_msg = err;
+                assert_eq!(
+                    err_msg.pop_string(),
+                    "File size mismatch: expected 8, got 4"
+                );
+                assert_eq!(err_msg.source, uuid);
+            });
+        });
+        assert!(
+            logs.contains("File size mismatch: expected 8 bytes, got 4 bytes"),
+            "expected size-mismatch warning, got: {logs}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reading_phase_reports_file_read_error() {
+        let server = WebsocketServerFixture::new().await;
+        let (mut ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
+
+        // Opening a directory succeeds on Linux; the subsequent read fails
+        // with EISDIR, exercising the read-error branch deterministically.
+        let tmp = TempDir::new().unwrap();
+        let mut file = File::open(tmp.path()).await.unwrap();
+        let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let uuid = "test-uuid-read-error";
+
+        let mut ctx = TransferContext {
+            ws_sender: &mut ws_sender,
+            ws_receiver: &mut ws_receiver,
+            file: &mut file,
+            buffer: &mut buffer,
+            is_paused: &is_paused,
+            resume_notify: &resume_notify,
+            uuid,
+        };
+        let mut state = TransferState::new(1024);
+
+        let step = run_reading_phase(&mut ctx, &mut state).await;
+        assert!(
+            matches!(
+                step,
+                LoopStep::Finish(AuthoritativeResult::PrimaryError(msg)) if msg == "file read failed"
+            ),
+            "expected file-read-failed primary error"
+        );
+
+        let mut server = server;
+        let err = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("timeout waiting for FILE_DOWNLOAD_ERROR")
+            .expect("no FILE_DOWNLOAD_ERROR");
+        assert_eq!(err.id, FILE_DOWNLOAD_ERROR);
+        let mut err_msg = err;
+        assert_eq!(err_msg.pop_string(), "Exception reading file");
+        assert_eq!(err_msg.source, uuid);
     }
 }
