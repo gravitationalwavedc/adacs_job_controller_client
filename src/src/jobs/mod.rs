@@ -2,8 +2,8 @@ use crate::bundle_manager::{resolve_working_directory, BundleManager};
 use crate::config::read_client_config;
 use crate::db::{self, job, jobstatus};
 use crate::messaging::{
-    Message, Priority, CANCELLED, COMPLETED, DELETED, ERROR, JOB_COMPLETION_SOURCE, RUNNING,
-    SUBMITTED, SYSTEM_SOURCE, UPDATE_JOB,
+    Message, Priority, CANCELLED, COMPLETED, DELETED, ERROR, JOB_COMPLETION_SOURCE, SUBMITTED,
+    SYSTEM_SOURCE, UPDATE_JOB,
 };
 use crate::websocket::get_websocket_client;
 use flate2::write::GzEncoder;
@@ -333,7 +333,7 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
         });
     let job_error = v_status
         .iter()
-        .filter(|state| state.state as u32 > RUNNING && state.state as u32 != COMPLETED)
+        .filter(|state| state.state as u32 >= ERROR && state.state as u32 != COMPLETED)
         .map(|state| state.state as u32)
         .next_back()
         .unwrap_or(0);
