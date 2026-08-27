@@ -267,6 +267,48 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyRunStringFlagsFn = unsafe fn(
+    code: *const c_char,
+    start: c_int,
+    globals: *mut PyObject,
+    locals: *mut PyObject,
+    flags: *mut c_void,
+) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_RUN_STRING_FLAGS_OVERRIDE: Mutex<Option<PyRunStringFlagsFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_run_string_flags`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_run_string_flags_override(
+    f: Option<PyRunStringFlagsFn>,
+) -> Option<PyRunStringFlagsFn> {
+    let mut guard = PY_RUN_STRING_FLAGS_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyRun_StringFlags` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyRun_StringFlags`: caller holds `PYTHON_MUTEX` and
+/// the GIL; `code` is a valid NUL-terminated string, `globals`/`locals` are
+/// live dicts (or NULL).
+pub unsafe fn py_run_string_flags(
+    code: *const c_char,
+    start: c_int,
+    globals: *mut PyObject,
+    locals: *mut PyObject,
+    flags: *mut c_void,
+) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_RUN_STRING_FLAGS_OVERRIDE.lock() {
+        return f(code, start, globals, locals, flags);
+    }
+    PyRun_StringFlags(code, start, globals, locals, flags)
+}
+
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     PY_NONE_STRUCT

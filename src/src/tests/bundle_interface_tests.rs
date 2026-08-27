@@ -13,17 +13,17 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_run_string_flags_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int, c_void};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1127,6 +1127,49 @@ fn test_bundle_interface_new_success() {
         assert_eq!(bundle.bundle_hash(), bundle_hash);
     }
     inner();
+}
+
+/// `BundleInterface::new` must return the "Failed to install stdout/stderr
+/// redirection" error when `PyRun_StringFlags` returns NULL while running the
+/// redirection script. The script always succeeds in practice, so the branch
+/// is forced via the test-only `py_run_string_flags` override seam.
+#[test]
+fn test_bundle_interface_new_redirection_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let prev = set_py_run_string_flags_override(Some(fail_redirect));
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        set_py_run_string_flags_override(prev);
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to install stdout/stderr redirection"),
+            "NULL PyRun_StringFlags result should fail with the redirection error"
+        );
+    }
+    inner();
+}
+
+/// Override that makes `PyRun_StringFlags` always return NULL, forcing the
+/// stdout/stderr redirection install failure branch in `BundleInterface::new`.
+// SAFETY: Test-only; returns NULL without touching the arguments, so no
+// reference handling is required.
+unsafe fn fail_redirect(
+    _code: *const c_char,
+    _start: c_int,
+    _globals: *mut PyObject,
+    _locals: *mut PyObject,
+    _flags: *mut c_void,
+) -> *mut PyObject {
+    std::ptr::null_mut()
 }
 
 /// A NUL byte in the bundle path root makes `CString::new` fail, so
