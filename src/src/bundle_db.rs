@@ -230,16 +230,8 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
             "DB: failed to serialize job data for bundle hash: {}",
             bundle_hash
         );
-        let error_obj = get_bundle_db_error(&bundle_hash);
-        if error_obj.is_null() {
-            error!(
-                "DB: load_bundle_and_job_id failed to get error object for bundle hash: {}",
-                bundle_hash
-            );
-            return None;
-        }
-        let err_msg = err_cstring("Failed to serialize job data");
-        PyErr_SetString(error_obj, err_msg.as_ptr());
+        let error_obj = get_bundle_db_error_or_abort("load_bundle_and_job_id", &bundle_hash)?;
+        set_db_error_and_return_null(error_obj, "Failed to serialize job data");
         return None;
     };
     let job_data: serde_json::Value =
@@ -408,16 +400,10 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
             bundle_hash
         );
         PyErr_Clear();
-        let error_obj = get_bundle_db_error(&bundle_hash);
-        if error_obj.is_null() {
-            error!(
-                "DB: get_job_by_id failed to get error object for bundle hash: {}",
-                bundle_hash
-            );
+        let Some(error_obj) = get_bundle_db_error_or_abort("get_job_by_id", &bundle_hash) else {
             return ptr::null_mut();
-        }
-        PyErr_SetString(error_obj, c"Job ID must be an integer".as_ptr());
-        return ptr::null_mut();
+        };
+        return set_db_error_and_return_null(error_obj, "Job ID must be an integer");
     }
 
     let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
