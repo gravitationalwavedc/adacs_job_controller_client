@@ -2603,6 +2603,96 @@ fn test_file_upload_partial_file_cleanup_on_peer_close() {
 }
 
 #[test_fork::test]
+fn test_file_upload_partial_file_cleanup_on_receive_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test37");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1248i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let mut server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-upload-recv-err".to_string();
+        let target_path = "partial_file.txt";
+        let declared_size = 1000u64;
+        let actual_size = 500u64; // Send less than declared
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(declared_size);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_upload(msg);
+
+        let ready = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for SERVER_READY")
+            .expect("No ready");
+        assert_eq!(ready.id, SERVER_READY);
+
+        // Send partial data (less than declared size)
+        let mut chunk_msg = Message::new(FILE_UPLOAD_CHUNK, Priority::Highest, &test_uuid);
+        let partial_data = vec![0u8; actual_size as usize];
+        chunk_msg.push_bytes(&partial_data);
+        server.msg_tx.send(chunk_msg.get_data().clone()).unwrap();
+
+        // Wait for the client to create the partial file before resetting the
+        // transport. Without this, the test can pass trivially if the client
+        // hasn't started writing yet, leaving the cleanup path uncovered.
+        let full_path = fixture.get_temp_path().join(target_path);
+        let created_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !full_path.exists() {
+            assert!(
+                std::time::Instant::now() < created_deadline,
+                "Partial file should have been created after upload started"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // Reset the peer transport (SO_LINGER=0) so the client's next receive
+        // fails with a connection-reset error, exercising the Some(Err(e))
+        // branch of the upload loop.
+        server.reset_connection().await;
+
+        // Verify partial file was cleaned up (deleted)
+        let cleaned_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while full_path.exists() {
+            assert!(
+                std::time::Instant::now() < cleaned_deadline,
+                "Partial file should have been cleaned up after receive error"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
 fn test_multiple_concurrent_file_uploads() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
