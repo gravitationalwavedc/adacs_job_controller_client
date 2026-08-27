@@ -1156,4 +1156,39 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(check_job_status(make_job_model(), true));
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn check_all_jobs_status_returns_early_when_websocket_disconnected() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(true);
+        mock.expect_is_server_ready().return_const(false);
+        mock.expect_send_db_request().times(0);
+        mock.expect_queue_message().times(0);
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(check_all_jobs_status());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn check_all_jobs_status_returns_early_when_get_running_jobs_fails() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(false);
+        mock.expect_is_server_ready().return_const(true);
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err(Box::new(std::io::Error::other("db connection failed"))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        });
+        mock.expect_queue_message().times(0);
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(check_all_jobs_status());
+    }
 }
