@@ -13,17 +13,18 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_dict_set_item_string_override, set_py_tuple_set_item_override,
+    PyDictSetItemStringFn, PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred,
+    PyErr_SetString, PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong,
+    PyObject, PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem,
+    PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t,
+    PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1486,6 +1487,94 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
         logs.contains("Error setting exception value in args tuple"),
         "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
     );
+}
+
+/// RAII guard that installs a `py_dict_set_item_string` override and restores
+/// the previous one on drop.
+struct DictSetItemStringOverrideGuard(Option<PyDictSetItemStringFn>);
+
+impl DictSetItemStringOverrideGuard {
+    fn install(f: PyDictSetItemStringFn) -> Self {
+        Self(set_py_dict_set_item_string_override(Some(f)))
+    }
+}
+
+impl Drop for DictSetItemStringOverrideGuard {
+    fn drop(&mut self) {
+        set_py_dict_set_item_string_override(self.0);
+    }
+}
+
+/// Override that fails `PyDict_SetItemString` for the `__builtins__` key.
+// SAFETY: Test-only; `dict`/`key`/`item` are live objects from the caller.
+unsafe fn fail_builtins_set_item(
+    dict: *mut PyObject,
+    key: *const c_char,
+    item: *mut PyObject,
+) -> c_int {
+    if CStr::from_ptr(key).to_bytes() == b"__builtins__" {
+        -1
+    } else {
+        PyDict_SetItemString(dict, key, item)
+    }
+}
+
+/// Override that fails `PyDict_SetItemString` for the `json` key.
+// SAFETY: Test-only; `dict`/`key`/`item` are live objects from the caller.
+unsafe fn fail_json_set_item(
+    dict: *mut PyObject,
+    key: *const c_char,
+    item: *mut PyObject,
+) -> c_int {
+    if CStr::from_ptr(key).to_bytes() == b"json" {
+        -1
+    } else {
+        PyDict_SetItemString(dict, key, item)
+    }
+}
+
+/// Forces the `__builtins__` `SetItemString` call in `BundleInterface::new` to
+/// fail; the constructor must return the corresponding error.
+#[test]
+fn test_bundle_interface_new_handles_builtins_set_item_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+
+        let _override = DictSetItemStringOverrideGuard::install(fail_builtins_set_item);
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to set __builtins__ in globals dict"),
+            "forced __builtins__ SetItemString failure should surface the error"
+        );
+    }
+    inner();
+}
+
+/// Forces the `json` `SetItemString` call in `BundleInterface::new` to fail;
+/// the constructor must return the corresponding error.
+#[test]
+fn test_bundle_interface_new_handles_json_set_item_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+
+        let _override = DictSetItemStringOverrideGuard::install(fail_json_set_item);
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to set json module in globals dict"),
+            "forced json SetItemString failure should surface the error"
+        );
+    }
+    inner();
 }
 
 /// DIRECT UNIT TEST for the `CString::new(job_data)` failure branch in

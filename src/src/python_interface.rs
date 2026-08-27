@@ -267,6 +267,39 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyDictSetItemStringFn = unsafe fn(*mut PyObject, *const c_char, *mut PyObject) -> c_int;
+
+#[cfg(test)]
+static PY_DICT_SET_ITEM_STRING_OVERRIDE: Mutex<Option<PyDictSetItemStringFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_dict_set_item_string`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_dict_set_item_string_override(
+    f: Option<PyDictSetItemStringFn>,
+) -> Option<PyDictSetItemStringFn> {
+    let mut guard = PY_DICT_SET_ITEM_STRING_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyDict_SetItemString` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyDict_SetItemString`: caller holds `PYTHON_MUTEX`
+/// and the GIL; `dict`/`key`/`item` are live.
+pub unsafe fn py_dict_set_item_string(
+    dict: *mut PyObject,
+    key: *const c_char,
+    item: *mut PyObject,
+) -> c_int {
+    #[cfg(test)]
+    if let Some(f) = *PY_DICT_SET_ITEM_STRING_OVERRIDE.lock() {
+        return f(dict, key, item);
+    }
+    PyDict_SetItemString(dict, key, item)
+}
+
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     PY_NONE_STRUCT

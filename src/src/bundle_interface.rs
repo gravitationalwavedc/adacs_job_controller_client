@@ -6,8 +6,8 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_dict_set_item_string, py_tuple_set_item,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
     PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
@@ -170,7 +170,7 @@ impl BundleInterface {
             PyErr_Print();
             return Err("Failed to create global dict".to_string());
         }
-        if PyDict_SetItemString(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins()) < 0 {
+        if py_dict_set_item_string(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins()) < 0 {
             error!("Error setting __builtins__ in globals dict");
             PyErr_Print();
             Py_DecRef(p_global);
@@ -214,7 +214,7 @@ impl BundleInterface {
             Py_DecRef(p_global);
             return Err("Failed to import json module".to_string());
         }
-        if PyDict_SetItemString(p_global, c"json".as_ptr(), json_module) < 0 {
+        if py_dict_set_item_string(p_global, c"json".as_ptr(), json_module) < 0 {
             error!("Error setting json module in globals dict");
             PyErr_Print();
             Py_DecRef(json_module);
@@ -946,7 +946,7 @@ mod fallback_value_text_tests {
 mod bundle_interface_conversion_tests {
     use super::*;
     use crate::python_interface::{
-        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, Py_eval_input,
+        PyDict_SetItemString, PyLong_FromUnsignedLongLong, PyObject_SetAttrString, Py_eval_input,
     };
 
     /// Helper: create a minimal `BundleInterface` with null pointer fields.
@@ -1339,7 +1339,7 @@ mod append_bundle_path_to_sys_path_tests {
 #[cfg(test)]
 mod log_python_lines_tests {
     use super::*;
-    use crate::python_interface::Py_eval_input;
+    use crate::python_interface::{PyDict_SetItemString, Py_eval_input};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;
