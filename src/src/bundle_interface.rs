@@ -6,14 +6,13 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
-    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
-    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_dict_new, py_tuple_set_item, MyPy_IsNone,
+    PyCallable_Check, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print,
+    PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule,
+    PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject,
+    PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject,
+    PyThreadState, PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef,
+    Py_IncRef, Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -164,7 +163,7 @@ impl BundleInterface {
         debug!("BundleInterface::new bundle path {:?}", bundle_path);
 
         // Create a new globals dict and enable the python builtins
-        let p_global = PyDict_New();
+        let p_global = py_dict_new();
         if p_global.is_null() {
             error!("Error creating global dict");
             PyErr_Print();
@@ -178,7 +177,7 @@ impl BundleInterface {
         }
 
         // Set up logging so print() works as expected (run the redirection script)
-        let p_local = PyDict_New();
+        let p_local = py_dict_new();
         if p_local.is_null() {
             error!("Error creating local dict");
             PyErr_Print();
@@ -946,7 +945,7 @@ mod fallback_value_text_tests {
 mod bundle_interface_conversion_tests {
     use super::*;
     use crate::python_interface::{
-        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, Py_eval_input,
+        PyDict_New, PyLong_FromUnsignedLongLong, PyObject_SetAttrString, Py_eval_input,
     };
 
     /// Helper: create a minimal `BundleInterface` with null pointer fields.
@@ -1339,7 +1338,7 @@ mod append_bundle_path_to_sys_path_tests {
 #[cfg(test)]
 mod log_python_lines_tests {
     use super::*;
-    use crate::python_interface::Py_eval_input;
+    use crate::python_interface::{PyDict_New, Py_eval_input};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;

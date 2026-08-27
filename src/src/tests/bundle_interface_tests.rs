@@ -13,11 +13,11 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_dict_new_override, set_py_tuple_set_item_override, PyDictNewFn,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1486,6 +1486,91 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
         logs.contains("Error setting exception value in args tuple"),
         "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
     );
+}
+
+// ─── PyDict_New failure-branch tests ─────────────────────────────────────────
+//
+// `PyDict_New` always succeeds in practice, so the two is_null() branches in
+// `BundleInterface::new` are unreachable via the public API. These tests use
+// the `set_py_dict_new_override` seam to force each branch.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Number of `py_dict_new` calls observed by the active override.
+static DICT_NEW_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+/// Index of the `py_dict_new` call the active override should fail.
+static DICT_NEW_FAIL_AT: AtomicUsize = AtomicUsize::new(0);
+
+/// Override that fails the `DICT_NEW_FAIL_AT`-th `py_dict_new` call and
+/// delegates the rest to the real `PyDict_New`.
+// SAFETY: Test-only; caller holds PYTHON_MUTEX and the GIL.
+unsafe fn fail_nth_dict_new() -> *mut PyObject {
+    if DICT_NEW_CALLS.fetch_add(1, Ordering::SeqCst) == DICT_NEW_FAIL_AT.load(Ordering::SeqCst) {
+        std::ptr::null_mut()
+    } else {
+        PyDict_New()
+    }
+}
+
+/// RAII guard that installs a `py_dict_new` override for the duration of a
+/// test and restores the previous override on drop.
+struct DictNewOverrideGuard(Option<PyDictNewFn>);
+
+impl DictNewOverrideGuard {
+    fn install(f: PyDictNewFn) -> Self {
+        Self(set_py_dict_new_override(Some(f)))
+    }
+}
+
+impl Drop for DictNewOverrideGuard {
+    fn drop(&mut self) {
+        set_py_dict_new_override(self.0);
+    }
+}
+
+/// Forces the first `py_dict_new` call (the globals dict) to fail.
+#[test]
+fn test_bundle_interface_new_global_dict_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        DICT_NEW_CALLS.store(0, Ordering::SeqCst);
+        DICT_NEW_FAIL_AT.store(0, Ordering::SeqCst);
+        let _override = DictNewOverrideGuard::install(fail_nth_dict_new);
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to create global dict"),
+            "first PyDict_New failure should fail with 'Failed to create global dict'"
+        );
+    }
+    inner();
+}
+
+/// Forces the second `py_dict_new` call (the locals dict) to fail.
+#[test]
+fn test_bundle_interface_new_local_dict_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        DICT_NEW_CALLS.store(0, Ordering::SeqCst);
+        DICT_NEW_FAIL_AT.store(1, Ordering::SeqCst);
+        let _override = DictNewOverrideGuard::install(fail_nth_dict_new);
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to create local dict"),
+            "second PyDict_New failure should fail with 'Failed to create local dict'"
+        );
+    }
+    inner();
 }
 
 /// DIRECT UNIT TEST for the `CString::new(job_data)` failure branch in

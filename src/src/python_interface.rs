@@ -267,6 +267,32 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyDictNewFn = unsafe fn() -> *mut PyObject;
+
+#[cfg(test)]
+static PY_DICT_NEW_OVERRIDE: Mutex<Option<PyDictNewFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_dict_new`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_dict_new_override(f: Option<PyDictNewFn>) -> Option<PyDictNewFn> {
+    let mut guard = PY_DICT_NEW_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyDict_New` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyDict_New`: caller holds `PYTHON_MUTEX` and the GIL.
+pub unsafe fn py_dict_new() -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_DICT_NEW_OVERRIDE.lock() {
+        return f();
+    }
+    PyDict_New()
+}
+
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     PY_NONE_STRUCT
