@@ -1449,4 +1449,43 @@ mod log_python_lines_tests {
             );
         }
     }
+
+    /// `log_python_lines` must swallow the `TypeError` raised by
+    /// `PyObject_GetIter` on a non-iterable object and log nothing.
+    #[test]
+    fn returns_silently_on_non_iterable_input() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `log_python_lines` and the Python C-API calls used
+        // to build the non-iterable input.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "globals dict should be created");
+            assert_eq!(
+                PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins()),
+                0,
+                "setting __builtins__ should succeed"
+            );
+            let code = c"42";
+            let int_obj = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_eval_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            assert!(!int_obj.is_null(), "int literal should evaluate");
+            let logs = capture_logs(|| log_python_lines(int_obj));
+            Py_DecRef(int_obj);
+            Py_DecRef(globals);
+            assert!(
+                logs.is_empty(),
+                "non-iterable input should log nothing, got:\n{logs}"
+            );
+        }
+    }
 }
