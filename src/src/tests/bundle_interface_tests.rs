@@ -1526,3 +1526,45 @@ def submit(details, job_data):
     }
     inner();
 }
+
+/// DIRECT UNIT TEST for the `bundle.run` returning `Err(NoneException)`
+/// else-branches of `run_bundle_string`, `run_bundle_uint64`, and
+/// `run_bundle_bool` in `bundle_manager.rs`.
+///
+/// A bundle function that returns `None` makes `BundleInterface::run` return
+/// `Err(NoneException)`, so each `run_bundle_*` method must return its
+/// None-default: `String::new()`, `0`, and `false`.
+#[test]
+fn test_run_bundle_returns_defaults_when_function_returns_none() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let script = r"
+def submit(details, job_data):
+    return None
+";
+        fixture.write_raw_script(&bundle_hash, script);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let details = serde_json::json!({});
+        let result =
+            BundleManager::singleton().run_bundle_string("submit", &bundle_hash, &details, "");
+        assert_eq!(result, String::new());
+
+        let result =
+            BundleManager::singleton().run_bundle_uint64("submit", &bundle_hash, &details, "");
+        assert_eq!(result, 0);
+
+        let result =
+            BundleManager::singleton().run_bundle_bool("submit", &bundle_hash, &details, "");
+        assert!(!result);
+    }
+    inner();
+}
