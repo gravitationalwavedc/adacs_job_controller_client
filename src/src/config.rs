@@ -119,6 +119,16 @@ pub fn ensure_websocket_endpoint_trailing_slash(endpoint: &str) -> String {
     }
 }
 
+/// Get the WebSocket endpoint from config, normalizing the trailing slash.
+pub fn get_websocket_endpoint() -> String {
+    let config = read_client_config();
+    ensure_websocket_endpoint_trailing_slash(
+        config["websocketEndpoint"]
+            .as_str()
+            .unwrap_or("ws://127.0.0.1:8001/ws/"),
+    )
+}
+
 /// Get the log level from config, defaulting to "info" if not set
 pub fn get_log_level(config: &Value) -> String {
     let result =

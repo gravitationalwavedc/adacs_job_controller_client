@@ -620,12 +620,7 @@ fn send_file_list_error(uuid: &str, error_msg: &str) {
 }
 
 fn get_ws_endpoint_from_config() -> String {
-    let config = crate::config::read_client_config();
-    crate::config::ensure_websocket_endpoint_trailing_slash(
-        config["websocketEndpoint"]
-            .as_str()
-            .unwrap_or("ws://127.0.0.1:8001/ws/"),
-    )
+    crate::config::get_websocket_endpoint()
 }
 
 pub fn handle_file_download(mut msg: Message) {
