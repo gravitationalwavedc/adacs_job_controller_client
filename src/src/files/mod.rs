@@ -1537,20 +1537,11 @@ fn parse_upload_fields(msg: &mut Message) -> UploadFields {
     }
 }
 
-pub fn handle_file_upload(mut msg: Message) {
-    let fields = parse_upload_fields(&mut msg);
-
+pub fn handle_file_upload(msg: Message) {
     // Read config BEFORE spawning to capture the correct URL for this upload
     let ws_endpoint = get_ws_endpoint_from_config();
 
-    handle_file_upload_internal(
-        fields.uuid,
-        fields.job_id,
-        fields.bundle_hash,
-        fields.target_path,
-        fields.file_size,
-        ws_endpoint,
-    );
+    handle_file_upload_with_url(msg, ws_endpoint);
 }
 
 pub fn handle_file_upload_with_url(mut msg: Message, ws_endpoint: String) {
