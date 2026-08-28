@@ -893,6 +893,68 @@ mod tests {
     }
 
     #[test]
+    fn get_job_by_id_clears_conversion_error_and_sets_integer_message_on_non_integer_job_id() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_get_job_by_id_non_integer";
+        fixture.write_bundle_db_create_or_update_job(bundle_hash, r#"{"test": 1}"#);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        let bundle = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _bundle_guard =
+                crate::thread_bundle_map::ThreadBundleGuard::new(bundle_hash.to_string());
+            let error_obj = get_bundle_db_error(bundle_hash);
+            let job_id_obj = crate::python_interface::PyUnicode_FromString(c"not-an-int".as_ptr());
+            assert!(!job_id_obj.is_null(), "str object should be created");
+            let args = crate::python_interface::PyTuple_New(1);
+            assert_eq!(
+                crate::python_interface::PyTuple_SetItem(args, 0, job_id_obj),
+                0,
+                "tuple set should succeed"
+            );
+            let result = get_job_by_id(ptr::null_mut(), args);
+            crate::python_interface::Py_DecRef(args);
+            assert!(result.is_null(), "non-integer job ID should return NULL");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "bundle error should be set"
+            );
+
+            // The stale TypeError from PyLong_AsUnsignedLongLong must be cleared
+            // and replaced by the bundle error with the integer message.
+            let mut extype: *mut PyObject = ptr::null_mut();
+            let mut value: *mut PyObject = ptr::null_mut();
+            let mut traceback: *mut PyObject = ptr::null_mut();
+            crate::python_interface::PyErr_Fetch(
+                &raw mut extype,
+                &raw mut value,
+                &raw mut traceback,
+            );
+            assert_eq!(
+                extype, error_obj,
+                "stale TypeError must be cleared and bundle error set"
+            );
+            let str_obj = crate::python_interface::PyObject_Str(value);
+            assert!(!str_obj.is_null(), "error value should stringify");
+            let c_str = crate::python_interface::PyUnicode_AsUTF8(str_obj);
+            assert!(!c_str.is_null(), "error string should be UTF-8");
+            assert_eq!(
+                std::ffi::CStr::from_ptr(c_str).to_str().unwrap(),
+                "Job ID must be an integer"
+            );
+            crate::python_interface::Py_DecRef(str_obj);
+            crate::python_interface::Py_DecRef(extype);
+            crate::python_interface::Py_DecRef(value);
+            crate::python_interface::Py_DecRef(traceback);
+        }
+    }
+
+    #[test]
     fn get_bundle_db_error_or_abort_returns_some_when_error_object_exists() {
         crate::tests::init_python_global();
         // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
