@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::Cursor;
 use tracing::{debug, trace, warn};
