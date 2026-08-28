@@ -641,10 +641,30 @@ mod tests {
 
     #[test]
     fn test_download_file_success() {
-        let data = download_file("https://example.com").unwrap();
+        use std::io::Write;
+
+        // Serve a tiny HTML page from a local listener so the test is
+        // deterministic and does not depend on external network access.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf).unwrap();
+            let body = b"<html><body>local test server</body></html>";
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(header.as_bytes()).unwrap();
+            stream.write_all(body).unwrap();
+        });
+
+        let data = download_file(&format!("http://127.0.0.1:{port}/")).unwrap();
+        server.join().unwrap();
         assert!(
             !data.is_empty(),
-            "downloaded data from example.com should be non-empty"
+            "downloaded data from local server should be non-empty"
         );
         let html = String::from_utf8_lossy(&data);
         assert!(
