@@ -324,6 +324,25 @@ include!(concat!(env!("OUT_DIR"), "/subhook_bindings.rs"));
 ///
 /// Returns an error instead of panicking if the symbols cannot be found or a
 /// subhook fails to install, so startup can fail cleanly with a logged message.
+unsafe fn install_gil_hook(
+    target: *mut c_void,
+    replacement: *mut c_void,
+    name: &str,
+    install_err: &str,
+) -> Result<(), String> {
+    debug!("Creating subhook for {name}");
+    let hook = subhook_new(target, replacement, subhook_flags_SUBHOOK_64BIT_OFFSET);
+    if hook.is_null() {
+        return Err(format!("Failed to create subhook for {name}"));
+    }
+    let result = subhook_install(hook);
+    if result < 0 {
+        return Err(install_err.to_string());
+    }
+    debug!("{name} hook installed");
+    Ok(())
+}
+
 unsafe fn install_gil_hooks() -> Result<(), String> {
     debug!("Installing GIL hooks via subhook");
     let lib = get_python_lib();
@@ -337,35 +356,18 @@ unsafe fn install_gil_hooks() -> Result<(), String> {
         .get(b"PyGILState_Release")
         .map_err(|e| format!("Failed to look up PyGILState_Release symbol: {e}"))?;
 
-    debug!("Creating subhook for PyGILState_Ensure");
-    let hook_ensure = subhook_new(
+    install_gil_hook(
         *p_ensure,
         myPyGILState_Ensure as *mut c_void,
-        subhook_flags_SUBHOOK_64BIT_OFFSET,
-    );
-    if hook_ensure.is_null() {
-        return Err("Failed to create subhook for PyGILState_Ensure".to_string());
-    }
-    let result = subhook_install(hook_ensure);
-    if result < 0 {
-        return Err("PyGILState_Ensure redirection failed to install".to_string());
-    }
-    debug!("PyGILState_Ensure hook installed");
-
-    debug!("Creating subhook for PyGILState_Release");
-    let hook_release = subhook_new(
+        "PyGILState_Ensure",
+        "PyGILState_Ensure redirection failed to install",
+    )?;
+    install_gil_hook(
         *p_release,
         myPyGILState_Release as *mut c_void,
-        subhook_flags_SUBHOOK_64BIT_OFFSET,
-    );
-    if hook_release.is_null() {
-        return Err("Failed to create subhook for PyGILState_Release".to_string());
-    }
-    let result = subhook_install(hook_release);
-    if result < 0 {
-        return Err("myPyGILState_Release redirection failed to install".to_string());
-    }
-    debug!("PyGILState_Release hook installed");
+        "PyGILState_Release",
+        "myPyGILState_Release redirection failed to install",
+    )?;
 
     info!("GIL hooks installed successfully");
     Ok(())
