@@ -1112,6 +1112,31 @@ mod bundle_interface_conversion_tests {
             Py_DecRef(globals);
         }
     }
+
+    /// `print_last_python_exception` must return silently when no Python
+    /// exception is active (the `extype.is_null()` early-return branch),
+    /// without dereferencing the null `traceback_module` and without leaving
+    /// a stale error set.
+    #[test]
+    fn print_last_python_exception_returns_silently_when_no_exception_active() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state for PyErr_Fetch
+        // and PyErr_Occurred. The null_bundle's traceback_module is never
+        // dereferenced because the early-return branch triggers first.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            PyErr_Clear();
+            let bundle = null_bundle();
+            bundle.print_last_python_exception();
+            assert!(
+                PyErr_Occurred().is_null(),
+                "no error indicator should be left after the no-exception early return"
+            );
+        }
+    }
 }
 
 // ─── set_exception_value_slot tests ──────────────────────────────────────────
