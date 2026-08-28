@@ -8,7 +8,7 @@ use crate::messaging::{
 use crate::websocket::get_websocket_client;
 use bytes::Bytes;
 use futures_util::{Sink, SinkExt, StreamExt};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -374,6 +374,23 @@ async fn lookup_job_working_directory(job_id: i64) -> Result<String, JobLookupEr
     }
 }
 
+/// Resolve a job's working directory: from the database when `job_id != 0`,
+/// otherwise from the bundle manager. Returns the client-facing error when the
+/// database lookup fails.
+async fn resolve_working_directory_for_job(
+    job_id: i64,
+    bundle_hash: &str,
+    details: Value,
+    job_data: &str,
+    context: &str,
+) -> Result<String, JobLookupError> {
+    if job_id != 0 {
+        lookup_job_working_directory(job_id).await
+    } else {
+        Ok(resolve_working_directory(bundle_hash, details, job_data, context).await)
+    }
+}
+
 /// Caller note: this function spawns internally and does not need to be awaited.
 pub fn handle_file_list(mut msg: Message) {
     let sem = FILE_LIST_SEMAPHORE.clone();
@@ -399,23 +416,21 @@ pub fn handle_file_list(mut msg: Message) {
             job_id, uuid, bundle_hash, dir_path, is_recursive
         );
 
-        let working_directory = if job_id != 0 {
-            match lookup_job_working_directory(job_id).await {
-                Ok(working_directory) => working_directory,
-                Err(err) => {
-                    log_job_lookup_error("handle_file_list", job_id, &err);
-                    send_file_list_error(&uuid, &err.client_message());
-                    return;
-                }
+        let working_directory = match resolve_working_directory_for_job(
+            job_id,
+            &bundle_hash,
+            json!(dir_path.clone()),
+            "file_list",
+            "handle_file_list",
+        )
+        .await
+        {
+            Ok(working_directory) => working_directory,
+            Err(err) => {
+                log_job_lookup_error("handle_file_list", job_id, &err);
+                send_file_list_error(&uuid, &err.client_message());
+                return;
             }
-        } else {
-            resolve_working_directory(
-                &bundle_hash,
-                json!(dir_path.clone()),
-                "file_list",
-                "handle_file_list",
-            )
-            .await
         };
 
         let full_path = Path::new(&working_directory).join(dir_path.trim_start_matches('/'));
@@ -688,37 +703,27 @@ async fn run_download_supervisor(
         "handle_file_download: SERVER_READY received, resolving working directory for job_id={}",
         job_id
     );
-    let working_directory = if job_id != 0 {
-        debug!(
-            "handle_file_download: Looking up job {} in database",
-            job_id
-        );
-        match lookup_job_working_directory(job_id).await {
-            Ok(working_directory) => {
-                debug!("handle_file_download: Job found, submitting=false");
-                working_directory
-            }
-            Err(err) => {
-                log_job_lookup_error("handle_file_download", job_id, &err);
-                return fail_download(
-                    &mut ws_sender,
-                    &mut ws_receiver,
-                    &uuid,
-                    Some(&err.client_message()),
-                    format!("job lookup failed: {}", err.client_message()),
-                )
-                .await;
-            }
+    let working_directory = match resolve_working_directory_for_job(
+        job_id,
+        &bundle_hash,
+        json!(file_path.clone()),
+        "file_download",
+        "handle_file_download",
+    )
+    .await
+    {
+        Ok(working_directory) => working_directory,
+        Err(err) => {
+            log_job_lookup_error("handle_file_download", job_id, &err);
+            return fail_download(
+                &mut ws_sender,
+                &mut ws_receiver,
+                &uuid,
+                Some(&err.client_message()),
+                format!("job lookup failed: {}", err.client_message()),
+            )
+            .await;
         }
-    } else {
-        debug!("handle_file_download: Using bundle manager for working_directory");
-        resolve_working_directory(
-            &bundle_hash,
-            json!(file_path.clone()),
-            "file_download",
-            "handle_file_download",
-        )
-        .await
     };
 
     debug!(
@@ -1585,22 +1590,20 @@ fn handle_file_upload_internal(
             return;
         }
 
-        let working_directory = if job_id != 0 {
-            match lookup_job_working_directory(job_id).await {
-                Ok(working_directory) => working_directory,
-                Err(err) => {
-                    log_job_lookup_error("handle_file_upload_internal", job_id, &err);
-                    return fail_upload(&mut ws_sender, &uuid, &err.client_message(), None).await;
-                }
+        let working_directory = match resolve_working_directory_for_job(
+            job_id,
+            &bundle_hash,
+            json!(target_path.clone()),
+            "file_upload",
+            "handle_file_upload_internal",
+        )
+        .await
+        {
+            Ok(working_directory) => working_directory,
+            Err(err) => {
+                log_job_lookup_error("handle_file_upload_internal", job_id, &err);
+                return fail_upload(&mut ws_sender, &uuid, &err.client_message(), None).await;
             }
-        } else {
-            resolve_working_directory(
-                &bundle_hash,
-                json!(target_path.clone()),
-                "file_upload",
-                "handle_file_upload_internal",
-            )
-            .await
         };
 
         target_path = target_path.trim_start_matches('/').to_string();
