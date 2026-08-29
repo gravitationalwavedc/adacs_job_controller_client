@@ -615,6 +615,109 @@ fn test_submit_error_zero() {
 }
 
 #[test_fork::test]
+fn test_submit_error_logs_failed_delete_job() {
+    crate::websocket::reset_websocket_client_for_test();
+    let db_name = Uuid::new_v4().to_string();
+    setup_test(&db_name);
+    let fixture = BundleFixture::new();
+    let bundle_hash = Uuid::new_v4().to_string();
+    BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+    // Write submit script that returns 0 (error case)
+    fixture.write_job_submit_error(&bundle_hash, "0");
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let tx_clone = tx.clone();
+
+    let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
+    mock_ws.expect_is_server_ready().returning(|| true);
+    mock_ws
+        .expect_send_db_request()
+        .times(..)
+        .returning(move |msg| {
+            if msg.id == DB_JOB_DELETE {
+                return Box::pin(async move {
+                    Err(Box::<dyn std::error::Error + Send + Sync>::from("db down"))
+                });
+            }
+            let mut resp =
+                Message::new(crate::messaging::DB_RESPONSE, Priority::Medium, "database");
+            match msg.id {
+                DB_JOB_GET_BY_JOB_ID => {
+                    resp.push_uint(0);
+                }
+                DB_JOB_SAVE => {
+                    let mut m = Message::from_data(msg.get_data().clone());
+                    let id = m.pop_ulong() as i64;
+                    let job_id = m.pop_ulong() as i64;
+                    let scheduler_id = m.pop_ulong() as i64;
+                    let submitting = m.pop_bool();
+                    let submitting_count = m.pop_uint() as i32;
+                    let bundle_hash = m.pop_string();
+                    let working_directory = m.pop_string();
+                    let running = m.pop_bool();
+                    let deleting = m.pop_bool();
+                    let deleted = m.pop_bool();
+                    let saved = job::Model {
+                        id: if id > 0 { id } else { 1 },
+                        job_id: Some(job_id),
+                        scheduler_id: Some(scheduler_id),
+                        submitting,
+                        submitting_count,
+                        bundle_hash,
+                        working_directory,
+                        running,
+                        deleting,
+                        deleted,
+                    };
+                    resp.push_ulong(saved.id as u64);
+                }
+                _ => {
+                    resp.push_ulong(0);
+                }
+            }
+            Box::pin(async move { Ok(resp) })
+        });
+    // 2 messages are queued on the submit-error path
+    mock_ws
+        .expect_queue_message()
+        .times(2)
+        .returning(move |_, _, _| {
+            let _ = tx_clone.send(());
+        });
+    set_websocket_client(Arc::new(mock_ws));
+
+    let job_id = 1234u32;
+    let mut msg_raw = Message::new(SUBMIT_JOB, Priority::Medium, SYSTEM_SOURCE);
+    msg_raw.push_uint(job_id);
+    msg_raw.push_string(&bundle_hash);
+    msg_raw.push_string("test params");
+    let msg = Message::from_data(msg_raw.get_data().clone());
+
+    let logs = capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            handle_job_submit(msg);
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("Timed out waiting for first queue_message");
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("Timed out waiting for second queue_message");
+        });
+    });
+
+    assert!(
+        logs.contains("handle_job_submit: failed to delete job 1234 after submit failure: db down"),
+        "expected delete-job error in logs, got:\n{logs}"
+    );
+}
+
+#[test_fork::test]
 fn test_check_status_job_running_same_status() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
