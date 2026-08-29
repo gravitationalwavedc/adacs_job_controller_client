@@ -407,18 +407,16 @@ impl BundleManager {
             };
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!("run_bundle_json bundle.run returned for {}", function_name);
-                let json_str = match bundle.json_dumps(result_obj) {
-                    Ok(s) => s,
+                let result = match bundle.json_dumps(result_obj) {
+                    Ok(s) => serde_json::from_str(&s).unwrap_or(Value::Null),
                     Err(e) => {
                         error!("run_bundle_json: Failed to serialize result: {}", e);
                         serde_json::json!({
                             "error": format!("Failed to serialize result: {}", e)
                         })
-                        .to_string()
                     }
                 };
                 BundleInterface::dispose_object(result_obj);
-                let result = serde_json::from_str(&json_str).unwrap_or(Value::Null);
                 debug!(
                     "run_bundle_json completed {} - result={}",
                     function_name, result
