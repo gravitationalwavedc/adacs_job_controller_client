@@ -16,9 +16,9 @@ use crate::messaging::{
     DB_BUNDLE_GET_JOB_BY_ID,
 };
 use crate::python_interface::{
-    return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException, PyErr_Occurred,
-    PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef,
-    PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
+    py_module_create2, return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException,
+    PyErr_Occurred, PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong,
+    PyMethodDef, PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyObject, PyObject_Head,
     PyTuple_GetItem, Py_DecRef, Py_IncRef, Py_XDECREF, METH_VARARGS, PYTHON_API_VERSION,
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
@@ -593,7 +593,7 @@ static mut BUNDLE_DB_MODULE: PyModuleDef = PyModuleDef {
 pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
     BUNDLE_DB_MODULE.m_methods = (&raw mut BUNDLE_DB_METHODS).cast::<PyMethodDef>();
 
-    let module = PyModule_Create2(&raw mut BUNDLE_DB_MODULE, PYTHON_API_VERSION);
+    let module = py_module_create2(&raw mut BUNDLE_DB_MODULE, PYTHON_API_VERSION);
     if module.is_null() {
         return ptr::null_mut();
     }
@@ -628,6 +628,7 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
 mod tests {
     use super::*;
     use crate::messaging::DB_RESPONSE;
+    use crate::python_interface::{set_py_module_create2_override, PyModuleCreate2Fn};
 
     #[test]
     fn err_cstring_preserves_well_formed_message() {
@@ -1012,5 +1013,46 @@ mod tests {
             );
             crate::python_interface::PyErr_Clear();
         }
+    }
+
+    // ─── PyModule_Create2 failure-branch test (gardener iter-0445) ──────────
+    // The `module.is_null()` branch in `PyInit_bundledb` is unreachable through
+    // the public API, so the test-only `py_module_create2` override seam forces
+    // a NULL return to cover it.
+
+    struct PyModuleCreate2OverrideGuard(Option<PyModuleCreate2Fn>);
+
+    impl PyModuleCreate2OverrideGuard {
+        fn install(f: PyModuleCreate2Fn) -> Self {
+            Self(set_py_module_create2_override(Some(f)))
+        }
+    }
+
+    impl Drop for PyModuleCreate2OverrideGuard {
+        fn drop(&mut self) {
+            set_py_module_create2_override(self.0);
+        }
+    }
+
+    // SAFETY: Test-only; the arguments are never dereferenced.
+    unsafe fn fail_py_module_create2(
+        _module_def: *mut PyModuleDef,
+        _apiver: std::os::raw::c_int,
+    ) -> *mut PyObject {
+        ptr::null_mut()
+    }
+
+    #[test]
+    fn py_init_bundledb_returns_null_when_module_create_fails() {
+        crate::tests::init_python_global();
+        let _override = PyModuleCreate2OverrideGuard::install(fail_py_module_create2);
+        let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held; the override returns NULL without
+        // touching the Python C-API, so no interpreter state is required.
+        let result = unsafe { PyInit_bundledb() };
+        assert!(
+            result.is_null(),
+            "PyInit_bundledb must return NULL when PyModule_Create2 fails"
+        );
     }
 }

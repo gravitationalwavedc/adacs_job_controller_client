@@ -267,6 +267,34 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyModuleCreate2Fn = unsafe fn(*mut PyModuleDef, c_int) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_MODULE_CREATE2_OVERRIDE: Mutex<Option<PyModuleCreate2Fn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_module_create2`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_module_create2_override(f: Option<PyModuleCreate2Fn>) -> Option<PyModuleCreate2Fn> {
+    let mut guard = PY_MODULE_CREATE2_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyModule_Create2` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyModule_Create2`: caller holds `PYTHON_MUTEX` and the
+/// GIL; `module_def` is a valid, fully-initialised `PyModuleDef` and `apiver` is
+/// `PYTHON_API_VERSION`.
+pub unsafe fn py_module_create2(module_def: *mut PyModuleDef, apiver: c_int) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_MODULE_CREATE2_OVERRIDE.lock() {
+        return f(module_def, apiver);
+    }
+    PyModule_Create2(module_def, apiver)
+}
+
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     PY_NONE_STRUCT

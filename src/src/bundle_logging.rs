@@ -8,8 +8,8 @@
 //! We use thread-local storage for safety.
 
 use crate::python_interface::{
-    my_py_true_struct, return_py_none, PyErr_Clear, PyMethodDef, PyModuleDef, PyModuleDef_Base,
-    PyModule_Create2, PyObject, PyObject_Head, PyTuple_GetItem, PyUnicode_AsUTF8, METH_VARARGS,
+    my_py_true_struct, py_module_create2, return_py_none, PyErr_Clear, PyMethodDef, PyModuleDef,
+    PyModuleDef_Base, PyObject, PyObject_Head, PyTuple_GetItem, PyUnicode_AsUTF8, METH_VARARGS,
     PYTHON_API_VERSION,
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
@@ -137,9 +137,58 @@ static mut BUNDLE_LOGGING_MODULE: PyModuleDef = PyModuleDef {
 pub unsafe extern "C" fn PyInit_bundlelogging() -> *mut PyObject {
     BUNDLE_LOGGING_MODULE.m_methods = (&raw mut BUNDLE_LOGGING_METHODS).cast::<PyMethodDef>();
 
-    let module = PyModule_Create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION);
+    let module = py_module_create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION);
     if module.is_null() {
         return std::ptr::null_mut();
     }
     module
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::python_interface::{
+        set_py_module_create2_override, PyModuleCreate2Fn, PYTHON_MUTEX,
+    };
+
+    // ─── PyModule_Create2 failure-branch test (gardener iter-0445) ──────────
+    // The `module.is_null()` branch in `PyInit_bundlelogging` is unreachable
+    // through the public API, so the test-only `py_module_create2` override
+    // seam forces a NULL return to cover it.
+
+    struct PyModuleCreate2OverrideGuard(Option<PyModuleCreate2Fn>);
+
+    impl PyModuleCreate2OverrideGuard {
+        fn install(f: PyModuleCreate2Fn) -> Self {
+            Self(set_py_module_create2_override(Some(f)))
+        }
+    }
+
+    impl Drop for PyModuleCreate2OverrideGuard {
+        fn drop(&mut self) {
+            set_py_module_create2_override(self.0);
+        }
+    }
+
+    // SAFETY: Test-only; the arguments are never dereferenced.
+    unsafe fn fail_py_module_create2(
+        _module_def: *mut PyModuleDef,
+        _apiver: std::os::raw::c_int,
+    ) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
+
+    #[test]
+    fn py_init_bundlelogging_returns_null_when_module_create_fails() {
+        crate::tests::init_python_global();
+        let _override = PyModuleCreate2OverrideGuard::install(fail_py_module_create2);
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held; the override returns NULL without
+        // touching the Python C-API, so no interpreter state is required.
+        let result = unsafe { PyInit_bundlelogging() };
+        assert!(
+            result.is_null(),
+            "PyInit_bundlelogging must return NULL when PyModule_Create2 fails"
+        );
+    }
 }
