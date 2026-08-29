@@ -2005,6 +2005,60 @@ fn test_check_status_logs_failed_archive_on_complete() {
 }
 
 #[test_fork::test]
+fn test_check_status_logs_failed_status_save() {
+    crate::websocket::reset_websocket_client_for_test();
+    let db_name = Uuid::new_v4().to_string();
+    let (fixture, bundle_hash, job, _working_dir, _state) = setup_check_status_test(&db_name);
+
+    // Status script with a RUNNING status so the per-what save path is hit.
+    fixture.write_job_status(
+        &bundle_hash,
+        r#"{"status": [{"info": "Some info", "what": "test_what", "status": 50}], "complete": false}"#,
+    );
+
+    let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
+    mock_ws.expect_is_server_ready().returning(|| true);
+    mock_ws.expect_send_db_request().times(..).returning(|msg| {
+        let mut resp = Message::new(crate::messaging::DB_RESPONSE, Priority::Medium, "database");
+        match msg.id {
+            DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT | DB_JOBSTATUS_GET_BY_JOB_ID => {
+                resp.push_uint(0);
+            }
+            DB_JOBSTATUS_SAVE => {
+                // saved_id = 0 -> save_status returns Err
+                resp.push_ulong(0);
+            }
+            _ => {
+                resp.push_ulong(0);
+            }
+        }
+        Box::pin(async move { Ok(resp) })
+    });
+    // The UPDATE_JOB notification is still queued even though the DB save failed.
+    mock_ws
+        .expect_queue_message()
+        .times(1)
+        .returning(|_, _, _| {});
+    set_websocket_client(Arc::new(mock_ws));
+
+    let logs = capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(check_job_status(job.clone(), true));
+    });
+
+    assert!(
+        logs.contains(
+            "Failed to save status for job 1234: Database operation failed to save job status"
+        ),
+        "expected status-save error in logs, got:\n{logs}"
+    );
+}
+
+#[test_fork::test]
 fn test_check_status_logs_failed_status_read() {
     crate::websocket::reset_websocket_client_for_test();
     let db_name = Uuid::new_v4().to_string();
