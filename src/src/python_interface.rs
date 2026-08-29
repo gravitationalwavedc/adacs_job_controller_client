@@ -267,6 +267,40 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyErrNewExceptionFn =
+    unsafe fn(*const c_char, *mut PyObject, *mut PyObject) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_ERR_NEW_EXCEPTION_OVERRIDE: Mutex<Option<PyErrNewExceptionFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_err_new_exception`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_err_new_exception_override(
+    f: Option<PyErrNewExceptionFn>,
+) -> Option<PyErrNewExceptionFn> {
+    let mut guard = PY_ERR_NEW_EXCEPTION_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyErr_NewException` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyErr_NewException`: caller holds `PYTHON_MUTEX` and
+/// the GIL; `name` is a valid NUL-terminated C string.
+pub unsafe fn py_err_new_exception(
+    name: *const c_char,
+    base: *mut PyObject,
+    dict: *mut PyObject,
+) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_ERR_NEW_EXCEPTION_OVERRIDE.lock() {
+        return f(name, base, dict);
+    }
+    PyErr_NewException(name, base, dict)
+}
+
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     PY_NONE_STRUCT
