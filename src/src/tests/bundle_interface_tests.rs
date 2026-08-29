@@ -13,17 +13,18 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_object_get_attr_string_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_GetAttrString, PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn,
+    PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input,
+    Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1485,6 +1486,83 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
     assert!(
         logs.contains("Error setting exception value in args tuple"),
         "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
+    );
+}
+
+// ─── PyObject_GetAttrString failure-branch tests ─────────────────────────────
+//
+// The two `py_object_get_attr_string` failure branches in
+// `print_last_python_exception` (the `format_tb` / `format_exception_only`
+// lookups) are unreachable through the public API; the test-only FFI override
+// seam forces each branch.
+
+/// The traceback attribute name the test-only override should fail.
+static FAIL_ATTR: Mutex<Option<&'static [u8]>> = Mutex::new(None);
+
+// SAFETY: Test-only; `obj` is a live object, `name` is a null-terminated C string.
+unsafe fn fail_named_attr_lookup(obj: *mut PyObject, name: *const c_char) -> *mut PyObject {
+    if *FAIL_ATTR.lock().unwrap() == Some(CStr::from_ptr(name).to_bytes()) {
+        std::ptr::null_mut()
+    } else {
+        PyObject_GetAttrString(obj, name)
+    }
+}
+
+/// Raise a `RuntimeError` with a traceback, then run
+/// `print_last_python_exception` and return the captured logs.
+fn run_exception_printer(bundle: &BundleInterface) -> String {
+    capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "PyDict_New should succeed");
+            PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
+            let code = c"def f():\n    raise RuntimeError('boom')\nf()";
+            let _result = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_file_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            Py_DecRef(globals);
+            bundle.print_last_python_exception();
+        }
+    })
+}
+
+/// DIRECT UNIT TEST: forces both `py_object_get_attr_string` failure branches.
+/// 1. `format_tb` fails → frames skipped, header still produced.
+/// 2. `format_exception_only` fails → frames still printed, fallback header.
+#[test]
+fn test_print_last_python_exception_handles_attr_lookup_failures() {
+    let bundle = load_bundle_for_exception_printer();
+
+    *FAIL_ATTR.lock().unwrap() = Some(b"format_tb");
+    let prev = set_py_object_get_attr_string_override(Some(fail_named_attr_lookup));
+    let logs = run_exception_printer(&bundle);
+    set_py_object_get_attr_string_override(prev);
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected header, got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("Traceback (most recent call last):"),
+        "did not expect frames, got:\n{logs}"
+    );
+
+    *FAIL_ATTR.lock().unwrap() = Some(b"format_exception_only");
+    let prev = set_py_object_get_attr_string_override(Some(fail_named_attr_lookup));
+    let logs = run_exception_printer(&bundle);
+    set_py_object_get_attr_string_override(prev);
+    assert!(
+        logs.contains("Traceback (most recent call last):"),
+        "expected frames, got:\n{logs}"
+    );
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected fallback header, got:\n{logs}"
     );
 }
 

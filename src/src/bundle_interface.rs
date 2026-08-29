@@ -6,14 +6,14 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
-    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
-    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_object_get_attr_string,
+    py_tuple_set_item, MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString,
+    PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins,
+    PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule, PyIter_Next, PyList_Append,
+    PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject, PyObject_GetAttrString,
+    PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject, PyThreadState,
+    PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef,
+    Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -625,7 +625,7 @@ impl BundleInterface {
         // valid (means "no frames"); we just skip the call entirely.
         if !traceback.is_null() {
             let tb_func =
-                PyObject_GetAttrString(self.inner.traceback_module, c"format_tb".as_ptr());
+                py_object_get_attr_string(self.inner.traceback_module, c"format_tb".as_ptr());
             if tb_func.is_null() {
                 // `tb_args` was never created, so `traceback` was never stolen
                 // into a tuple; release the owned ref from `PyErr_Fetch`.
@@ -678,7 +678,7 @@ impl BundleInterface {
         }
 
         // Step 3: format the exception header (type + value).
-        let eo_func = PyObject_GetAttrString(
+        let eo_func = py_object_get_attr_string(
             self.inner.traceback_module,
             c"format_exception_only".as_ptr(),
         );

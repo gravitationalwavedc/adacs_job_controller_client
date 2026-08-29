@@ -267,6 +267,36 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyObjectGetAttrStringFn = unsafe fn(*mut PyObject, *const c_char) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_OBJECT_GET_ATTR_STRING_OVERRIDE: Mutex<Option<PyObjectGetAttrStringFn>> =
+    Mutex::new(None);
+
+/// Test-only: install an override for `py_object_get_attr_string`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_object_get_attr_string_override(
+    f: Option<PyObjectGetAttrStringFn>,
+) -> Option<PyObjectGetAttrStringFn> {
+    let mut guard = PY_OBJECT_GET_ATTR_STRING_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyObject_GetAttrString` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyObject_GetAttrString`: caller holds `PYTHON_MUTEX`
+/// and the GIL; `obj` is a valid object, `name` is a null-terminated C string.
+pub unsafe fn py_object_get_attr_string(obj: *mut PyObject, name: *const c_char) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_OBJECT_GET_ATTR_STRING_OVERRIDE.lock() {
+        return f(obj, name);
+    }
+    PyObject_GetAttrString(obj, name)
+}
+
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     PY_NONE_STRUCT
