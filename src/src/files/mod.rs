@@ -3366,6 +3366,21 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn transfer_state_preserves_primary_error_over_later_non_primary_result() {
+        let mut state = TransferState::new(8);
+        state.set_authoritative(AuthoritativeResult::PrimaryError(
+            "chunk send failed".to_string(),
+        ));
+        // A later non-primary result must not overwrite the already-selected
+        // primary error (the guard in set_authoritative short-circuits here).
+        state.set_authoritative(AuthoritativeResult::CleanEof);
+        assert!(matches!(
+            state.authoritative(),
+            AuthoritativeResult::PrimaryError(_)
+        ));
+    }
+
     // ---------------------------------------------------------------
     // Reading-phase branch coverage requested during review of the
     // TransferContext refactor. Each test drives `run_reading_phase` /
