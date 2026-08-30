@@ -267,6 +267,42 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+// ─── Test-only PyThreadState_New override seam ───────────────────────────────
+// `PyThreadState_New` can return NULL when the interpreter cannot allocate a new
+// thread state. `ThreadScope::new` defends against this, but the branch is
+// unreachable through the public API in practice. This seam lets tests force the
+// failure without changing production behavior. Tests run serially
+// (`--test-threads=1`), so the global override cannot race across tests.
+
+#[cfg(test)]
+pub type PyThreadStateNewFn = unsafe fn(*mut PyInterpreterState) -> *mut PyThreadState;
+
+#[cfg(test)]
+static PY_THREAD_STATE_NEW_OVERRIDE: Mutex<Option<PyThreadStateNewFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_thread_state_new`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_thread_state_new_override(
+    f: Option<PyThreadStateNewFn>,
+) -> Option<PyThreadStateNewFn> {
+    let mut guard = PY_THREAD_STATE_NEW_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyThreadState_New` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyThreadState_New`: caller holds `PYTHON_MUTEX` and the
+/// GIL; `interp` is a valid interpreter state pointer.
+pub unsafe fn py_thread_state_new(interp: *mut PyInterpreterState) -> *mut PyThreadState {
+    #[cfg(test)]
+    if let Some(f) = *PY_THREAD_STATE_NEW_OVERRIDE.lock() {
+        return f(interp);
+    }
+    PyThreadState_New(interp)
+}
+
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
 pub unsafe fn my_py_none_struct() -> *mut PyObject {
     PY_NONE_STRUCT
@@ -516,7 +552,7 @@ impl ThreadScope {
     /// This is the equivalent of C++ `SubInterpreter::ThreadScope`.
     pub unsafe fn new(interp: *mut PyInterpreterState) -> Result<Self, String> {
         trace!("ThreadScope::new - creating for interpreter: {:?}", interp);
-        let ts = PyThreadState_New(interp);
+        let ts = py_thread_state_new(interp);
         if ts.is_null() {
             error!("ThreadScope::new - PyThreadState_New failed");
             return Err("PyThreadState_New failed".to_string());
@@ -592,5 +628,36 @@ mod tests {
             dlopen_error_detail(msg.as_ptr()),
             "cannot open shared object file"
         );
+    }
+
+    /// DIRECT UNIT TEST for the `ts.is_null()` failure branch of
+    /// `ThreadScope::new`. `PyThreadState_New` returning NULL is unreachable
+    /// through the public API, so the test-only `py_thread_state_new` override
+    /// seam forces it. The failure path must return `Err` before
+    /// `PyEval_RestoreThread`, so no thread state is created or made current
+    /// (no thread-state side effects).
+    #[test]
+    fn thread_scope_new_returns_err_when_py_thread_state_new_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held; the main interpreter pointer is read
+        // from the saved main thread state and the override returns NULL so no
+        // real thread state is created or made current.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let previous = set_py_thread_state_new_override(Some(force_null_thread_state));
+            let result = ThreadScope::new(interp);
+            set_py_thread_state_new_override(previous);
+            match result {
+                Err(e) => assert_eq!(e, "PyThreadState_New failed"),
+                Ok(_) => panic!("ThreadScope::new should fail when PyThreadState_New returns NULL"),
+            }
+        }
+    }
+
+    // SAFETY: Test-only; returns NULL to force the `ThreadScope::new` failure
+    // branch without touching the real interpreter.
+    unsafe fn force_null_thread_state(_interp: *mut PyInterpreterState) -> *mut PyThreadState {
+        std::ptr::null_mut()
     }
 }
