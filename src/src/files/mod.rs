@@ -111,19 +111,22 @@ static TEST_ZERO_BYTE_EOF_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>
     LazyLock::new(|| Mutex::new(None));
 
 #[cfg(test)]
-pub(crate) fn set_final_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
-    let mut guard = TEST_FINAL_SEND_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+fn set_barrier_for_test(
+    barrier_cell: &Mutex<Option<Arc<LifecycleBarrier>>>,
+    barrier: Option<Arc<LifecycleBarrier>>,
+) {
+    let mut guard = barrier_cell.lock().unwrap_or_else(PoisonError::into_inner);
     *guard = barrier;
 }
 
 #[cfg(test)]
+pub(crate) fn set_final_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    set_barrier_for_test(&TEST_FINAL_SEND_BARRIER, barrier);
+}
+
+#[cfg(test)]
 pub(crate) fn set_zero_byte_eof_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
-    let mut guard = TEST_ZERO_BYTE_EOF_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    *guard = barrier;
+    set_barrier_for_test(&TEST_ZERO_BYTE_EOF_BARRIER, barrier);
 }
 
 #[cfg(test)]
@@ -158,10 +161,7 @@ static TEST_PRE_CLOSE_SEND_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>
 
 #[cfg(test)]
 pub(crate) fn set_pre_close_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
-    let mut guard = TEST_PRE_CLOSE_SEND_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    *guard = barrier;
+    set_barrier_for_test(&TEST_PRE_CLOSE_SEND_BARRIER, barrier);
 }
 
 #[cfg(test)]
@@ -186,10 +186,7 @@ static TEST_PRE_DETAILS_SEND_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier
 
 #[cfg(test)]
 pub(crate) fn set_pre_details_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
-    let mut guard = TEST_PRE_DETAILS_SEND_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    *guard = barrier;
+    set_barrier_for_test(&TEST_PRE_DETAILS_SEND_BARRIER, barrier);
 }
 
 #[cfg(test)]
