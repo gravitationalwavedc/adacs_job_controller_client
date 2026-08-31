@@ -2619,6 +2619,116 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn handle_incoming_event_pause_sets_flag_and_continues() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let step = handle_incoming_event(
+            Some(Ok(pause_message())),
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(matches!(step, LoopStep::Continue), "Pause must continue");
+        assert!(
+            is_paused.load(Ordering::Acquire),
+            "Pause must set the paused flag"
+        );
+    }
+
+    #[test]
+    fn handle_incoming_event_resume_clears_flag_and_notifies() {
+        use futures_util::FutureExt;
+        let is_paused = Arc::new(AtomicBool::new(true));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let notified = resume_notify.notified();
+        // Pin the waiter so it can be polled after the event is handled.
+        let mut notified = Box::pin(notified);
+        let step = handle_incoming_event(
+            Some(Ok(resume_message())),
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(matches!(step, LoopStep::Continue), "Resume must continue");
+        assert!(
+            !is_paused.load(Ordering::Acquire),
+            "Resume must clear the paused flag"
+        );
+        assert!(
+            notified.as_mut().now_or_never().is_some(),
+            "Resume must notify the resume waiter"
+        );
+    }
+
+    #[test]
+    fn handle_incoming_event_close_finishes_with_peer_close() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let step = handle_incoming_event(
+            Some(Ok(WsMessage::Close(None))),
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(matches!(
+            step,
+            LoopStep::Finish(AuthoritativeResult::PeerTerminal(msg)) if msg == "peer Close"
+        ));
+    }
+
+    #[test]
+    fn handle_incoming_event_eof_finishes_with_peer_eof() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let step = handle_incoming_event(None, &is_paused, &resume_notify, &mut state);
+        assert!(matches!(
+            step,
+            LoopStep::Finish(AuthoritativeResult::PeerTerminal(msg)) if msg == "peer EOF"
+        ));
+    }
+
+    #[test]
+    fn handle_incoming_event_error_finishes_with_peer_receive_error() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let step = handle_incoming_event(
+            Some(Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed)),
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(matches!(
+            step,
+            LoopStep::Finish(AuthoritativeResult::PeerTerminal(msg))
+                if msg == "peer receive error: Connection closed normally"
+        ));
+    }
+
+    #[test]
+    fn handle_incoming_event_ignored_continues() {
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+        let ignored = Message::new(FILE_CHUNK, Priority::Lowest, "server");
+        let step = handle_incoming_event(
+            Some(Ok(WsMessage::Binary(ignored.get_data().clone().into()))),
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(matches!(step, LoopStep::Continue), "Ignored must continue");
+        assert!(
+            !is_paused.load(Ordering::Acquire),
+            "Ignored must not change pause state"
+        );
+    }
+
     struct TestSink {
         sent: Vec<WsMessage>,
         fail_next: bool,
