@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 use crate::bundle_logging::{get_last_log_message, write_log};
 use crate::bundle_manager::BundleManager;
 use crate::python_interface::{
@@ -31,7 +30,7 @@ fn test_simple_stdout() {
     let last_log = get_last_log_message().expect("No log message captured");
     assert_eq!(
         last_log.0,
-        format!("Bundle [{}]: testing stdout", bundle_hash)
+        format!("Bundle [{bundle_hash}]: testing stdout")
     );
     assert!(last_log.1); // is_stdout
 }
@@ -54,10 +53,7 @@ fn test_complex_stdout() {
     let last_log = get_last_log_message().expect("No log message captured");
     assert_eq!(
         last_log.0,
-        format!(
-            "Bundle [{}]: testing stdout 56 {{'a': 'b'}} [45, 'a', 9] (123, 321) <class 'tuple'>",
-            bundle_hash
-        )
+        format!("Bundle [{bundle_hash}]: testing stdout 56 {{'a': 'b'}} [45, 'a', 9] (123, 321) <class 'tuple'>")
     );
     assert!(last_log.1); // is_stdout
 }
@@ -79,7 +75,7 @@ fn test_simple_stderr() {
     let last_log = get_last_log_message().expect("No log message captured");
     assert_eq!(
         last_log.0,
-        format!("Bundle [{}]: testing stderr", bundle_hash)
+        format!("Bundle [{bundle_hash}]: testing stderr")
     );
     assert!(!last_log.1); // is_stdout is false
 }
@@ -102,10 +98,7 @@ fn test_complex_stderr() {
     let last_log = get_last_log_message().expect("No log message captured");
     assert_eq!(
         last_log.0,
-        format!(
-            "Bundle [{}]: testing stderr 56 {{'a': 'b'}} [45, 'a', 9] (123, 321) <class 'tuple'>",
-            bundle_hash
-        )
+        format!("Bundle [{bundle_hash}]: testing stderr 56 {{'a': 'b'}} [45, 'a', 9] (123, 321) <class 'tuple'>")
     );
     assert!(!last_log.1); // is_stdout is false
 }
@@ -127,7 +120,7 @@ fn test_stdout_during_load() {
     let last_log = get_last_log_message().expect("No log message captured");
     assert_eq!(
         last_log.0,
-        format!("Bundle [{}]: testing stdout load", bundle_hash)
+        format!("Bundle [{bundle_hash}]: testing stdout load")
     );
     assert!(last_log.1); // is_stdout
 }
@@ -149,7 +142,7 @@ fn test_stderr_during_load() {
     let last_log = get_last_log_message().expect("No log message captured");
     assert_eq!(
         last_log.0,
-        format!("Bundle [{}]: testing stdout load", bundle_hash)
+        format!("Bundle [{bundle_hash}]: testing stdout load")
     );
     assert!(!last_log.1); // is_stdout is false
 }
