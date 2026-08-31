@@ -1133,6 +1133,28 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     #[serial_test::serial]
+    async fn test_run_connection_returns_error_on_invalid_token() {
+        let client = TungsteniteWebsocketClient::new();
+        let result = client
+            .clone()
+            .run_connection(
+                "ws://127.0.0.1:1/ws/".to_string(),
+                "Bearer tok\nen".to_string(),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "run_connection should return Err when the token is invalid in an HTTP header"
+        );
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Invalid token",
+            "the token parse failure should surface as the Invalid token error"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
     async fn test_supervise_connections_missing_config_marks_closed_and_notifies_shutdown() {
         let client = TungsteniteWebsocketClient::new();
         assert!(
