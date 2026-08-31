@@ -1962,6 +1962,151 @@ fn test_check_status_job_running_force_notification_duplicates() {
 }
 
 #[test_fork::test]
+fn test_check_status_logs_failed_duplicate_status_delete() {
+    crate::websocket::reset_websocket_client_for_test();
+    let db_name = Uuid::new_v4().to_string();
+    let (fixture, bundle_hash, job, _working_dir, _state) = setup_check_status_test(&db_name);
+
+    // Status script with a RUNNING status so the per-what read is hit.
+    fixture.write_job_status(
+        &bundle_hash,
+        r#"{"status": [{"info": "Some info", "what": "test_what", "status": 50}], "complete": false}"#,
+    );
+
+    // Two duplicate statuses for the same what -> the delete path is hit.
+    let state = Arc::new(std::sync::Mutex::new(MockDbState::default()));
+    {
+        let mut s = state.lock().unwrap();
+        s.statuses.insert(
+            1,
+            jobstatus::Model {
+                id: 1,
+                job_id: job.id,
+                what: "test_what".to_string(),
+                state: (RUNNING - 10) as i32,
+            },
+        );
+        s.statuses.insert(
+            2,
+            jobstatus::Model {
+                id: 2,
+                job_id: job.id,
+                what: "test_what".to_string(),
+                state: (RUNNING - 10) as i32,
+            },
+        );
+        s.next_status_id = 3;
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let tx_clone = tx.clone();
+    let state_clone = state.clone();
+    let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
+    mock_ws.expect_is_server_ready().returning(|| true);
+    mock_ws
+        .expect_send_db_request()
+        .times(..)
+        .returning(move |msg| {
+            if msg.id == DB_JOBSTATUS_DELETE_BY_ID_LIST {
+                return Box::pin(async move {
+                    Err(Box::<dyn std::error::Error + Send + Sync>::from("db down"))
+                });
+            }
+            let mut resp =
+                Message::new(crate::messaging::DB_RESPONSE, Priority::Medium, "database");
+            match msg.id {
+                DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT => {
+                    resp.push_uint(2);
+                    resp.push_ulong(1);
+                    resp.push_ulong(job.id as u64);
+                    resp.push_string("test_what");
+                    resp.push_uint(RUNNING - 10);
+                    resp.push_ulong(2);
+                    resp.push_ulong(job.id as u64);
+                    resp.push_string("test_what");
+                    resp.push_uint(RUNNING - 10);
+                }
+                DB_JOBSTATUS_SAVE => {
+                    let mut m = Message::from_data(msg.get_data().clone());
+                    let id = m.pop_ulong() as i64;
+                    let job_id = m.pop_ulong() as i64;
+                    let what = m.pop_string();
+                    let state_val = m.pop_uint() as i32;
+                    let mut s = state_clone.lock().unwrap();
+                    let saved_id = if id > 0 { id } else { s.next_status_id };
+                    if id > 0 {
+                        s.next_status_id = std::cmp::max(s.next_status_id, id + 1);
+                    } else {
+                        s.next_status_id += 1;
+                    }
+                    s.statuses.insert(
+                        saved_id,
+                        jobstatus::Model {
+                            id: saved_id,
+                            job_id,
+                            state: state_val,
+                            what,
+                        },
+                    );
+                    resp.push_ulong(saved_id as u64);
+                }
+                DB_JOBSTATUS_GET_BY_JOB_ID => {
+                    resp.push_uint(0);
+                }
+                _ => {
+                    resp.push_ulong(0);
+                }
+            }
+            Box::pin(async move { Ok(resp) })
+        });
+    // The update is still queued even though the duplicate cleanup failed.
+    mock_ws
+        .expect_queue_message()
+        .times(1)
+        .returning(move |_, data, _| {
+            let _ = tx_clone.send(data);
+        });
+    set_websocket_client(Arc::new(mock_ws));
+
+    let logs = capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(check_job_status(job.clone(), true));
+    });
+
+    assert!(
+        logs.contains("check_job_status: failed to delete duplicate statuses for job_id=1234"),
+        "expected duplicate-delete error in logs, got:\n{logs}"
+    );
+
+    // The failed delete does not suppress the re-save: a fresh RUNNING status exists.
+    let v_status: Vec<_> = state
+        .lock()
+        .unwrap()
+        .statuses
+        .values()
+        .filter(|s| s.job_id == job.id)
+        .cloned()
+        .collect();
+    assert_eq!(v_status.len(), 3);
+    assert!(v_status
+        .iter()
+        .any(|s| s.what == "test_what" && s.state == RUNNING as i32));
+
+    // The UPDATE_JOB notification is still queued.
+    let msg_data = rx.try_recv().expect("expected queued UPDATE_JOB message");
+    let mut msg = Message::from_data(msg_data);
+    assert_eq!(msg.id, UPDATE_JOB);
+    assert_eq!(msg.pop_uint(), 1234);
+    assert_eq!(msg.pop_string(), "test_what");
+    assert_eq!(msg.pop_uint(), RUNNING);
+    assert_eq!(msg.pop_string(), "Some info");
+}
+
+#[test_fork::test]
 fn test_check_status_job_running_force_notification() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
