@@ -132,19 +132,8 @@ pub(crate) fn set_zero_byte_eof_barrier_for_test(barrier: Option<Arc<LifecycleBa
 }
 
 #[cfg(test)]
-async fn arrive_final_send_barrier() {
-    let barrier = TEST_FINAL_SEND_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone();
-    if let Some(b) = barrier {
-        b.arrive_and_wait().await;
-    }
-}
-
-#[cfg(test)]
-async fn arrive_zero_byte_eof_barrier() {
-    let barrier = TEST_ZERO_BYTE_EOF_BARRIER
+async fn arrive_barrier(barrier_slot: &Mutex<Option<Arc<LifecycleBarrier>>>) {
+    let barrier = barrier_slot
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
@@ -169,17 +158,6 @@ pub(crate) fn set_pre_close_send_barrier_for_test(barrier: Option<Arc<LifecycleB
     *guard = barrier;
 }
 
-#[cfg(test)]
-async fn arrive_pre_close_send_barrier() {
-    let barrier = TEST_PRE_CLOSE_SEND_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone();
-    if let Some(b) = barrier {
-        b.arrive_and_wait().await;
-    }
-}
-
 /// Test-only seam that parks the supervisor immediately before the
 /// `FILE_DOWNLOAD_DETAILS` send. Lets a test reset the peer transport so the
 /// details send deterministically fails, exercising the pre-transfer
@@ -195,17 +173,6 @@ pub(crate) fn set_pre_details_send_barrier_for_test(barrier: Option<Arc<Lifecycl
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     *guard = barrier;
-}
-
-#[cfg(test)]
-async fn arrive_pre_details_send_barrier() {
-    let barrier = TEST_PRE_DETAILS_SEND_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone();
-    if let Some(b) = barrier {
-        b.arrive_and_wait().await;
-    }
 }
 
 /// Test-only seam that exposes the supervisor's authoritative transfer result
@@ -812,7 +779,7 @@ async fn run_download_supervisor(
     // transport and make the details send deterministically fail. No-op when
     // no barrier is installed.
     #[cfg(test)]
-    arrive_pre_details_send_barrier().await;
+    arrive_barrier(&TEST_PRE_DETAILS_SEND_BARRIER).await;
     if let Err(e) = ws_sender
         .send(WsMessage::Binary(details_msg.get_data().clone().into()))
         .await
@@ -1017,7 +984,7 @@ async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferSt
                     // peer terminal events. The seam is a no-op when no
                     // barrier is installed.
                     #[cfg(test)]
-                    arrive_zero_byte_eof_barrier().await;
+                    arrive_barrier(&TEST_ZERO_BYTE_EOF_BARRIER).await;
                     let expected = state.expected_size();
                     let transmitted = state.total_bytes();
                     if transmitted == expected && !state.authoritative().is_primary() {
@@ -1157,7 +1124,7 @@ async fn run_sending_phase(
                     // seam is a no-op when no barrier is set.
                     #[cfg(test)]
                     if is_final {
-                        arrive_final_send_barrier().await;
+                        arrive_barrier(&TEST_FINAL_SEND_BARRIER).await;
                     }
                     LoopStep::SetState(ChunkState::Reading)
                 }
@@ -1288,7 +1255,7 @@ async fn cleanup_download(
     // transport and make the Close send deterministically fail after a
     // successful transfer. No-op when no barrier is installed.
     #[cfg(test)]
-    arrive_pre_close_send_barrier().await;
+    arrive_barrier(&TEST_PRE_CLOSE_SEND_BARRIER).await;
 
     // Preserve the primary transfer result — cleanup errors cannot replace it.
     let primary_error = match primary {
