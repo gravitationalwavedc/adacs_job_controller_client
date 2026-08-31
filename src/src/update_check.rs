@@ -41,7 +41,7 @@ fn get_update_path(executable_path: &Path) -> PathBuf {
 
 /// Computes the delay in seconds for retry attempt N (1-indexed using exponential backoff).
 fn retry_delay_secs(attempt: u32) -> u64 {
-    INITIAL_RETRY_DELAY_SECS * 2u64.pow(attempt - 1)
+    INITIAL_RETRY_DELAY_SECS * 2u64.pow(attempt.saturating_sub(1))
 }
 
 /// Parse a GitHub releases API JSON response and return the download URL
@@ -314,6 +314,7 @@ mod tests {
 
     #[test]
     fn test_retry_delay_secs() {
+        assert_eq!(retry_delay_secs(0), 1);
         assert_eq!(retry_delay_secs(1), 1);
         assert_eq!(retry_delay_secs(2), 2);
         assert_eq!(retry_delay_secs(3), 4);
