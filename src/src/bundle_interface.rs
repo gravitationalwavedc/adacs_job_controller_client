@@ -1137,6 +1137,32 @@ mod bundle_interface_conversion_tests {
             );
         }
     }
+
+    /// `extract_type_name` must return `"unknown"` when the `__name__`
+    /// attribute lookup itself fails (e.g. `extype` is not a type), swallowing
+    /// the raised `AttributeError` so no stale error is left for the caller.
+    #[test]
+    fn extract_type_name_returns_unknown_when_name_lookup_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `extract_type_name` and `swallow_python_error`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            // An int has no `__name__` attribute, so `PyObject_GetAttrString`
+            // fails and `extract_type_name` must swallow the error.
+            let int_obj = PyLong_FromUnsignedLongLong(42);
+            assert!(!int_obj.is_null(), "int object should be created");
+            assert_eq!(extract_type_name(int_obj), "unknown");
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyObject_GetAttrString must be cleared"
+            );
+            Py_DecRef(int_obj);
+        }
+    }
 }
 
 // ─── set_exception_value_slot tests ──────────────────────────────────────────
