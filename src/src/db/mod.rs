@@ -42,18 +42,29 @@ fn parse_status(resp: &mut Message) -> jobstatus::Model {
     }
 }
 
-pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
-    debug!("DB: get_running_jobs - sending request");
-    let msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Medium, "database");
+async fn send_db_request_timed(
+    msg: Message,
+    error_message: impl FnOnce(&(dyn std::error::Error + Send + Sync)) -> String,
+) -> Result<(Message, std::time::Duration), String> {
     let send_start = std::time::Instant::now();
     let raw = get_websocket_client()
         .send_db_request(msg)
         .await
         .map_err(|e| {
-            error!("DB: get_running_jobs - request failed: {}", e);
+            error!("{}", error_message(&*e));
             e.to_string()
         })?;
     let elapsed = send_start.elapsed();
+    Ok((raw, elapsed))
+}
+
+pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
+    debug!("DB: get_running_jobs - sending request");
+    let msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Medium, "database");
+    let (raw, elapsed) = send_db_request_timed(msg, |e| {
+        format!("DB: get_running_jobs - request failed: {e}")
+    })
+    .await?;
     let mut resp = parse_response(&raw);
     let count = (resp.pop_uint() as usize).min(resp.remaining_len());
     debug!(
@@ -76,15 +87,10 @@ async fn get_job_by_message(
     debug!("DB: {} - requesting id={}", context, id);
     let mut msg = Message::new(msg_type, Priority::Medium, "database");
     msg.push_ulong(id as u64);
-    let send_start = std::time::Instant::now();
-    let raw = get_websocket_client()
-        .send_db_request(msg)
-        .await
-        .map_err(|e| {
-            error!("DB: {} - request failed for id={}: {}", context, id, e);
-            e.to_string()
-        })?;
-    let elapsed = send_start.elapsed();
+    let (raw, elapsed) = send_db_request_timed(msg, |e| {
+        format!("DB: {context} - request failed for id={id}: {e}")
+    })
+    .await?;
     let mut resp = parse_response(&raw);
     let count = (resp.pop_uint() as usize).min(resp.remaining_len());
     if count == 0 {
@@ -108,15 +114,10 @@ pub async fn delete_job(id: i64) -> Result<(), String> {
     debug!("DB: delete_job - deleting job id={}", id);
     let mut msg = Message::new(DB_JOB_DELETE, Priority::Medium, "database");
     msg.push_ulong(id as u64);
-    let send_start = std::time::Instant::now();
-    let raw = get_websocket_client()
-        .send_db_request(msg)
-        .await
-        .map_err(|e| {
-            error!("DB: delete_job - request failed for id={}: {}", id, e);
-            e.to_string()
-        })?;
-    let elapsed = send_start.elapsed();
+    let (raw, elapsed) = send_db_request_timed(msg, |e| {
+        format!("DB: delete_job - request failed for id={id}: {e}")
+    })
+    .await?;
     let _resp = parse_response(&raw);
     debug!("DB: delete_job - completed in {:?}", elapsed);
     Ok(())
@@ -130,15 +131,8 @@ pub async fn get_or_create_by_job_id(job_id_val: i64) -> Result<job::Model, Stri
 }
 
 async fn get_job_statuses(msg: Message, context: &str) -> Result<Vec<jobstatus::Model>, String> {
-    let send_start = std::time::Instant::now();
-    let raw = get_websocket_client()
-        .send_db_request(msg)
-        .await
-        .map_err(|e| {
-            error!("DB: {} - request failed: {}", context, e);
-            e.to_string()
-        })?;
-    let elapsed = send_start.elapsed();
+    let (raw, elapsed) =
+        send_db_request_timed(msg, |e| format!("DB: {context} - request failed: {e}")).await?;
     let mut resp = parse_response(&raw);
     let count = (resp.pop_uint() as usize).min(resp.remaining_len());
     debug!(
@@ -184,27 +178,17 @@ pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     for id in ids {
         msg.push_ulong(id as u64);
     }
-    let raw = get_websocket_client()
-        .send_db_request(msg)
-        .await
-        .map_err(|e| {
-            error!("DB: delete_status_by_id_list - request failed: {}", e);
-            e.to_string()
-        })?;
+    let (raw, _elapsed) = send_db_request_timed(msg, |e| {
+        format!("DB: delete_status_by_id_list - request failed: {e}")
+    })
+    .await?;
     let _resp = parse_response(&raw);
     Ok(())
 }
 
 async fn send_save_request(msg: Message, context: &str, error_string: &str) -> Result<i64, String> {
-    let send_start = std::time::Instant::now();
-    let raw = get_websocket_client()
-        .send_db_request(msg)
-        .await
-        .map_err(|e| {
-            error!("DB: {} - request failed: {}", context, e);
-            e.to_string()
-        })?;
-    let elapsed = send_start.elapsed();
+    let (raw, elapsed) =
+        send_db_request_timed(msg, |e| format!("DB: {context} - request failed: {e}")).await?;
     let mut resp = parse_response(&raw);
     let saved_id = resp.pop_ulong() as i64;
     if saved_id == 0 {
