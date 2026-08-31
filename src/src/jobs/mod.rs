@@ -1225,5 +1225,4 @@ mod tests {
                 .expect("spawned submit task should check server readiness");
         });
     }
-    }
 }
