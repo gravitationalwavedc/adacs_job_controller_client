@@ -1937,24 +1937,22 @@ where
 {
     if let Err(e) = file.flush().await {
         warn!("Failed to flush uploaded file: {}", e);
-        remove_partial_file(full_path).await;
-        send_file_error(
+        fail_upload(
             ws_sender,
             uuid,
             "Failed to finalize uploaded file",
-            FILE_UPLOAD_ERROR,
+            Some(full_path),
         )
         .await;
         return false;
     }
     if let Err(e) = file.sync_all().await {
         warn!("Failed to sync uploaded file: {}", e);
-        remove_partial_file(full_path).await;
-        send_file_error(
+        fail_upload(
             ws_sender,
             uuid,
             "Failed to finalize uploaded file",
-            FILE_UPLOAD_ERROR,
+            Some(full_path),
         )
         .await;
         return false;
