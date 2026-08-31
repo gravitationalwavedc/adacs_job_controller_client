@@ -616,7 +616,7 @@ impl TungsteniteWebsocketClient {
                 return;
             };
 
-            match self
+            let delay = match self
                 .clone()
                 .run_connection(config.url.clone(), config.token.clone())
                 .await
@@ -629,9 +629,7 @@ impl TungsteniteWebsocketClient {
                     attempt = 0;
                     let delay = Self::reconnect_delay(attempt);
                     warn!("WS: Reconnecting after {:?}", delay);
-                    attempt = attempt.saturating_add(1);
-                    self.check_for_updates_on_reconnect().await;
-                    tokio::time::sleep(delay).await;
+                    delay
                 }
                 Err(e) => {
                     self.connection_closed.store(true, Ordering::SeqCst);
@@ -648,11 +646,13 @@ impl TungsteniteWebsocketClient {
                         "WS: Connection attempt failed: {}. Retrying after {:?}",
                         e, delay
                     );
-                    attempt = attempt.saturating_add(1);
-                    self.check_for_updates_on_reconnect().await;
-                    tokio::time::sleep(delay).await;
+                    delay
                 }
-            }
+            };
+
+            attempt = attempt.saturating_add(1);
+            self.check_for_updates_on_reconnect().await;
+            tokio::time::sleep(delay).await;
         }
     }
 
