@@ -267,15 +267,25 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
-// SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
-pub unsafe fn my_py_none_struct() -> *mut PyObject {
-    PY_NONE_STRUCT
+/// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
+/// and caches the resulting pointer in `cache` for subsequent calls.
+///
+/// # Safety
+/// The Python library must be loaded; `symbol` must name a process-wide
+/// singleton that lives for the lifetime of the process.
+unsafe fn get_python_singleton(cache: &OnceLock<PyObjectPtr>, symbol: &[u8]) -> *mut PyObject {
+    cache
         .get_or_init(|| {
             let lib = get_python_lib();
-            let symbol: Symbol<*mut PyObject> = lib.get(b"_Py_NoneStruct\0").unwrap();
+            let symbol: Symbol<*mut PyObject> = lib.get(symbol).unwrap();
             PyObjectPtr(*symbol)
         })
         .0
+}
+
+// SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
+pub unsafe fn my_py_none_struct() -> *mut PyObject {
+    get_python_singleton(&PY_NONE_STRUCT, b"_Py_NoneStruct\0")
 }
 
 // SAFETY: Caller holds PYTHON_MUTEX; returns a new reference to the `None`
@@ -288,13 +298,7 @@ pub unsafe fn return_py_none() -> *mut PyObject {
 
 // SAFETY: Python library is loaded; `_Py_TrueStruct` is a process-wide singleton.
 pub unsafe fn my_py_true_struct() -> *mut PyObject {
-    PY_TRUE_STRUCT
-        .get_or_init(|| {
-            let lib = get_python_lib();
-            let symbol: Symbol<*mut PyObject> = lib.get(b"_Py_TrueStruct\0").unwrap();
-            PyObjectPtr(*symbol)
-        })
-        .0
+    get_python_singleton(&PY_TRUE_STRUCT, b"_Py_TrueStruct\0")
 }
 
 // SAFETY: Caller holds PYTHON_MUTEX; `obj` is a live object on this thread.
