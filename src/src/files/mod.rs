@@ -1725,6 +1725,11 @@ fn handle_file_upload_internal(
                     );
                     return;
                 }
+            } else if let WsMessage::Close(_) = ws_msg {
+                warn!(
+                    "handle_file_upload: peer sent Close before FILE_UPLOAD_COMPLETE, removing partial file"
+                );
+                break;
             }
         }
 
