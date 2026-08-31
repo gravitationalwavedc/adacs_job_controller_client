@@ -497,6 +497,94 @@ fn test_submit_timeout() {
 }
 
 #[test_fork::test]
+fn test_submit_timeout_reset() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        setup_test(&db_name);
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let (mut mock_ws, state) = setup_mock_ws();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        // We expect 1 message when it finally submits
+        mock_ws
+            .expect_queue_message()
+            .with(always(), always(), eq(Priority::Medium))
+            .times(1)
+            .returning(move |_, _, _| {
+                let _ = tx_clone.send(());
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1234i64;
+        let mut job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: true,
+            submitting_count: MAX_SUBMIT_COUNT - 1,
+            bundle_hash: bundle_hash.clone(),
+            working_directory: "/tmp".to_string(),
+            running: true,
+            deleting: false,
+            deleted: false,
+        };
+        {
+            let mut s = state.lock().unwrap();
+            s.jobs.insert(1, job.clone());
+            s.next_job_id = 2;
+        }
+
+        // Write a successful submit script
+        fixture.write_job_submit(&bundle_hash, "/a/test/working/directory/", "4321");
+
+        let mut msg_raw = Message::new(SUBMIT_JOB, Priority::Medium, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&bundle_hash);
+        msg_raw.push_string("test params");
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+        handle_job_submit(msg);
+
+        // Wait for the message to be queued
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("Timed out waiting for queue_message");
+
+        let mut retry = 0;
+        while retry < 20 {
+            job = state
+                .lock()
+                .unwrap()
+                .jobs
+                .values()
+                .find(|j| j.job_id == Some(job_id))
+                .cloned()
+                .unwrap();
+            if !job.working_directory.is_empty() {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+            retry += 1;
+        }
+
+        // The submit count should have been reset and the job re-submitted
+        assert_eq!(job.submitting_count, 0);
+        assert_eq!(job.job_id, Some(job_id));
+        assert_eq!(job.working_directory, "/a/test/working/directory/");
+        assert!(!job.submitting);
+        assert_eq!(job.scheduler_id, Some(4321));
+    }
+    inner();
+}
+
+#[test_fork::test]
 fn test_submit_error_none() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
