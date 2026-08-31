@@ -1504,6 +1504,50 @@ mod log_python_lines_tests {
         }
     }
 
+    /// `log_python_lines` must swallow the exception raised by `PyIter_Next`
+    /// (a non-StopIteration error from the iterator), stop iterating, and
+    /// leave no stale error set for the next Python C-API call.
+    #[test]
+    fn swallows_error_and_stops_when_iterator_raises() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `log_python_lines` and the Python C-API calls used
+        // to build the input generator.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "globals dict should be created");
+            assert_eq!(
+                PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins()),
+                0,
+                "setting __builtins__ should succeed"
+            );
+            let code = c"(1 / 0 for _ in [1])";
+            let gen = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_eval_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            assert!(!gen.is_null(), "generator expression should evaluate");
+            let logs = capture_logs(|| log_python_lines(gen));
+            assert!(
+                logs.is_empty(),
+                "iterator raising on next() should log nothing, got:\n{logs}"
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyIter_Next must be swallowed"
+            );
+            Py_DecRef(gen);
+            Py_DecRef(globals);
+        }
+    }
+
     /// `log_python_lines` must swallow the `TypeError` raised by
     /// `PyUnicode_AsUTF8` on a non-str list element, log nothing for that
     /// element, and leave no stale error set for the next Python C-API call.
