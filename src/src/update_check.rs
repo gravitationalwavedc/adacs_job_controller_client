@@ -128,38 +128,22 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
     }
 }
 
-/// Download file from URL with retry and exponential backoff.
-fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    info!("Downloading update from: {}", url);
-    for attempt in 1..=MAX_DOWNLOAD_RETRIES {
-        debug!("Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES}");
-        let agent = ureq::AgentBuilder::new()
-            .user_agent(USER_AGENT)
-            .redirects(MAX_REDIRECTS)
-            .timeout_connect(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECS))
-            .timeout_read(Duration::from_secs(DOWNLOAD_READ_TIMEOUT_SECS))
-            .build();
-
-        let result = match agent.get(url).call() {
-            Ok(resp) => {
-                let mut data = Vec::new();
-                resp.into_reader()
-                    .read_to_end(&mut data)
-                    .map_err(ureq::Error::from)
-                    .map(|_| data)
-            }
-            Err(e) => Err(e),
-        };
-
-        match result {
+/// Run `attempt` up to `MAX_DOWNLOAD_RETRIES` times, sleeping with exponential
+/// backoff between failures. Returns the first `Ok` result, or the final error
+/// once all retries are exhausted.
+fn download_with_retry(
+    mut attempt: impl FnMut(u32) -> Result<Vec<u8>, Box<dyn std::error::Error>>,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    for attempt_num in 1..=MAX_DOWNLOAD_RETRIES {
+        match attempt(attempt_num) {
             Ok(data) => {
                 debug!("Download complete: {} bytes", data.len());
                 return Ok(data);
             }
-            Err(e) if attempt < MAX_DOWNLOAD_RETRIES => {
-                let delay = retry_delay_secs(attempt);
+            Err(e) if attempt_num < MAX_DOWNLOAD_RETRIES => {
+                let delay = retry_delay_secs(attempt_num);
                 warn!(
-                    "Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES} failed: {e}. \
+                    "Download attempt {attempt_num}/{MAX_DOWNLOAD_RETRIES} failed: {e}. \
                      Retrying in {delay}s..."
                 );
                 std::thread::sleep(Duration::from_secs(delay));
@@ -173,6 +157,32 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         }
     }
     unreachable!()
+}
+
+/// Download file from URL with retry and exponential backoff.
+fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    info!("Downloading update from: {}", url);
+    download_with_retry(|attempt| {
+        debug!("Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES}");
+        let agent = ureq::AgentBuilder::new()
+            .user_agent(USER_AGENT)
+            .redirects(MAX_REDIRECTS)
+            .timeout_connect(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECS))
+            .timeout_read(Duration::from_secs(DOWNLOAD_READ_TIMEOUT_SECS))
+            .build();
+
+        match agent.get(url).call() {
+            Ok(resp) => {
+                let mut data = Vec::new();
+                resp.into_reader()
+                    .read_to_end(&mut data)
+                    .map_err(ureq::Error::from)
+                    .map(|_| data)
+            }
+            Err(e) => Err(e),
+        }
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    })
 }
 
 /// Perform the update: download, replace binary, and restart.
@@ -577,6 +587,53 @@ mod tests {
         assert!(
             result.is_err(),
             "should fail when parent directory doesn't exist"
+        );
+    }
+
+    // ─── download_with_retry tests ──────────────────────────────────────
+
+    #[test]
+    fn test_download_with_retry_succeeds_on_first_attempt() {
+        let mut calls = 0;
+        let result = download_with_retry(|_| {
+            calls += 1;
+            Ok(b"payload".to_vec())
+        });
+        assert_eq!(result.unwrap(), b"payload");
+        assert_eq!(calls, 1, "no retry should happen on success");
+    }
+
+    #[test]
+    fn test_download_with_retry_retries_then_succeeds() {
+        let mut calls = 0;
+        let result = download_with_retry(|_| {
+            calls += 1;
+            if calls < MAX_DOWNLOAD_RETRIES {
+                Err("transient failure".into())
+            } else {
+                Ok(b"payload".to_vec())
+            }
+        });
+        assert_eq!(result.unwrap(), b"payload");
+        assert_eq!(
+            calls, MAX_DOWNLOAD_RETRIES,
+            "should retry up to MAX_DOWNLOAD_RETRIES before succeeding"
+        );
+    }
+
+    #[test]
+    fn test_download_with_retry_exhausts_all_attempts() {
+        let mut calls = 0;
+        let result = download_with_retry(|_| {
+            calls += 1;
+            Err("persistent failure".into())
+        });
+        assert!(result.is_err(), "all attempts failing should error");
+        assert_eq!(calls, MAX_DOWNLOAD_RETRIES);
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Download failed after"),
+            "unexpected error message: {err}"
         );
     }
 
