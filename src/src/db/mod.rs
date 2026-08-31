@@ -18,6 +18,10 @@ fn pop_optional_id(resp: &mut Message) -> Option<i64> {
     (v != 0).then_some(v)
 }
 
+fn pop_count(resp: &mut Message) -> usize {
+    (resp.pop_uint() as usize).min(resp.remaining_len())
+}
+
 fn parse_job(resp: &mut Message) -> job::Model {
     job::Model {
         id: resp.pop_ulong() as i64,
@@ -55,7 +59,7 @@ pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
         })?;
     let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
-    let count = (resp.pop_uint() as usize).min(resp.remaining_len());
+    let count = pop_count(&mut resp);
     debug!(
         "DB: get_running_jobs - received {} jobs in {:?}",
         count, elapsed
@@ -86,7 +90,7 @@ async fn get_job_by_message(
         })?;
     let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
-    let count = (resp.pop_uint() as usize).min(resp.remaining_len());
+    let count = pop_count(&mut resp);
     if count == 0 {
         debug!("DB: {} - id={} not found", context, id);
         return Ok(None);
@@ -140,7 +144,7 @@ async fn get_job_statuses(msg: Message, context: &str) -> Result<Vec<jobstatus::
         })?;
     let elapsed = send_start.elapsed();
     let mut resp = parse_response(&raw);
-    let count = (resp.pop_uint() as usize).min(resp.remaining_len());
+    let count = pop_count(&mut resp);
     debug!(
         "DB: {} - received {} statuses in {:?}",
         context, count, elapsed
