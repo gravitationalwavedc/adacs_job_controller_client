@@ -36,7 +36,6 @@ const RECONNECT_DELAY_MAX_SECONDS: u64 = 30;
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[cfg_attr(test, mockall::automock)]
-#[allow(dead_code)]
 pub trait WebsocketClient: Send + Sync {
     fn start_with_token(
         &self,
