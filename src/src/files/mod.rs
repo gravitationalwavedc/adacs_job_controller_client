@@ -860,16 +860,25 @@ async fn run_download_supervisor(
 }
 
 /// Validate `SERVER_READY` on the supervisor-owned receive half. Returns the
-/// reason string on any readiness failure shape (invalid ID, non-binary,
-/// receive error, peer EOF, timeout).
-async fn validate_server_ready(ws_receiver: &mut WsReceiver) -> Result<(), String> {
-    let timeout = server_ready_timeout();
+/// `SERVER_READY` message on success, or the reason string on any readiness
+/// failure shape (invalid ID, non-binary, receive error, peer EOF, timeout).
+async fn validate_server_ready(ws_receiver: &mut WsReceiver) -> Result<Message, String> {
+    let timeout = {
+        #[cfg(test)]
+        {
+            server_ready_timeout()
+        }
+        #[cfg(not(test))]
+        {
+            Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
+        }
+    };
     let handshake = tokio::time::timeout(timeout, ws_receiver.next()).await;
     match handshake {
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
             let msg = Message::from_data(data.to_vec());
             if msg.id == SERVER_READY {
-                Ok(())
+                Ok(msg)
             } else {
                 Err(format!("expected SERVER_READY, got {}", msg.id))
             }
@@ -1727,34 +1736,13 @@ fn build_file_ws_request(
 }
 
 /// Wait for a `SERVER_READY` message with a 10-second timeout. Tests may
-/// shrink the deadline via [`set_server_ready_timeout_for_test`], mirroring
-/// [`validate_server_ready`].
+/// shrink the deadline via [`set_server_ready_timeout_for_test`]. Delegates
+/// to [`validate_server_ready`], logging the failure reason on error.
 async fn wait_for_server_ready(ws_receiver: &mut WsReceiver) -> Option<Message> {
-    let timeout = server_ready_timeout();
-    let handshake = tokio::time::timeout(timeout, ws_receiver.next()).await;
-    match handshake {
-        Ok(Some(Ok(WsMessage::Binary(data)))) => {
-            let msg = Message::from_data(data.to_vec());
-            if msg.id != SERVER_READY {
-                warn!("Expected SERVER_READY, got {}", msg.id);
-                return None;
-            }
-            Some(msg)
-        }
-        Ok(Some(Ok(_))) => {
-            warn!("Expected binary SERVER_READY, got unexpected frame");
-            None
-        }
-        Ok(Some(Err(e))) => {
-            warn!("Handshake error: {}", e);
-            None
-        }
-        Ok(None) => {
-            warn!("Server closed connection before sending SERVER_READY");
-            None
-        }
-        Err(_) => {
-            warn!("Timeout waiting for SERVER_READY after {SERVER_READY_TIMEOUT_SECS}s");
+    match validate_server_ready(ws_receiver).await {
+        Ok(msg) => Some(msg),
+        Err(reason) => {
+            warn!("{reason}");
             None
         }
     }
