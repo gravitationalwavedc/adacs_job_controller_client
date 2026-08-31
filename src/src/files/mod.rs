@@ -1247,31 +1247,12 @@ where
     use futures_util::FutureExt;
     loop {
         match ws_receiver.next().now_or_never() {
-            Some(incoming) => match classify_incoming(incoming) {
-                IncomingEvent::Pause => {
-                    is_paused.store(true, Ordering::Release);
+            Some(incoming) => {
+                let step = handle_incoming_event(incoming, is_paused, resume_notify, state);
+                if !matches!(step, LoopStep::Continue) {
+                    return Some(step);
                 }
-                IncomingEvent::Resume => {
-                    is_paused.store(false, Ordering::Release);
-                    resume_notify.notify_one();
-                }
-                IncomingEvent::Close => {
-                    return Some(LoopStep::Finish(
-                        state.peer_terminal("peer Close".to_string()),
-                    ));
-                }
-                IncomingEvent::Eof => {
-                    return Some(LoopStep::Finish(
-                        state.peer_terminal("peer EOF".to_string()),
-                    ));
-                }
-                IncomingEvent::Error(msg) => {
-                    return Some(LoopStep::Finish(
-                        state.peer_terminal(format!("peer receive error: {msg}")),
-                    ));
-                }
-                IncomingEvent::Ignored => {}
-            },
+            }
             None => return None,
         }
     }
