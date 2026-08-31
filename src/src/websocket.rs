@@ -1032,6 +1032,31 @@ mod tests {
         assert!(!client.is_server_ready());
     }
 
+    /// Direct unit test for `get_epoch_millis`: the pure function that backs
+    /// ping/pong latency measurement must return the current epoch time in
+    /// milliseconds, sandwiched between two reference `SystemTime` reads taken
+    /// immediately before and after the call.
+    #[test]
+    fn get_epoch_millis_returns_current_epoch_time() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after UNIX_EPOCH")
+            .as_millis() as i64;
+        let now = TungsteniteWebsocketClient::get_epoch_millis();
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after UNIX_EPOCH")
+            .as_millis() as i64;
+        assert!(
+            now >= before,
+            "get_epoch_millis() returned {now}, which is before the reference time {before}"
+        );
+        assert!(
+            now <= after,
+            "get_epoch_millis() returned {now}, which is after the reference time {after}"
+        );
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_start_with_token() {
