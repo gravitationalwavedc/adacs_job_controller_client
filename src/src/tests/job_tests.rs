@@ -1361,7 +1361,7 @@ fn test_archive_dir_empty_directory() {
 
 use crate::db::{job, jobstatus};
 use crate::jobs::check_job_status;
-use crate::messaging::{COMPLETED, RUNNING, UPDATE_JOB};
+use crate::messaging::{CANCELLING, COMPLETED, RUNNING, UPDATE_JOB};
 use std::io::Write;
 use tempfile::TempDir;
 use tracing_subscriber::fmt::MakeWriter;
@@ -2522,6 +2522,100 @@ fn test_check_status_job_running_error_2() {
         assert!(
             db_status.iter().any(|s| s.state as u32 == 600),
             "WALL_TIME_EXCEEDED status (600) should be recorded"
+        );
+    }
+    inner();
+}
+
+#[test_fork::test]
+fn test_check_status_cancelling_does_not_terminate_job() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        setup_test(&db_name);
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let working_dir = temp_dir.path().to_str().unwrap().to_string();
+        // Create a test file that would be archived if the job were terminated
+        fs::write(temp_dir.path().join("test.txt"), "content").unwrap();
+
+        let job_id = 1236i64;
+        let job_id_saved = 1i64;
+
+        // CANCELLING (60) is not a terminal error and must not terminate the job
+        fixture.write_job_status(&bundle_hash, r#"{"status": [{"info": "Cancelling job", "what": "cancel", "status": 60}], "complete": false}"#);
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let (mut mock_ws, state) = setup_mock_ws();
+        let job = job::Model {
+            id: job_id_saved,
+            job_id: Some(job_id),
+            scheduler_id: Some(4321),
+            running: true,
+            bundle_hash: bundle_hash.clone(),
+            working_directory: working_dir.clone(),
+            submitting: false,
+            submitting_count: 0,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(job_id_saved, job.clone());
+
+        // Exactly 1 message: the status update. No completion notification.
+        mock_ws
+            .expect_queue_message()
+            .times(1)
+            .returning(move |_, data, _| {
+                let _ = tx_clone.send(data);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        check_job_status(job.clone(), false).await;
+
+        // Verify job is still running
+        let job_after = state
+            .lock()
+            .unwrap()
+            .jobs
+            .get(&job_id_saved)
+            .cloned()
+            .unwrap();
+        assert!(
+            job_after.running,
+            "Job should still be running after CANCELLING status"
+        );
+
+        // Verify no archive was created
+        let archive_path = std::path::Path::new(&working_dir).join("archive.tar.gz");
+        assert!(
+            !archive_path.exists(),
+            "No archive should be created for a non-terminal CANCELLING status"
+        );
+
+        // Verify exactly 1 status-update message (no completion message)
+        let msg_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("Timeout waiting for UPDATE_JOB message")
+            .expect("No message received");
+
+        let mut msg = Message::from_data(msg_data);
+        assert_eq!(msg.id, UPDATE_JOB);
+        assert_eq!(msg.pop_uint(), job_id as u32);
+        assert_eq!(msg.pop_string(), "cancel");
+        assert_eq!(msg.pop_uint(), CANCELLING);
+
+        // No completion message should follow
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), rx.recv())
+                .await
+                .is_err(),
+            "No completion message should be sent for CANCELLING status"
         );
     }
     inner();
