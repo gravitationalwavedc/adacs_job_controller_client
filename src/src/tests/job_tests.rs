@@ -924,6 +924,58 @@ fn test_check_status_job_running_same_status() {
 }
 
 #[test_fork::test]
+fn test_check_status_job_null_status_skipped() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        setup_test(&db_name);
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let working_dir = TempDir::new().unwrap();
+        fixture.write_job_status(&bundle_hash, r#"{"status": [{"info": "Some info", "what": "test_what", "status": null}], "complete": false}"#);
+
+        let (mut mock_ws, state) = setup_mock_ws();
+
+        let job = job::Model {
+            id: 1,
+            job_id: Some(1234),
+            scheduler_id: Some(4321),
+            bundle_hash: bundle_hash.clone(),
+            working_directory: working_dir.path().to_string_lossy().to_string(),
+            running: true,
+            submitting: false,
+            submitting_count: 0,
+            deleting: false,
+            deleted: false,
+        };
+        {
+            let mut s = state.lock().unwrap();
+            s.jobs.insert(1, job.clone());
+        }
+
+        // Null status entry is skipped: no status record created, no notification queued
+        mock_ws.expect_queue_message().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        check_job_status(job.clone(), false).await;
+
+        // No status record should have been created for the job
+        let v_status: Vec<_> = state
+            .lock()
+            .unwrap()
+            .statuses
+            .values()
+            .filter(|s| s.job_id == job.id)
+            .cloned()
+            .collect();
+        assert!(v_status.is_empty());
+    }
+    inner();
+}
+
+#[test_fork::test]
 fn test_check_status_job_running_same_status_multiple() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
