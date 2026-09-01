@@ -98,6 +98,49 @@ pub fn set_json_loads_override(f: Option<JsonLoadsFn>) -> Option<JsonLoadsFn> {
     std::mem::replace(&mut *guard, f)
 }
 
+// ─── Test-only py_object_call_object override seam ──────────────────────────
+// The `p_result.is_null()` sub-branch of the compound error condition in
+// `BundleInterface::run` is unreachable through the public API: a bundle
+// function that returns normally always yields a non-NULL result, and the
+// existing bundle-raising test only covers the `PyErr_Occurred` side. This
+// seam lets tests force `PyObject_CallObject` to return NULL without changing
+// production behavior. Tests run serially (`--test-threads=1`), so the
+// global override cannot race across tests.
+
+#[cfg(test)]
+pub type PyObjectCallObjectFn = unsafe fn(*mut PyObject, *mut PyObject) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_OBJECT_CALL_OBJECT_OVERRIDE: StdMutex<Option<PyObjectCallObjectFn>> = StdMutex::new(None);
+
+/// Test-only: install an override for `py_object_call_object`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_object_call_object_override(
+    f: Option<PyObjectCallObjectFn>,
+) -> Option<PyObjectCallObjectFn> {
+    let mut guard = PY_OBJECT_CALL_OBJECT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyObject_CallObject` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyObject_CallObject`: caller holds `PYTHON_MUTEX`
+/// and the GIL; `callable` and `args` are live objects.
+pub unsafe fn py_object_call_object(callable: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_OBJECT_CALL_OBJECT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+    {
+        return f(callable, args);
+    }
+    PyObject_CallObject(callable, args)
+}
+
 impl BundleInterface {
     /// Return the bundle hash for this interface.
     pub fn bundle_hash(&self) -> &str {
@@ -424,7 +467,7 @@ impl BundleInterface {
             func, self.inner.bundle_hash, details
         );
         let call_start = std::time::Instant::now();
-        let p_result = PyObject_CallObject(p_func, p_args);
+        let p_result = py_object_call_object(p_func, p_args);
         let call_time = call_start.elapsed();
         if p_result.is_null() || !PyErr_Occurred().is_null() {
             error!(

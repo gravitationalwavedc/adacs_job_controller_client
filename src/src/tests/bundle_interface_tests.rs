@@ -9,7 +9,10 @@
 //! bundle scripts and capture the structured log output to verify that
 //! the full stack trace is printed to the console.
 
-use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoadsFn};
+use crate::bundle_interface::{
+    set_json_loads_override, set_py_object_call_object_override, BundleInterface, JsonLoadsFn,
+    PyObjectCallObjectFn,
+};
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
@@ -1662,5 +1665,61 @@ fn test_run_returns_err_when_json_loads_returns_null() {
     assert!(
         result.is_err(),
         "run should return Err(NoneException) when json_loads returns NULL"
+    );
+}
+
+// ─── py_object_call_object NULL override test ────────────────────────────────
+//
+// The `p_result.is_null()` sub-branch of the compound error condition in
+// `BundleInterface::run` (bundle_interface.rs) is unreachable through the
+// public API: a bundle function that returns normally always yields a non-NULL
+// result, and the existing bundle-raising test only covers the
+// `PyErr_Occurred` side. This test uses the test-only `py_object_call_object`
+// override seam to force `PyObject_CallObject` to return NULL and verify `run`
+// returns `Err(NoneException)`.
+
+/// RAII guard that installs a `py_object_call_object` override for the
+/// duration of a test and restores the previous override on drop.
+struct PyObjectCallObjectOverrideGuard(Option<PyObjectCallObjectFn>);
+
+impl PyObjectCallObjectOverrideGuard {
+    fn install(f: PyObjectCallObjectFn) -> Self {
+        Self(set_py_object_call_object_override(Some(f)))
+    }
+}
+
+impl Drop for PyObjectCallObjectOverrideGuard {
+    fn drop(&mut self) {
+        set_py_object_call_object_override(self.0);
+    }
+}
+
+/// Override that makes `PyObject_CallObject` always return NULL, forcing the
+/// `p_result.is_null()` branch in `BundleInterface::run`.
+// SAFETY: Test-only; returns NULL without touching the Python error indicator.
+unsafe fn null_py_object_call_object(
+    _callable: *mut PyObject,
+    _args: *mut PyObject,
+) -> *mut PyObject {
+    std::ptr::null_mut()
+}
+
+/// DIRECT UNIT TEST — covers the `p_result.is_null()` sub-branch of the
+/// compound error condition in `BundleInterface::run`. Forcing
+/// `PyObject_CallObject` to return NULL via the test-only override seam must
+/// make `run` return `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_when_py_object_call_object_returns_null() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyObjectCallObjectOverrideGuard::install(null_py_object_call_object);
+
+    let result = unsafe {
+        let _guard = PYTHON_MUTEX.lock();
+        let _scope = bundle.thread_scope().expect("thread scope");
+        bundle.run("submit", &serde_json::json!({}), "job_data")
+    };
+    assert!(
+        result.is_err(),
+        "run should return Err(NoneException) when PyObject_CallObject returns NULL"
     );
 }
