@@ -102,6 +102,24 @@ fn get_job_by_id_load_failure(bundle_hash: &str, e: &str) -> *mut PyObject {
     set_db_error_and_return_null(error_obj, "Bundle not found in cache")
 }
 
+/// Handle a bundle-load failure in `load_bundle_and_job_id`: log the failure,
+/// then set the "Bundle not found in cache" error on the bundle's error
+/// exception object. Returns `None` without setting a Python error if the
+/// exception object could not be created.
+///
+/// Extracted from `load_bundle_and_job_id` so the error-object-present branch
+/// is directly unit-testable (the full load-failure path cannot run with the
+/// GIL held, which `BundleInterface::new` requires the caller to have released).
+fn load_bundle_failure(bundle_hash: &str, e: &str) -> Option<()> {
+    error!(
+        "DB: Bundle {} not found in cache during FFI callback: {}",
+        bundle_hash, e
+    );
+    let error_obj = get_bundle_db_error_or_abort("load_bundle_and_job_id", bundle_hash)?;
+    set_db_error_and_return_null(error_obj, "Bundle not found in cache");
+    None
+}
+
 pub(crate) fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
     let mut errors = BUNDLE_DB_ERRORS
         .get_or_init(|| Mutex::new(HashMap::new()))
@@ -216,13 +234,7 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
     let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
         Ok(b) => b,
         Err(e) => {
-            error!(
-                "DB: Bundle {} not found in cache during FFI callback: {}",
-                bundle_hash, e
-            );
-            let error_obj = get_bundle_db_error_or_abort("load_bundle_and_job_id", &bundle_hash)?;
-            let err_msg = err_cstring("Bundle not found in cache");
-            PyErr_SetString(error_obj, err_msg.as_ptr());
+            load_bundle_failure(&bundle_hash, &e)?;
             return None;
         }
     };
@@ -1086,6 +1098,58 @@ mod tests {
                 "Python error should be set"
             );
             crate::python_interface::PyErr_Clear();
+        }
+    }
+
+    #[test]
+    fn load_bundle_failure_sets_error_when_error_object_exists() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of get_bundle_db_error and set_db_error_and_return_null.
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let bundle_hash = "test_load_bundle_failure_some";
+            let error_obj = get_bundle_db_error(bundle_hash);
+            assert!(
+                !error_obj.is_null(),
+                "fallback RuntimeError should be non-null"
+            );
+            let result = load_bundle_failure(bundle_hash, "test error");
+            assert!(result.is_none(), "error helper should return None");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "Python error should be set"
+            );
+
+            // Fetch the error and verify the message matches what was set.
+            let mut extype: *mut PyObject = ptr::null_mut();
+            let mut value: *mut PyObject = ptr::null_mut();
+            let mut traceback: *mut PyObject = ptr::null_mut();
+            crate::python_interface::PyErr_Fetch(
+                &raw mut extype,
+                &raw mut value,
+                &raw mut traceback,
+            );
+            assert_eq!(
+                extype, error_obj,
+                "bundle error should be set on the stored exception"
+            );
+            let str_obj = crate::python_interface::PyObject_Str(value);
+            assert!(!str_obj.is_null(), "error value should stringify");
+            let c_str = crate::python_interface::PyUnicode_AsUTF8(str_obj);
+            assert!(!c_str.is_null(), "error string should be UTF-8");
+            assert_eq!(
+                std::ffi::CStr::from_ptr(c_str).to_str().unwrap(),
+                "Bundle not found in cache"
+            );
+            crate::python_interface::Py_DecRef(str_obj);
+            crate::python_interface::Py_DecRef(extype);
+            crate::python_interface::Py_DecRef(value);
+            crate::python_interface::Py_DecRef(traceback);
         }
     }
 }
