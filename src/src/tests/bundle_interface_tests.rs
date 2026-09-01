@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_tuple_set_item_override, set_py_unicode_from_string_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
+    PyUnicodeFromStringFn, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t,
+    PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -666,6 +667,67 @@ fn test_run_returns_err_for_nul_byte_job_data() {
             assert!(
                 result.is_err(),
                 "NUL byte in job_data should make run return Err"
+            );
+        }
+    }
+    inner();
+}
+
+/// RAII guard that installs a `py_unicode_from_string` override for the
+/// duration of a test and restores the previous override on drop.
+struct UnicodeFromStringOverrideGuard(Option<PyUnicodeFromStringFn>);
+
+impl UnicodeFromStringOverrideGuard {
+    fn install(f: PyUnicodeFromStringFn) -> Self {
+        Self(set_py_unicode_from_string_override(Some(f)))
+    }
+}
+
+impl Drop for UnicodeFromStringOverrideGuard {
+    fn drop(&mut self) {
+        set_py_unicode_from_string_override(self.0);
+    }
+}
+
+/// Override that always returns NULL, simulating a `PyUnicode_FromString`
+/// allocation failure.
+// SAFETY: Test-only; `obj` is a valid NUL-terminated C string from the caller.
+unsafe fn fail_unicode_from_string(_obj: *const std::os::raw::c_char) -> *mut PyObject {
+    std::ptr::null_mut()
+}
+
+/// DIRECT UNIT TEST — covers the `p_job_data.is_null()` failure branch in
+/// `BundleInterface::run`. `PyUnicode_FromString` always succeeds on valid
+/// input, so this branch is unreachable through the public API; the test-only
+/// `py_unicode_from_string` override seam forces it to return NULL and verifies
+/// `run` returns `Err(NoneException)` without panicking.
+#[test]
+fn test_run_returns_err_when_unicode_from_string_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _override = UnicodeFromStringOverrideGuard::install(fail_unicode_from_string);
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let result = bundle.run("submit", &serde_json::json!({}), "job_data");
+            assert!(
+                result.is_err(),
+                "PyUnicode_FromString failure should make run return Err"
             );
         }
     }
