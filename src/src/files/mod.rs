@@ -3501,6 +3501,15 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn into_outcome_maps_pending_to_peer_terminal_fallback() {
+        let outcome = AuthoritativeResult::Pending.into_outcome();
+        assert_eq!(
+            outcome,
+            TransferOutcome::PeerTerminal("exited without result".to_string())
+        );
+    }
+
     // ---------------------------------------------------------------
     // Reading-phase branch coverage requested during review of the
     // TransferContext refactor. Each test drives `run_reading_phase` /
