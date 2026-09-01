@@ -835,6 +835,31 @@ mod tests {
     }
 
     #[test]
+    fn py_init_bundledb_without_thread_bundle_skips_error_cache() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of PyInit_bundledb (which calls PyModule_Create2 and
+        // PyErr_NewException). No ThreadBundleGuard is active, so the
+        // get_current_thread_bundle() branch that caches the error exception
+        // is skipped.
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            crate::thread_bundle_map::clear_current_thread_bundle();
+            assert!(
+                crate::thread_bundle_map::get_current_thread_bundle().is_none(),
+                "thread bundle must be cleared for this test"
+            );
+            let module = PyInit_bundledb();
+            assert!(!module.is_null(), "module should be created");
+            crate::python_interface::Py_DecRef(module);
+        }
+    }
+
+    #[test]
     fn set_db_error_and_return_null_returns_null_and_sets_error_message() {
         crate::tests::init_python_global();
         let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
