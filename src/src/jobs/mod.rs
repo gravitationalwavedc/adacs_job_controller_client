@@ -1191,4 +1191,38 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(check_all_jobs_status());
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn handle_job_submit_returns_early_when_websocket_disconnected() {
+        reset_websocket_client_for_test();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(false);
+        mock.expect_is_server_ready().returning(move || {
+            let _ = tx.send(());
+            false
+        });
+        mock.expect_send_db_request().times(0);
+        mock.expect_queue_message().times(0);
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut msg_raw = Message::new(
+                crate::messaging::SUBMIT_JOB,
+                Priority::Medium,
+                SYSTEM_SOURCE,
+            );
+            msg_raw.push_uint(1234);
+            msg_raw.push_string("bundle-hash");
+            msg_raw.push_string("params");
+            let msg = Message::from_data(msg_raw.get_data().clone());
+            handle_job_submit(msg);
+
+            tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("spawned submit task should check server readiness");
+        });
+    }
 }
