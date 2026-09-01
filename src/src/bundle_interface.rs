@@ -74,6 +74,30 @@ pub struct BundleInterface {
     inner: Arc<BundleInterfaceInner>,
 }
 
+// ─── Test-only json_loads override seam ──────────────────────────────────────
+// The `json_obj.is_null()` early-return branch in `BundleInterface::run` is
+// unreachable through the public API because `run` always serializes valid
+// JSON, so `json_loads` always returns a non-NULL object. This seam lets tests
+// force `json_loads` to return NULL without changing production behavior.
+// Tests run serially (`--test-threads=1`), so the global override cannot race
+// across tests.
+
+#[cfg(test)]
+pub type JsonLoadsFn = unsafe fn(&BundleInterface, &str) -> *mut PyObject;
+
+#[cfg(test)]
+static JSON_LOADS_OVERRIDE: StdMutex<Option<JsonLoadsFn>> = StdMutex::new(None);
+
+/// Test-only: install an override for `BundleInterface::json_loads`, returning
+/// the previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_json_loads_override(f: Option<JsonLoadsFn>) -> Option<JsonLoadsFn> {
+    let mut guard = JSON_LOADS_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    std::mem::replace(&mut *guard, f)
+}
+
 impl BundleInterface {
     /// Return the bundle hash for this interface.
     pub fn bundle_hash(&self) -> &str {
@@ -518,6 +542,14 @@ impl BundleInterface {
 
     /// Call json.loads on a string. Mirrors C++ `BundleInterface::jsonLoads()`.
     pub unsafe fn json_loads(&self, content: &str) -> *mut PyObject {
+        #[cfg(test)]
+        if let Some(f) = *JSON_LOADS_OVERRIDE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            return f(self, content);
+        }
+
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"loads".as_ptr());
         if p_func.is_null() {
             error!("json_loads: failed to get json.loads function");

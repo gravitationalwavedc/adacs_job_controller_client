@@ -9,7 +9,7 @@
 //! bundle scripts and capture the structured log output to verify that
 //! the full stack trace is printed to the console.
 
-use crate::bundle_interface::BundleInterface;
+use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoadsFn};
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
@@ -1567,4 +1567,56 @@ def submit(details, job_data):
         assert!(!result);
     }
     inner();
+}
+
+// ─── json_loads NULL override tests ──────────────────────────────────────────
+//
+// The `json_obj.is_null()` early-return branch in `BundleInterface::run`
+// (bundle_interface.rs) is unreachable through the public API: `run` always
+// serializes valid JSON, so `json_loads` always returns a non-NULL object.
+// These tests use the test-only `json_loads` override seam to force the branch
+// and verify `run` returns `Err(NoneException)` before calling the bundle
+// function.
+
+/// RAII guard that installs a `json_loads` override for the duration of a test
+/// and restores the previous override on drop.
+struct JsonLoadsOverrideGuard(Option<JsonLoadsFn>);
+
+impl JsonLoadsOverrideGuard {
+    fn install(f: JsonLoadsFn) -> Self {
+        Self(set_json_loads_override(Some(f)))
+    }
+}
+
+impl Drop for JsonLoadsOverrideGuard {
+    fn drop(&mut self) {
+        set_json_loads_override(self.0);
+    }
+}
+
+/// Override that makes `json_loads` always return NULL, forcing the
+/// `json_obj.is_null()` early-return branch in `BundleInterface::run`.
+// SAFETY: Test-only; returns NULL without touching the Python error indicator.
+unsafe fn null_json_loads(_bundle: &BundleInterface, _content: &str) -> *mut PyObject {
+    std::ptr::null_mut()
+}
+
+/// DIRECT UNIT TEST — covers the `json_obj.is_null()` early-return branch in
+/// `BundleInterface::run`. Forcing `json_loads` to return NULL via the
+/// test-only override seam must make `run` return `Err(NoneException)` before
+/// the bundle function is called.
+#[test]
+fn test_run_returns_err_when_json_loads_returns_null() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = JsonLoadsOverrideGuard::install(null_json_loads);
+
+    let result = unsafe {
+        let _guard = PYTHON_MUTEX.lock();
+        let _scope = bundle.thread_scope().expect("thread scope");
+        bundle.run("submit", &serde_json::json!({}), "job_data")
+    };
+    assert!(
+        result.is_err(),
+        "run should return Err(NoneException) when json_loads returns NULL"
+    );
 }
