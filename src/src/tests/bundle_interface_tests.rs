@@ -1488,6 +1488,50 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
     );
 }
 
+/// DIRECT UNIT TEST for the NULL-traceback branch in
+/// `print_last_python_exception` (documented at bundle_interface.rs:592-593).
+///
+/// `PyErr_SetString` sets an error with no Python frame, so `PyErr_Fetch`
+/// returns a NULL traceback. The `format_tb` step must be skipped entirely
+/// (no "Traceback (most recent call last):" header) while the exception
+/// header line is still emitted.
+#[test]
+fn test_print_last_python_exception_null_traceback_skips_format_tb() {
+    let bundle = load_bundle_for_exception_printer();
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            // PyErr_SetString sets an error with a NULL traceback (no Python
+            // frame involved), exercising the documented NULL-traceback branch.
+            let exc = runtime_error_type();
+            PyErr_SetString(exc, c"boom".as_ptr());
+            Py_DecRef(exc);
+            bundle.print_last_python_exception();
+        }
+    });
+
+    // 1. The exception printer was reached.
+    assert!(
+        logs.contains("Python exception: type="),
+        "expected 'Python exception: type=' in logs, got:\n{logs}"
+    );
+
+    // 2. NULL traceback → format_tb is skipped entirely; no traceback header.
+    assert!(
+        !logs.contains("Traceback (most recent call last):"),
+        "did not expect traceback header for a NULL-traceback error, got:\n{logs}"
+    );
+
+    // 3. The exception header is still emitted (via format_exception_only or
+    //    the synthesized fallback).
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected exception header line in logs, got:\n{logs}"
+    );
+}
+
 /// DIRECT UNIT TEST for the `CString::new(job_data)` failure branch in
 /// `BundleInterface::run` (reviewer comment on line 265).
 ///
