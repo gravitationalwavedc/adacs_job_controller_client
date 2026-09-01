@@ -6,14 +6,13 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
-    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
-    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_list_append, py_tuple_set_item,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
+    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    PyImport_ImportModule, PyIter_Next, PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject,
+    PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject,
+    PyThreadState, PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef,
+    Py_IncRef, Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -324,7 +323,7 @@ impl BundleInterface {
             PyErr_Print();
             return Err("Failed to create bundle path string".to_string());
         }
-        if PyList_Append(p_path, p_bundle_path) == -1 {
+        if py_list_append(p_path, p_bundle_path) == -1 {
             error!("Error appending bundle path to sys.path");
             PyErr_Print();
             Py_DecRef(p_bundle_path);
@@ -1345,7 +1344,9 @@ mod set_exception_value_slot_tests {
 mod append_bundle_path_to_sys_path_tests {
     use super::*;
     use crate::bundle_manager::BundleManager;
+    use crate::python_interface::{set_py_list_append_override, PyListAppendFn};
     use crate::tests::fixtures::bundle_fixture::BundleFixture;
+    use std::os::raw::c_int;
     use uuid::Uuid;
 
     /// Load a real bundle so the sub-interpreter has a live `sys.path`.
@@ -1415,6 +1416,58 @@ mod append_bundle_path_to_sys_path_tests {
             assert!(result.is_ok(), "append should succeed: {result:?}");
         }
     }
+
+    /// RAII guard that installs a `py_list_append` override for the duration
+    /// of a test and restores the previous override on drop.
+    struct ListAppendOverrideGuard(Option<PyListAppendFn>);
+
+    impl ListAppendOverrideGuard {
+        fn install(f: PyListAppendFn) -> Self {
+            Self(set_py_list_append_override(Some(f)))
+        }
+    }
+
+    impl Drop for ListAppendOverrideGuard {
+        fn drop(&mut self) {
+            set_py_list_append_override(self.0);
+        }
+    }
+
+    /// Override that always fails `PyList_Append` with -1.
+    // SAFETY: Test-only; `list`/`item` are live objects from the caller.
+    unsafe fn always_fail_append(_list: *mut PyObject, _item: *mut PyObject) -> c_int {
+        -1
+    }
+
+    /// The `== -1` failure branch of `append_bundle_path_to_sys_path` must log
+    /// the marker and return `Err` when `PyList_Append` fails. The override
+    /// seam forces the failure deterministically instead of relying on Python
+    /// raising a `TypeError` for a non-list argument.
+    #[test]
+    fn returns_err_and_logs_when_pylist_append_override_fails() {
+        let bundle = load_test_bundle();
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _override = ListAppendOverrideGuard::install(always_fail_append);
+            let p_path = PySys_GetObject(c"path".as_ptr());
+            assert!(!p_path.is_null(), "sys.path should exist");
+            let logs = super::log_python_lines_tests::capture_logs(|| {
+                let result = BundleInterface::append_bundle_path_to_sys_path(
+                    p_path,
+                    Path::new("/some/bundle/path"),
+                );
+                assert_eq!(
+                    result.unwrap_err(),
+                    "Failed to append bundle path to sys.path"
+                );
+            });
+            assert!(
+                logs.contains("Error appending bundle path to sys.path"),
+                "expected failure marker to be logged, got:\n{logs}"
+            );
+        }
+    }
 }
 
 // ─── log_python_lines tests ──────────────────────────────────────────────────
@@ -1463,7 +1516,7 @@ mod log_python_lines_tests {
 
     /// Run `f` with a thread-local tracing subscriber that captures all
     /// `INFO`-and-above events into a `String`. Returns the captured log.
-    fn capture_logs<F: FnOnce()>(f: F) -> String {
+    pub(super) fn capture_logs<F: FnOnce()>(f: F) -> String {
         let writer = VecWriter::new();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(writer.clone())

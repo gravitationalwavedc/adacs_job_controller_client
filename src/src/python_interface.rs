@@ -267,6 +267,33 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyListAppendFn = unsafe fn(*mut PyObject, *mut PyObject) -> c_int;
+
+#[cfg(test)]
+static PY_LIST_APPEND_OVERRIDE: Mutex<Option<PyListAppendFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_list_append`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_list_append_override(f: Option<PyListAppendFn>) -> Option<PyListAppendFn> {
+    let mut guard = PY_LIST_APPEND_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyList_Append` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyList_Append`: caller holds `PYTHON_MUTEX` and the
+/// GIL; `list` is a valid list, `item` is a live object.
+pub unsafe fn py_list_append(list: *mut PyObject, item: *mut PyObject) -> c_int {
+    #[cfg(test)]
+    if let Some(f) = *PY_LIST_APPEND_OVERRIDE.lock() {
+        return f(list, item);
+    }
+    PyList_Append(list, item)
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///
