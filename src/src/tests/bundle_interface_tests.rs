@@ -9,21 +9,24 @@
 //! bundle scripts and capture the structured log output to verify that
 //! the full stack trace is printed to the console.
 
-use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoadsFn};
+use crate::bundle_interface::{
+    set_json_loads_override, set_py_object_get_attr_string_override, BundleInterface, JsonLoadsFn,
+    PyObjectGetAttrStringFn,
+};
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
     my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
     PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    PyLong_FromUnsignedLongLong, PyObject, PyObject_GetAttrString, PyRun_StringFlags,
+    PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef,
+    Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
-use std::ffi::CString;
+use std::ffi::CStr;
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -877,9 +880,10 @@ fn test_json_loads_returns_null_for_invalid_json() {
 }
 
 /// The `json.loads` attribute lookup can fail (e.g. when the `loads`
-/// attribute is removed from the json module), so `json_loads` must return
-/// NULL (the "failed to get json.loads function" branch) instead of
-/// dereferencing a null function pointer.
+/// DIRECT UNIT TEST — covers the `p_func.is_null()` branch in
+/// `BundleInterface::json_loads` where fetching the `json.loads` function
+/// fails. The test-only `PyObject_GetAttrString` override seam forces the
+/// lookup to return NULL, so `json_loads` must return NULL.
 #[test]
 fn test_json_loads_returns_null_when_loads_lookup_fails() {
     #[tokio::main(flavor = "current_thread")]
@@ -898,22 +902,11 @@ fn test_json_loads_returns_null_when_loads_lookup_fails() {
             .expect("bundle should load");
 
         let _guard = PYTHON_MUTEX.lock();
+        let _override = PyObjectGetAttrStringOverrideGuard::install(null_loads_lookup);
         unsafe {
             let _scope = bundle
                 .thread_scope()
                 .expect("thread scope should be created");
-            // The json module is cached in the sub-interpreter, so this
-            // returns the same module object `json_loads` reads from.
-            let json_module = PyImport_ImportModule(c"json".as_ptr());
-            assert!(!json_module.is_null(), "json module should import");
-            let c_name = CString::new("loads").unwrap();
-            // PyObject_SetAttrString with a NULL value deletes the attribute
-            // (this is what CPython's PyObject_DelAttrString macro expands to).
-            assert_eq!(
-                PyObject_SetAttrString(json_module, c_name.as_ptr(), std::ptr::null_mut()),
-                0,
-                "deleting json.loads should succeed"
-            );
             let obj = bundle.json_loads(r#"{"key": "value"}"#);
             assert!(
                 obj.is_null(),
@@ -964,10 +957,10 @@ fn test_to_string_py_clears_stale_error_for_non_string_object() {
     inner();
 }
 
-/// The `json.dumps` attribute lookup can fail (e.g. when the `dumps`
-/// attribute is removed from the json module), so `json_dumps` must return
-/// Err (the "Failed to get json.dumps function" branch) instead of
-/// dereferencing a null function pointer.
+/// DIRECT UNIT TEST — covers the `p_func.is_null()` branch in
+/// `BundleInterface::json_dumps` where fetching the `json.dumps` function
+/// fails. The test-only `PyObject_GetAttrString` override seam forces the
+/// lookup to return NULL, so `json_dumps` must return `Err`.
 #[test]
 fn test_json_dumps_returns_err_when_dumps_lookup_fails() {
     #[tokio::main(flavor = "current_thread")]
@@ -986,22 +979,11 @@ fn test_json_dumps_returns_err_when_dumps_lookup_fails() {
             .expect("bundle should load");
 
         let _guard = PYTHON_MUTEX.lock();
+        let _override = PyObjectGetAttrStringOverrideGuard::install(null_dumps_lookup);
         unsafe {
             let _scope = bundle
                 .thread_scope()
                 .expect("thread scope should be created");
-            // The json module is cached in the sub-interpreter, so this
-            // returns the same module object `json_dumps` reads from.
-            let json_module = PyImport_ImportModule(c"json".as_ptr());
-            assert!(!json_module.is_null(), "json module should import");
-            let c_name = CString::new("dumps").unwrap();
-            // PyObject_SetAttrString with a NULL value deletes the attribute
-            // (this is what CPython's PyObject_DelAttrString macro expands to).
-            assert_eq!(
-                PyObject_SetAttrString(json_module, c_name.as_ptr(), std::ptr::null_mut()),
-                0,
-                "deleting json.dumps should succeed"
-            );
             let obj = bundle.json_loads(r#"{"key": "value"}"#);
             assert!(!obj.is_null(), "json_loads should succeed");
             let result = bundle.json_dumps(obj);
@@ -1643,6 +1625,47 @@ impl Drop for JsonLoadsOverrideGuard {
 // SAFETY: Test-only; returns NULL without touching the Python error indicator.
 unsafe fn null_json_loads(_bundle: &BundleInterface, _content: &str) -> *mut PyObject {
     std::ptr::null_mut()
+}
+
+/// RAII guard that installs a `PyObject_GetAttrString` override for the
+/// duration of a test and restores the previous override on drop.
+struct PyObjectGetAttrStringOverrideGuard(Option<PyObjectGetAttrStringFn>);
+
+impl PyObjectGetAttrStringOverrideGuard {
+    fn install(f: PyObjectGetAttrStringFn) -> Self {
+        Self(set_py_object_get_attr_string_override(Some(f)))
+    }
+}
+
+impl Drop for PyObjectGetAttrStringOverrideGuard {
+    fn drop(&mut self) {
+        set_py_object_get_attr_string_override(self.0);
+    }
+}
+
+/// Override that makes `PyObject_GetAttrString` return NULL for the `dumps`
+/// attribute, forcing the `p_func.is_null()` branch in `json_dumps` while
+/// leaving `json_loads` working.
+unsafe fn null_dumps_lookup(obj: *mut PyObject, name: *const c_char) -> *mut PyObject {
+    null_attr_lookup(obj, name, "dumps")
+}
+
+/// Override that makes `PyObject_GetAttrString` return NULL for the `loads`
+/// attribute, forcing the `p_func.is_null()` branch in `json_loads`.
+unsafe fn null_loads_lookup(obj: *mut PyObject, name: *const c_char) -> *mut PyObject {
+    null_attr_lookup(obj, name, "loads")
+}
+
+/// Return NULL when `name` matches `target`, otherwise delegate to the real
+/// `PyObject_GetAttrString`.
+// SAFETY: Test-only; mirrors `PyObject_GetAttrString` semantics and only
+// returns NULL for the targeted attribute, leaving the error indicator clear.
+unsafe fn null_attr_lookup(obj: *mut PyObject, name: *const c_char, target: &str) -> *mut PyObject {
+    if !name.is_null() && CStr::from_ptr(name).to_bytes() == target.as_bytes() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: Delegates to the raw FFI call with identical semantics.
+    unsafe { PyObject_GetAttrString(obj, name) }
 }
 
 /// DIRECT UNIT TEST — covers the `json_obj.is_null()` early-return branch in

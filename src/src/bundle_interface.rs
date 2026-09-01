@@ -18,6 +18,7 @@ use crate::python_interface::{
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
 use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
 use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use tracing::{debug, error, info, trace};
@@ -96,6 +97,50 @@ pub fn set_json_loads_override(f: Option<JsonLoadsFn>) -> Option<JsonLoadsFn> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     std::mem::replace(&mut *guard, f)
+}
+
+// ─── Test-only PyObject_GetAttrString override seam ─────────────────────────
+// The `p_func.is_null()` early-return branches in `json_dumps` and `json_loads`
+// (which fetch the `json.dumps` / `json.loads` functions) are hard to reach
+// directly: they require mutating the real json module. This seam lets tests
+// force `PyObject_GetAttrString` to return NULL without changing production
+// behavior. Tests run serially (`--test-threads=1`), so the global override
+// cannot race across tests.
+
+#[cfg(test)]
+pub type PyObjectGetAttrStringFn =
+    unsafe fn(obj: *mut PyObject, name: *const c_char) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_OBJECT_GET_ATTR_STRING_OVERRIDE: StdMutex<Option<PyObjectGetAttrStringFn>> =
+    StdMutex::new(None);
+
+/// Test-only: install an override for `PyObject_GetAttrString`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_object_get_attr_string_override(
+    f: Option<PyObjectGetAttrStringFn>,
+) -> Option<PyObjectGetAttrStringFn> {
+    let mut guard = PY_OBJECT_GET_ATTR_STRING_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    std::mem::replace(&mut *guard, f)
+}
+
+/// Fetch an attribute by name, routing through the test-only override seam when
+/// installed. Mirrors `PyObject_GetAttrString`.
+fn py_object_get_attr_string(obj: *mut PyObject, name: *const c_char) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_OBJECT_GET_ATTR_STRING_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+    {
+        // SAFETY: The override has the same signature and contract as
+        // `PyObject_GetAttrString`, so calling it is as safe as the raw FFI.
+        return unsafe { f(obj, name) };
+    }
+    // SAFETY: Delegates to the raw FFI call with identical semantics.
+    unsafe { PyObject_GetAttrString(obj, name) }
 }
 
 impl BundleInterface {
@@ -496,7 +541,7 @@ impl BundleInterface {
             return Ok("null".to_string());
         }
 
-        let p_func = PyObject_GetAttrString(self.inner.json_module, c"dumps".as_ptr());
+        let p_func = py_object_get_attr_string(self.inner.json_module, c"dumps".as_ptr());
         if p_func.is_null() {
             PyErr_Clear();
             return Err("Failed to get json.dumps function".to_string());
@@ -550,7 +595,7 @@ impl BundleInterface {
             return f(self, content);
         }
 
-        let p_func = PyObject_GetAttrString(self.inner.json_module, c"loads".as_ptr());
+        let p_func = py_object_get_attr_string(self.inner.json_module, c"loads".as_ptr());
         if p_func.is_null() {
             error!("json_loads: failed to get json.loads function");
             PyErr_Clear();
