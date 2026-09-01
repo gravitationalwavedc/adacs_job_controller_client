@@ -247,16 +247,21 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
     Some((bundle_hash, job_id, job_data))
 }
 
+/// Set a Python error on `error_obj` with the given message.
+fn set_py_error(error_obj: *mut crate::python_interface::PyObject, msg: &str) {
+    let err_msg = err_cstring(msg);
+    // SAFETY: `error_obj` is a valid exception object obtained from
+    // `get_bundle_db_error`, and `err_msg` is a NUL-terminated C string.
+    unsafe { PyErr_SetString(error_obj, err_msg.as_ptr()) };
+}
+
 /// Set a Python error on `error_obj` and return the null pointer that FFI
 /// callbacks must return on failure.
 fn set_db_error_and_return_null(
     error_obj: *mut crate::python_interface::PyObject,
     msg: &str,
 ) -> *mut PyObject {
-    let err_msg = err_cstring(msg);
-    // SAFETY: `error_obj` is a valid exception object obtained from
-    // `get_bundle_db_error`, and `err_msg` is a NUL-terminated C string.
-    unsafe { PyErr_SetString(error_obj, err_msg.as_ptr()) };
+    set_py_error(error_obj, msg);
     ptr::null_mut()
 }
 
@@ -283,8 +288,7 @@ unsafe fn set_job_id_in_dict(
             "DB: {} failed to allocate job_id for bundle hash: {}, jobId: {}",
             context, bundle_hash, job_id
         );
-        let err_msg = err_cstring("Failed to allocate job_id");
-        PyErr_SetString(error_obj, err_msg.as_ptr());
+        set_py_error(error_obj, "Failed to allocate job_id");
         return false;
     }
     if PyDict_SetItemString(dict, c"job_id".as_ptr(), value) < 0 {
@@ -293,8 +297,7 @@ unsafe fn set_job_id_in_dict(
             "DB: {} failed to set job_id in dict for bundle hash: {}, jobId: {}",
             context, bundle_hash, job_id
         );
-        let err_msg = err_cstring("Failed to set job_id in dict");
-        PyErr_SetString(error_obj, err_msg.as_ptr());
+        set_py_error(error_obj, "Failed to set job_id in dict");
         return false;
     }
     Py_DecRef(value);
