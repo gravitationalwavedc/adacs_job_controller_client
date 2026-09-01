@@ -242,6 +242,12 @@ pub type PyTupleSetItemFn = unsafe fn(*mut PyObject, Py_ssize_t, *mut PyObject) 
 #[cfg(test)]
 static PY_TUPLE_SET_ITEM_OVERRIDE: Mutex<Option<PyTupleSetItemFn>> = Mutex::new(None);
 
+#[cfg(test)]
+pub type PyObjectCallObjectFn = unsafe fn(*mut PyObject, *mut PyObject) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_OBJECT_CALL_OBJECT_OVERRIDE: Mutex<Option<PyObjectCallObjectFn>> = Mutex::new(None);
+
 /// Test-only: install an override for `py_tuple_set_item`, returning the
 /// previously-installed override (if any). Pass `None` to clear it.
 #[cfg(test)]
@@ -265,6 +271,29 @@ pub unsafe fn py_tuple_set_item(
         return f(tuple, pos, item);
     }
     PyTuple_SetItem(tuple, pos, item)
+}
+
+/// Test-only: install an override for `py_object_call_object`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_object_call_object_override(
+    f: Option<PyObjectCallObjectFn>,
+) -> Option<PyObjectCallObjectFn> {
+    let mut guard = PY_OBJECT_CALL_OBJECT_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyObject_CallObject` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyObject_CallObject`: caller holds `PYTHON_MUTEX` and
+/// the GIL; `callable` is a callable object, `args` is a tuple (or NULL).
+pub unsafe fn py_object_call_object(callable: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_OBJECT_CALL_OBJECT_OVERRIDE.lock() {
+        return f(callable, args);
+    }
+    PyObject_CallObject(callable, args)
 }
 
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
