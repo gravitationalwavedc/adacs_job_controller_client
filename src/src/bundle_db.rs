@@ -151,16 +151,18 @@ fn build_bundle_create_or_update_message(
     msg
 }
 
-fn build_bundle_get_by_id_message(job_id: u64) -> Message {
-    let mut msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "database");
+fn build_bundle_id_message(msg_id: u32, job_id: u64) -> Message {
+    let mut msg = Message::new(msg_id, Priority::Medium, "database");
     msg.push_ulong(job_id);
     msg
 }
 
+fn build_bundle_get_by_id_message(job_id: u64) -> Message {
+    build_bundle_id_message(DB_BUNDLE_GET_JOB_BY_ID, job_id)
+}
+
 fn build_bundle_delete_message(job_id: u64) -> Message {
-    let mut msg = Message::new(DB_BUNDLE_DELETE_JOB, Priority::Medium, "database");
-    msg.push_ulong(job_id);
-    msg
+    build_bundle_id_message(DB_BUNDLE_DELETE_JOB, job_id)
 }
 
 fn parse_create_or_update_response(response: &Message) -> Result<u64, String> {
