@@ -27,6 +27,29 @@ static SINGLETON: std::sync::OnceLock<BundleManager> = std::sync::OnceLock::new(
 static SINGLETON_TEST: std::sync::atomic::AtomicPtr<BundleManager> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
+// ─── Test-only load_bundle hook seam ────────────────────────────────────────
+// The write-lock double-check in `load_bundle` ("loaded by another thread,
+// using cached") is unreachable through the public API because the read-lock
+// cache-hit check always returns first. This seam lets a test inject a bundle
+// into the cache between the read-lock check and write-lock acquisition,
+// making the double-check branch deterministically reachable without a race.
+// Tests run serially (`--test-threads=1`), so the global hook cannot race.
+
+#[cfg(test)]
+type LoadBundleHook = fn(&BundleManager, &str);
+
+#[cfg(test)]
+static LOAD_BUNDLE_HOOK: std::sync::Mutex<Option<LoadBundleHook>> = std::sync::Mutex::new(None);
+
+/// Test-only: install a hook to run between the read-lock cache check and the
+/// write-lock acquisition in `load_bundle`, returning the previously-installed
+/// hook (if any). Pass `None` to clear it.
+#[cfg(test)]
+fn set_load_bundle_hook(hook: Option<LoadBundleHook>) -> Option<LoadBundleHook> {
+    let mut guard = LOAD_BUNDLE_HOOK.lock().unwrap();
+    std::mem::replace(&mut *guard, hook)
+}
+
 /// Create a `ThreadScope` for the given bundle, tracing the operation.
 /// Shared by all `run_bundle_*` methods. Callers must hold `PYTHON_MUTEX`.
 fn create_thread_scope(
@@ -140,6 +163,15 @@ impl BundleManager {
             .insert(bundle.bundle_hash().to_string(), bundle);
     }
 
+    /// Test-only: run the installed `load_bundle` hook (if any) between the
+    /// read-lock cache check and the write-lock acquisition.
+    #[cfg(test)]
+    fn run_load_bundle_hook_for_test(&self, bundle_hash: &str) {
+        if let Some(hook) = *LOAD_BUNDLE_HOOK.lock().unwrap() {
+            hook(self, bundle_hash);
+        }
+    }
+
     /// Load (or return cached) `BundleInterface` for a given hash.
     /// Mirrors C++ `BundleManager::loadBundle()`.
     pub fn load_bundle(&self, bundle_hash: &str) -> Result<BundleInterface, String> {
@@ -161,6 +193,8 @@ impl BundleManager {
             "BundleManager: bundle {} not cached, acquiring write lock",
             bundle_hash
         );
+        #[cfg(test)]
+        self.run_load_bundle_hook_for_test(bundle_hash);
         let lock_start = std::time::Instant::now();
         let mut bundles = self.bundles.write();
         trace!(
@@ -497,6 +531,34 @@ mod load_bundle_tests {
     use super::*;
     use crate::tests::fixtures::bundle_fixture::{BundleFixture, JOB_SUBMIT_SCRIPT};
 
+    const INJECTED_HASH: &str = "test_double_check_cache_hit";
+
+    /// Hook that injects a failing bundle into the cache between the read-lock
+    /// check and write-lock acquisition in `load_bundle`, simulating a
+    /// concurrent load by another thread.
+    fn inject_failing_bundle(manager: &BundleManager, bundle_hash: &str) {
+        manager.insert_bundle_for_test(BundleInterface::with_thread_scope_error(
+            bundle_hash,
+            "boom",
+        ));
+    }
+
+    /// RAII guard that installs a `load_bundle` hook for the duration of a test
+    /// and restores the previous hook on drop.
+    struct LoadBundleHookGuard(Option<LoadBundleHook>);
+
+    impl LoadBundleHookGuard {
+        fn install(hook: LoadBundleHook) -> Self {
+            Self(set_load_bundle_hook(Some(hook)))
+        }
+    }
+
+    impl Drop for LoadBundleHookGuard {
+        fn drop(&mut self) {
+            set_load_bundle_hook(self.0);
+        }
+    }
+
     #[test]
     fn load_bundle_returns_cached_result_on_second_call() {
         crate::tests::init_python_global();
@@ -514,6 +576,22 @@ mod load_bundle_tests {
 
         // Both should reference the same inner Arc (cache hit, not re-loaded)
         assert_eq!(first.bundle_hash(), second.bundle_hash());
+    }
+
+    #[test]
+    fn load_bundle_uses_cached_bundle_injected_between_locks() {
+        crate::tests::init_python_global();
+        // The bundle root is nonexistent, so `BundleInterface::new` would fail.
+        // Returning Ok proves the double-check branch returned the cached clone
+        // injected by the hook instead of attempting a fresh load.
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+        let _guard = LoadBundleHookGuard::install(inject_failing_bundle);
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(INJECTED_HASH)
+            .expect("double-check branch should return the cached bundle");
+
+        assert_eq!(bundle.bundle_hash(), INJECTED_HASH);
     }
 }
 
