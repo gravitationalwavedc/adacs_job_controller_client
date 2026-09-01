@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_object_get_attr_string_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObjectGetAttrStringFn, PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn,
+    PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input,
+    Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -706,6 +707,46 @@ fn test_run_returns_err_for_missing_function() {
     inner();
 }
 
+/// DIRECT UNIT TEST — reviewer request.
+///
+/// Forces the bundle-function lookup in `run` to return NULL via the test-only
+/// `py_object_get_attr_string` override seam, so `run` must return
+/// `Err(NoneException)` without relying on a real missing attribute.
+#[test]
+fn test_run_returns_err_when_bundle_function_lookup_returns_null() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            // SAFETY: Test-only override; returns NULL for the bundle-function
+            // lookup to force the p_func.is_null() failure branch.
+            let _override = GetAttrStringOverrideGuard::install(|_, _| std::ptr::null_mut());
+            let result = bundle.run("submit", &serde_json::json!({}), "");
+            assert!(
+                result.is_err(),
+                "null bundle-function lookup should make run return Err"
+            );
+        }
+    }
+    inner();
+}
+
 /// A bundle attribute that exists but is not callable (e.g. `submit = 42`)
 /// makes `PyCallable_Check` return 0, so `run` must return
 /// `Err(NoneException)`.
@@ -1315,6 +1356,22 @@ impl TupleSetItemOverrideGuard {
 impl Drop for TupleSetItemOverrideGuard {
     fn drop(&mut self) {
         set_py_tuple_set_item_override(self.0);
+    }
+}
+
+/// RAII guard that installs a `py_object_get_attr_string` override for the
+/// duration of a test and restores the previous override on drop.
+struct GetAttrStringOverrideGuard(Option<PyObjectGetAttrStringFn>);
+
+impl GetAttrStringOverrideGuard {
+    fn install(f: PyObjectGetAttrStringFn) -> Self {
+        Self(set_py_object_get_attr_string_override(Some(f)))
+    }
+}
+
+impl Drop for GetAttrStringOverrideGuard {
+    fn drop(&mut self) {
+        set_py_object_get_attr_string_override(self.0);
     }
 }
 
