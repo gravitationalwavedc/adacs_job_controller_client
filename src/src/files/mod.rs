@@ -1671,16 +1671,7 @@ fn handle_file_upload_internal(
                         return;
                     }
                     drop(file);
-                    let complete_msg = Message::new(FILE_UPLOAD_COMPLETE, Priority::Highest, &uuid);
-                    if let Err(e) = ws_sender
-                        .send(WsMessage::Binary(complete_msg.get_data().clone().into()))
-                        .await
-                    {
-                        warn!(
-                            "handle_file_upload: Failed to send FILE_UPLOAD_COMPLETE: {}",
-                            e
-                        );
-                    }
+                    send_upload_complete(&mut ws_sender, &uuid).await;
                     debug!(
                         "handle_file_upload: uploaded {} bytes in {:?}",
                         received_size,
@@ -1871,6 +1862,26 @@ async fn remove_partial_file(full_path: &Path) {
         warn!(
             "handle_file_upload_internal: Failed to remove partial file {:?}: {}",
             full_path, e
+        );
+    }
+}
+
+/// Send the `FILE_UPLOAD_COMPLETE` acknowledgement for a finished upload.
+/// The file is already finalized at this point, so a send failure is only
+/// logged (the connection is about to be torn down anyway).
+async fn send_upload_complete<S, E>(ws_sender: &mut S, uuid: &str)
+where
+    S: Sink<WsMessage, Error = E> + Unpin,
+    E: std::fmt::Display,
+{
+    let complete_msg = Message::new(FILE_UPLOAD_COMPLETE, Priority::Highest, uuid);
+    if let Err(e) = ws_sender
+        .send(WsMessage::Binary(complete_msg.get_data().clone().into()))
+        .await
+    {
+        warn!(
+            "handle_file_upload: Failed to send FILE_UPLOAD_COMPLETE: {}",
+            e
         );
     }
 }
@@ -2986,6 +2997,39 @@ mod tests {
         assert!(
             !logs.contains("Failed to remove partial file"),
             "no warning expected on successful removal, got: {logs}"
+        );
+    }
+
+    #[test]
+    fn test_send_upload_complete_sends_complete_message() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut sink = TestSink::new();
+            send_upload_complete(&mut sink, "uuid-123").await;
+
+            assert_eq!(sink.sent.len(), 1);
+            let WsMessage::Binary(data) = &sink.sent[0] else {
+                panic!("expected a binary message");
+            };
+            let resp = Message::from_data(data.to_vec());
+            assert_eq!(resp.id, FILE_UPLOAD_COMPLETE);
+            assert_eq!(resp.source, "uuid-123");
+        });
+    }
+
+    #[test]
+    fn test_send_upload_complete_logs_warning_when_send_fails() {
+        let logs = capture_logs(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let mut sink = TestSink::new();
+                sink.fail_next = true;
+                send_upload_complete(&mut sink, "uuid-123").await;
+            });
+        });
+        assert!(
+            logs.contains("Failed to send FILE_UPLOAD_COMPLETE"),
+            "expected a warning for the failed send, got: {logs}"
         );
     }
 
