@@ -806,6 +806,61 @@ fn test_submit_error_logs_failed_delete_job() {
 }
 
 #[test_fork::test]
+fn test_submit_spawn_blocking_failure_cleans_up_job() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        setup_test(&db_name);
+        // Uninitialized BundleManager makes singleton() panic inside the
+        // spawn_blocking closure, surfacing as a JoinError.
+        BundleManager::reset_singleton_for_test();
+
+        let (mut mock_ws, state) = setup_mock_ws();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        // We expect 2 messages on error
+        mock_ws
+            .expect_queue_message()
+            .times(2)
+            .returning(move |_, _, _| {
+                let _ = tx_clone.send(());
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 4321u32;
+        let mut msg_raw = Message::new(SUBMIT_JOB, Priority::Medium, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id);
+        msg_raw.push_string("uninitialized_bundle_hash");
+        msg_raw.push_string("test params");
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+        handle_job_submit(msg);
+
+        // Wait for messages to be processed
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("Timed out waiting for first message");
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("Timed out waiting for second message");
+
+        // Job should be deleted after submit failure
+        let job = state
+            .lock()
+            .unwrap()
+            .jobs
+            .values()
+            .find(|j| j.job_id == Some(i64::from(job_id)))
+            .cloned();
+        assert!(job.is_none(), "Job should be deleted after submit failure");
+    }
+    inner();
+}
+
+#[test_fork::test]
 fn test_check_status_job_running_same_status() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
