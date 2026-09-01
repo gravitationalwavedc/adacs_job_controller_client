@@ -2478,4 +2478,32 @@ mod tests {
             .await
             .expect_err("already-closed disconnect must not re-notify waiters");
     }
+
+    #[tokio::test]
+    async fn test_handle_disconnect_second_call_same_id_skips_re_notify() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(7, Ordering::SeqCst);
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+        client.reconnectable.store(true, Ordering::SeqCst);
+
+        let disconnect_notify = Arc::new(Notify::new());
+
+        // First disconnect for this connection id: was_closed is false, so
+        // disconnect waiters must be notified.
+        let first_notified = disconnect_notify.notified();
+        client.handle_disconnect(7, &disconnect_notify);
+        tokio::time::timeout(Duration::from_millis(100), first_notified)
+            .await
+            .expect("first disconnect should notify waiters");
+
+        // Second disconnect for the same id (e.g. reader and writer halves
+        // both fail): was_closed is now true, so waiters must NOT be
+        // re-notified.
+        let second_notified = disconnect_notify.notified();
+        client.handle_disconnect(7, &disconnect_notify);
+        tokio::time::timeout(Duration::from_millis(50), second_notified)
+            .await
+            .expect_err("second disconnect for the same id must not re-notify waiters");
+    }
 }
