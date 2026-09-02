@@ -6,9 +6,9 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_object_call_object, py_tuple_set_item,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
+    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
     PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
@@ -520,7 +520,7 @@ impl BundleInterface {
             return Err("Error calling json.dumps".to_string());
         }
 
-        let p_value = PyObject_CallObject(p_func, p_args);
+        let p_value = py_object_call_object(p_func, p_args);
         if p_value.is_null() || !PyErr_Occurred().is_null() {
             self.print_last_python_exception();
             Py_DecRef(p_args);
@@ -591,7 +591,7 @@ impl BundleInterface {
             return std::ptr::null_mut();
         }
 
-        let result = PyObject_CallObject(p_func, p_args);
+        let result = py_object_call_object(p_func, p_args);
         if result.is_null() || !PyErr_Occurred().is_null() {
             self.print_last_python_exception();
             error!("Error calling json.loads - returning NULL");

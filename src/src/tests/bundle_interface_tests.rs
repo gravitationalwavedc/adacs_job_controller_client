@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_object_call_object_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObjectCallObjectFn, PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn,
+    PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input,
+    Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1486,6 +1487,93 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
         logs.contains("Error setting exception value in args tuple"),
         "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
     );
+}
+
+// ─── PyObject_CallObject error-indicator branches (json_dumps / json_loads) ──
+//
+// The `!PyErr_Occurred().is_null()` half of the failure check in
+// `BundleInterface::json_dumps` and `json_loads` is unreachable through the
+// public API: a successful `PyObject_CallObject` leaves the error indicator
+// clear. These tests use the test-only FFI override seam
+// (`set_py_object_call_object_override`) to return a non-NULL object while
+// leaving the error indicator set, forcing each branch.
+
+/// RAII guard that installs a `py_object_call_object` override for the duration
+/// of a test and restores the previous override on drop.
+struct PyObjectCallObjectOverrideGuard(Option<PyObjectCallObjectFn>);
+
+impl PyObjectCallObjectOverrideGuard {
+    fn install(f: PyObjectCallObjectFn) -> Self {
+        Self(set_py_object_call_object_override(Some(f)))
+    }
+}
+
+impl Drop for PyObjectCallObjectOverrideGuard {
+    fn drop(&mut self) {
+        set_py_object_call_object_override(self.0);
+    }
+}
+
+/// Override that returns a non-NULL object (a new reference to an int) while
+/// leaving the Python error indicator set, simulating a call that "succeeded"
+/// but also set an error.
+// SAFETY: Test-only; `callable`/`args` are live objects from the caller. Sets
+// the error indicator and returns a new reference to a PyLong.
+unsafe fn non_null_with_error(_callable: *mut PyObject, _args: *mut PyObject) -> *mut PyObject {
+    let exc = runtime_error_type();
+    PyErr_SetString(exc, c"boom".as_ptr());
+    Py_DecRef(exc);
+    PyLong_FromUnsignedLongLong(42)
+}
+
+/// DIRECT UNIT TEST — `json_dumps` must return `Err` when the call returns a
+/// non-NULL object but leaves the error indicator set, and must clear the
+/// indicator so it can't poison later FFI calls.
+#[test]
+fn test_json_dumps_returns_err_when_call_succeeds_but_error_indicator_set() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyObjectCallObjectOverrideGuard::install(non_null_with_error);
+
+    let _guard = PYTHON_MUTEX.lock();
+    unsafe {
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let obj = PyLong_FromUnsignedLongLong(42);
+        assert!(!obj.is_null(), "int object should be created");
+        let result = bundle.json_dumps(obj);
+        Py_DecRef(obj);
+        assert_eq!(
+            result,
+            Err("Error calling json.dumps".to_string()),
+            "json_dumps should return Err when the call leaves the error indicator set"
+        );
+        assert!(
+            PyErr_Occurred().is_null(),
+            "stale error from the call must be cleared"
+        );
+    }
+}
+
+/// DIRECT UNIT TEST — `json_loads` must return NULL when the call returns a
+/// non-NULL object but leaves the error indicator set, and must clear the
+/// indicator so it can't poison later FFI calls.
+#[test]
+fn test_json_loads_returns_null_when_call_succeeds_but_error_indicator_set() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyObjectCallObjectOverrideGuard::install(non_null_with_error);
+
+    let _guard = PYTHON_MUTEX.lock();
+    unsafe {
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let obj = bundle.json_loads(r#"{"key": "value"}"#);
+        assert!(
+            obj.is_null(),
+            "json_loads should return NULL when the call leaves the error indicator set"
+        );
+        assert!(
+            PyErr_Occurred().is_null(),
+            "stale error from the call must be cleared"
+        );
+    }
 }
 
 /// DIRECT UNIT TEST for the NULL-traceback branch in
