@@ -17,7 +17,7 @@ use crate::python_interface::{
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use tracing::{debug, error, info, trace};
@@ -96,6 +96,45 @@ pub fn set_json_loads_override(f: Option<JsonLoadsFn>) -> Option<JsonLoadsFn> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     std::mem::replace(&mut *guard, f)
+}
+
+// ─── Test-only py_unicode_as_utf8 override seam ─────────────────────────────
+// The `PyUnicode_AsUTF8` is_null() branches in `extract_type_name`,
+// `extract_value_string`, and `log_python_lines` are defensive (inputs are
+// always `str`). This seam lets tests force a NULL return without changing
+// production behavior. Tests run serially (`--test-threads=1`), so the
+// global override cannot race across tests.
+#[cfg(test)]
+pub type PyUnicodeAsUtf8Fn = unsafe fn(*mut PyObject) -> *const c_char;
+
+#[cfg(test)]
+static PY_UNICODE_AS_UTF8_OVERRIDE: StdMutex<Option<PyUnicodeAsUtf8Fn>> = StdMutex::new(None);
+
+/// Test-only: install an override for `py_unicode_as_utf8`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_unicode_as_utf8_override(f: Option<PyUnicodeAsUtf8Fn>) -> Option<PyUnicodeAsUtf8Fn> {
+    let mut guard = PY_UNICODE_AS_UTF8_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyUnicode_AsUTF8` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyUnicode_AsUTF8`: caller holds `PYTHON_MUTEX` and
+/// the GIL; `obj` is a live object. Returns NULL (setting a Python error)
+/// when `obj` is not a `str`.
+unsafe fn py_unicode_as_utf8(obj: *mut PyObject) -> *const c_char {
+    #[cfg(test)]
+    if let Some(f) = *PY_UNICODE_AS_UTF8_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+    {
+        return f(obj);
+    }
+    PyUnicode_AsUTF8(obj)
 }
 
 impl BundleInterface {
@@ -812,7 +851,7 @@ unsafe fn extract_type_name(extype: *mut PyObject) -> String {
         swallow_python_error();
         return "unknown".to_string();
     }
-    let c_str = PyUnicode_AsUTF8(type_str);
+    let c_str = py_unicode_as_utf8(type_str);
     let name = if c_str.is_null() {
         PyErr_Clear();
         "unknown".to_string()
@@ -841,7 +880,7 @@ unsafe fn extract_value_string(
         swallow_python_error();
         return String::new();
     }
-    let c_str = PyUnicode_AsUTF8(str_obj);
+    let c_str = py_unicode_as_utf8(str_obj);
     let s = if c_str.is_null() {
         PyErr_Clear();
         String::new()
@@ -916,7 +955,7 @@ unsafe fn log_python_lines(lines: *mut PyObject) {
             }
             break;
         }
-        let c_str = PyUnicode_AsUTF8(item);
+        let c_str = py_unicode_as_utf8(item);
         if c_str.is_null() {
             swallow_python_error();
         } else {
@@ -1263,6 +1302,109 @@ mod bundle_interface_conversion_tests {
                 "stale error from PyObject_GetAttrString must be cleared"
             );
             Py_DecRef(int_obj);
+        }
+    }
+}
+
+// ─── py_unicode_as_utf8 override tests ──────────────────────────────────────
+// The `PyUnicode_AsUTF8` is_null() branches in `extract_type_name`,
+// `extract_value_string`, and `log_python_lines` are unreachable through the
+// public API because the inputs are always `str`. These tests use the
+// test-only `py_unicode_as_utf8` override seam to force a NULL return and
+// verify each branch's error-clearing + fallback.
+
+#[cfg(test)]
+mod py_unicode_as_utf8_tests {
+    use super::*;
+    use crate::python_interface::Py_eval_input;
+
+    struct UnicodeAsUtf8OverrideGuard(Option<PyUnicodeAsUtf8Fn>);
+
+    impl UnicodeAsUtf8OverrideGuard {
+        fn install(f: PyUnicodeAsUtf8Fn) -> Self {
+            Self(set_py_unicode_as_utf8_override(Some(f)))
+        }
+    }
+
+    impl Drop for UnicodeAsUtf8OverrideGuard {
+        fn drop(&mut self) {
+            set_py_unicode_as_utf8_override(self.0);
+        }
+    }
+
+    // SAFETY: Test-only; returns NULL without touching `obj` or the error
+    // indicator.
+    unsafe fn always_null(_obj: *mut PyObject) -> *const c_char {
+        std::ptr::null()
+    }
+
+    // SAFETY: Test-only; evaluates `code` in a fresh globals dict under the
+    // caller's GIL and returns the resulting object (a new reference).
+    unsafe fn eval_code(code: &CStr) -> *mut PyObject {
+        let globals = PyDict_New();
+        PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
+        let obj = PyRun_StringFlags(
+            code.as_ptr(),
+            Py_eval_input,
+            globals,
+            globals,
+            std::ptr::null_mut(),
+        );
+        Py_DecRef(globals);
+        obj
+    }
+
+    #[test]
+    fn extract_type_name_returns_unknown_when_utf8_null() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let _override = UnicodeAsUtf8OverrideGuard::install(always_null);
+            let instance = eval_code(c"type('_T', (), {})()");
+            assert!(!instance.is_null(), "class instance should be created");
+            assert_eq!(extract_type_name(instance), "unknown");
+            assert!(PyErr_Occurred().is_null(), "stale error must be cleared");
+            Py_DecRef(instance);
+        }
+    }
+
+    #[test]
+    fn extract_value_string_returns_empty_when_utf8_null() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let _override = UnicodeAsUtf8OverrideGuard::install(always_null);
+            let str_obj = PyUnicode_FromString(c"a str".as_ptr());
+            assert!(!str_obj.is_null(), "str object should be created");
+            assert_eq!(extract_value_string(str_obj, PyObject_Repr), "");
+            assert!(PyErr_Occurred().is_null(), "stale error must be cleared");
+            Py_DecRef(str_obj);
+        }
+    }
+
+    #[test]
+    fn log_python_lines_swallows_error_when_utf8_null() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let _override = UnicodeAsUtf8OverrideGuard::install(always_null);
+            let list = eval_code(c"['a line']");
+            assert!(!list.is_null(), "list literal should evaluate");
+            log_python_lines(list);
+            assert!(PyErr_Occurred().is_null(), "stale error must be swallowed");
+            Py_DecRef(list);
         }
     }
 }
