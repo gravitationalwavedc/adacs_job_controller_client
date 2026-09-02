@@ -1155,4 +1155,76 @@ mod tests {
             crate::python_interface::Py_DecRef(traceback);
         }
     }
+
+    #[test]
+    fn create_or_update_job_returns_null_when_args_invalid() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of PyTuple_GetItem (which sets IndexError when the
+        // index is out of range).
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let args = crate::python_interface::PyTuple_New(0);
+            let result = create_or_update_job(ptr::null_mut(), args);
+            crate::python_interface::Py_DecRef(args);
+            assert!(result.is_null(), "invalid args should return NULL");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "IndexError should be set by PyTuple_GetItem"
+            );
+            crate::python_interface::PyErr_Clear();
+        }
+    }
+
+    #[test]
+    fn get_job_by_id_returns_null_when_args_invalid() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of PyTuple_GetItem (which sets IndexError when the
+        // index is out of range).
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let args = crate::python_interface::PyTuple_New(0);
+            let result = get_job_by_id(ptr::null_mut(), args);
+            crate::python_interface::Py_DecRef(args);
+            assert!(result.is_null(), "invalid args should return NULL");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "IndexError should be set by PyTuple_GetItem"
+            );
+            crate::python_interface::PyErr_Clear();
+        }
+    }
+
+    #[test]
+    fn delete_job_returns_null_when_args_invalid() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of PyTuple_GetItem (which sets IndexError when the
+        // index is out of range).
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let args = crate::python_interface::PyTuple_New(0);
+            let result = delete_job(ptr::null_mut(), args);
+            crate::python_interface::Py_DecRef(args);
+            assert!(result.is_null(), "invalid args should return NULL");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "IndexError should be set by PyTuple_GetItem"
+            );
+            crate::python_interface::PyErr_Clear();
+        }
+    }
 }
