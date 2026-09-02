@@ -267,6 +267,35 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyEvalGetBuiltinsFn = unsafe fn() -> *mut PyObject;
+
+#[cfg(test)]
+static PY_EVAL_GET_BUILTINS_OVERRIDE: Mutex<Option<PyEvalGetBuiltinsFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_eval_get_builtins`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_eval_get_builtins_override(
+    f: Option<PyEvalGetBuiltinsFn>,
+) -> Option<PyEvalGetBuiltinsFn> {
+    let mut guard = PY_EVAL_GET_BUILTINS_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyEval_GetBuiltins` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyEval_GetBuiltins`: caller holds `PYTHON_MUTEX` and
+/// the GIL.
+pub unsafe fn py_eval_get_builtins() -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_EVAL_GET_BUILTINS_OVERRIDE.lock() {
+        return f();
+    }
+    PyEval_GetBuiltins()
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///
