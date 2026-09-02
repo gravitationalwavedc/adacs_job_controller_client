@@ -1225,4 +1225,66 @@ mod tests {
             crate::python_interface::PyErr_Clear();
         }
     }
+
+    #[test]
+    fn delete_job_returns_null_and_sets_error_when_job_id_missing() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_delete_job_missing_job_id";
+        fixture.write_bundle_db_create_or_update_job(bundle_hash, r#"{"test": 1}"#);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        let bundle = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _bundle_guard =
+                crate::thread_bundle_map::ThreadBundleGuard::new(bundle_hash.to_string());
+            let error_obj = get_bundle_db_error(bundle_hash);
+            // A dict without a "job_id" field makes load_bundle_and_job_id
+            // default job_id to 0, hitting the missing-job-id branch.
+            let job_dict = crate::python_interface::PyDict_New();
+            assert!(!job_dict.is_null(), "dict should be created");
+            let args = crate::python_interface::PyTuple_New(1);
+            assert_eq!(
+                crate::python_interface::PyTuple_SetItem(args, 0, job_dict),
+                0,
+                "tuple set should succeed"
+            );
+            let result = delete_job(ptr::null_mut(), args);
+            crate::python_interface::Py_DecRef(args);
+            assert!(result.is_null(), "missing job ID should return NULL");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "bundle error should be set"
+            );
+
+            let mut extype: *mut PyObject = ptr::null_mut();
+            let mut value: *mut PyObject = ptr::null_mut();
+            let mut traceback: *mut PyObject = ptr::null_mut();
+            crate::python_interface::PyErr_Fetch(
+                &raw mut extype,
+                &raw mut value,
+                &raw mut traceback,
+            );
+            assert_eq!(
+                extype, error_obj,
+                "bundle error should be set on the stored exception"
+            );
+            let str_obj = crate::python_interface::PyObject_Str(value);
+            assert!(!str_obj.is_null(), "error value should stringify");
+            let c_str = crate::python_interface::PyUnicode_AsUTF8(str_obj);
+            assert!(!c_str.is_null(), "error string should be UTF-8");
+            assert_eq!(
+                std::ffi::CStr::from_ptr(c_str).to_str().unwrap(),
+                "Job ID must be provided."
+            );
+            crate::python_interface::Py_DecRef(str_obj);
+            crate::python_interface::Py_DecRef(extype);
+            crate::python_interface::Py_DecRef(value);
+            crate::python_interface::Py_DecRef(traceback);
+        }
+    }
 }
