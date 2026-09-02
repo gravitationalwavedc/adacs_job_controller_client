@@ -978,7 +978,7 @@ mod fallback_value_text_tests {
 mod bundle_interface_conversion_tests {
     use super::*;
     use crate::python_interface::{
-        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, Py_eval_input,
+        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, PyUnicode_FromString, Py_eval_input,
     };
 
     /// Helper: create a minimal `BundleInterface` with null pointer fields.
@@ -1015,6 +1015,48 @@ mod bundle_interface_conversion_tests {
     fn to_string_py_returns_empty_for_null_pointer() {
         unsafe {
             assert_eq!(BundleInterface::to_string_py(std::ptr::null_mut()), "");
+        }
+    }
+
+    #[test]
+    fn to_string_py_returns_empty_and_clears_error_for_non_str_object() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `to_string_py` and `PyErr_Clear`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let int_obj = PyLong_FromUnsignedLongLong(42);
+            assert!(!int_obj.is_null(), "int object should be created");
+            assert_eq!(BundleInterface::to_string_py(int_obj), "");
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyUnicode_AsUTF8 must be cleared"
+            );
+            Py_DecRef(int_obj);
+        }
+    }
+
+    #[test]
+    fn to_uint64_returns_zero_and_clears_error_for_non_int_object() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `to_uint64` and `PyErr_Clear`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let str_obj = PyUnicode_FromString(c"not an int".as_ptr());
+            assert!(!str_obj.is_null(), "str object should be created");
+            assert_eq!(BundleInterface::to_uint64(str_obj), 0);
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyLong_AsUnsignedLongLong must be cleared"
+            );
+            Py_DecRef(str_obj);
         }
     }
 
