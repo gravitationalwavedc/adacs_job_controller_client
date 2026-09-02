@@ -603,10 +603,6 @@ fn send_file_list_error(uuid: &str, error_msg: &str) {
     );
 }
 
-fn get_ws_endpoint_from_config() -> String {
-    crate::config::get_websocket_endpoint()
-}
-
 pub fn handle_file_download(mut msg: Message) {
     let job_id = i64::from(msg.pop_uint());
     let uuid = msg.pop_string();
@@ -614,7 +610,7 @@ pub fn handle_file_download(mut msg: Message) {
     let file_path = msg.pop_string();
 
     // Read config BEFORE spawning to capture the correct URL for this download
-    let ws_endpoint = get_ws_endpoint_from_config();
+    let ws_endpoint = crate::config::get_websocket_endpoint();
 
     tokio::spawn(async move {
         run_download_supervisor(job_id, uuid, bundle_hash, file_path, ws_endpoint).await;
@@ -1510,7 +1506,7 @@ fn parse_upload_fields(msg: &mut Message) -> UploadFields {
 
 pub fn handle_file_upload(msg: Message) {
     // Read config BEFORE spawning to capture the correct URL for this upload
-    let ws_endpoint = get_ws_endpoint_from_config();
+    let ws_endpoint = crate::config::get_websocket_endpoint();
 
     handle_file_upload_with_url(msg, ws_endpoint);
 }
@@ -1936,7 +1932,6 @@ mod tests {
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
     use mockall::predicate::{always, eq};
-    use serde_json::json;
     use std::fs;
     use std::io::Write;
     use std::sync::{Arc, Mutex};
@@ -3291,45 +3286,6 @@ mod tests {
             server.stop().await;
         }
         set_server_ready_timeout_for_test(None);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn get_ws_endpoint_from_config_reads_and_normalizes_trailing_slash() {
-        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
-        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
-            "websocketEndpoint": "ws://example.com/ws",
-        }));
-
-        assert_eq!(get_ws_endpoint_from_config(), "ws://example.com/ws/");
-
-        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn get_ws_endpoint_from_config_preserves_existing_trailing_slash() {
-        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
-        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
-            "websocketEndpoint": "ws://example.com/ws/",
-        }));
-
-        assert_eq!(get_ws_endpoint_from_config(), "ws://example.com/ws/");
-
-        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn get_ws_endpoint_from_config_falls_back_to_default_when_key_missing() {
-        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
-        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
-            "cluster": "test_cluster",
-        }));
-
-        assert_eq!(get_ws_endpoint_from_config(), "ws://127.0.0.1:8001/ws/");
-
-        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
     }
 
     #[test]
