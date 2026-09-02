@@ -1628,13 +1628,15 @@ fn handle_file_upload_internal(
                 if m.id == FILE_UPLOAD_CHUNK {
                     let chunk = m.pop_bytes();
                     let chunk_len = chunk.len() as u64;
-                    if received_size + chunk_len > file_size {
+                    // Use saturating arithmetic so an overflowing chunk_len can't wrap
+                    // past u64::MAX and bypass the size guard on untrusted wire data.
+                    if chunk_len > file_size.saturating_sub(received_size) {
                         return fail_upload(
                             &mut ws_sender,
                             &uuid,
                             &format!(
                                 "File size mismatch: expected {file_size}, got {}",
-                                received_size + chunk_len
+                                received_size.saturating_add(chunk_len)
                             ),
                             Some(&full_path),
                         )
