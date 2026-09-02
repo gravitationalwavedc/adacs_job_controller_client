@@ -267,6 +267,35 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyImportImportModuleFn = unsafe fn(name: *const c_char) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_IMPORT_IMPORT_MODULE_OVERRIDE: Mutex<Option<PyImportImportModuleFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_import_import_module`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_import_import_module_override(
+    f: Option<PyImportImportModuleFn>,
+) -> Option<PyImportImportModuleFn> {
+    let mut guard = PY_IMPORT_IMPORT_MODULE_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyImport_ImportModule` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyImport_ImportModule`: caller holds `PYTHON_MUTEX`
+/// and the GIL; `name` is a valid NUL-terminated C string.
+pub unsafe fn py_import_import_module(name: *const c_char) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_IMPORT_IMPORT_MODULE_OVERRIDE.lock() {
+        return f(name);
+    }
+    PyImport_ImportModule(name)
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///
