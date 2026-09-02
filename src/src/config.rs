@@ -298,6 +298,44 @@ mod tests {
         );
     }
 
+    // --- get_websocket_endpoint tests ---
+
+    #[test]
+    #[serial_test::serial]
+    fn get_websocket_endpoint_normalizes_trailing_slash() {
+        set_test_config(json!({"websocketEndpoint": "ws://example.com/ws"}));
+        let result = get_websocket_endpoint();
+        reset_test_config();
+        assert_eq!(result, "ws://example.com/ws/");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_websocket_endpoint_preserves_existing_trailing_slash() {
+        set_test_config(json!({"websocketEndpoint": "ws://example.com/ws/"}));
+        let result = get_websocket_endpoint();
+        reset_test_config();
+        assert_eq!(result, "ws://example.com/ws/");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_websocket_endpoint_defaults_when_missing() {
+        set_test_config(json!({}));
+        let result = get_websocket_endpoint();
+        reset_test_config();
+        assert_eq!(result, "ws://127.0.0.1:8001/ws/");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_websocket_endpoint_defaults_when_null() {
+        set_test_config(json!({"websocketEndpoint": null}));
+        let result = get_websocket_endpoint();
+        reset_test_config();
+        assert_eq!(result, "ws://127.0.0.1:8001/ws/");
+    }
+
     // --- get_log_level tests ---
 
     #[test]
