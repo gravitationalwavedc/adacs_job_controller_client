@@ -449,7 +449,7 @@ pub fn handle_file_list(mut msg: Message) {
             "handle_file_list: sending FILE_LIST response with {} files",
             file_count
         );
-        for (path, is_dir, size) in file_list {
+        for (path, is_dir, size) in file_list.into_iter().take(file_count as usize) {
             result.push_string(&path);
             result.push_bool(is_dir);
             result.push_ulong(size);
