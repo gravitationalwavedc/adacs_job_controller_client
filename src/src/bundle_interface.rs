@@ -17,7 +17,7 @@ use crate::python_interface::{
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use tracing::{debug, error, info, trace};
@@ -96,6 +96,43 @@ pub fn set_json_loads_override(f: Option<JsonLoadsFn>) -> Option<JsonLoadsFn> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     std::mem::replace(&mut *guard, f)
+}
+
+// ─── Test-only PySys_GetObject override seam ────────────────────────────────
+// The `p_path.is_null()` early-return branch in
+// `append_bundle_path_to_sys_path` is unreachable through the public API
+// because `sys.path` always exists in a live interpreter, so `PySys_GetObject`
+// always returns a non-NULL object. This seam lets tests force it to return
+// NULL without changing production behavior. Tests run serially
+// (`--test-threads=1`), so the global override cannot race across tests.
+
+#[cfg(test)]
+pub type PySysGetObjectFn = unsafe fn(*const c_char) -> *mut PyObject;
+
+#[cfg(test)]
+static SYS_GET_OBJECT_OVERRIDE: StdMutex<Option<PySysGetObjectFn>> = StdMutex::new(None);
+
+/// Test-only: install an override for `PySys_GetObject`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_sys_get_object_override(f: Option<PySysGetObjectFn>) -> Option<PySysGetObjectFn> {
+    let mut guard = SYS_GET_OBJECT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    std::mem::replace(&mut *guard, f)
+}
+
+/// Route `PySys_GetObject` through the test-only override seam when compiled
+/// for tests; otherwise call the real C-API function directly.
+unsafe fn call_py_sys_get_object(name: *const c_char) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *SYS_GET_OBJECT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+    {
+        return f(name);
+    }
+    PySys_GetObject(name)
 }
 
 impl BundleInterface {
@@ -259,7 +296,7 @@ impl BundleInterface {
 
         // Add the bundle path to the system path
         info!("BundleInterface::new appending bundle path to sys.path");
-        let p_path = PySys_GetObject(c"path".as_ptr());
+        let p_path = unsafe { call_py_sys_get_object(c"path".as_ptr()) };
         if let Err(e) = Self::append_bundle_path_to_sys_path(p_path, &bundle_path) {
             Py_DecRef(p_global);
             Py_DecRef(json_module);

@@ -9,7 +9,10 @@
 //! bundle scripts and capture the structured log output to verify that
 //! the full stack trace is printed to the console.
 
-use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoadsFn};
+use crate::bundle_interface::{
+    set_json_loads_override, set_sys_get_object_override, BundleInterface, JsonLoadsFn,
+    PySysGetObjectFn,
+};
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
@@ -23,7 +26,7 @@ use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1169,6 +1172,55 @@ fn test_bundle_interface_new_missing_bundle_module() {
             result.err().as_deref(),
             Some("Failed to load bundle module"),
             "missing bundle module should fail with 'Failed to load bundle module'"
+        );
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST for the `p_path.is_null()` branch in
+/// `append_bundle_path_to_sys_path` (`bundle_interface.rs`). The branch is
+/// unreachable through the public API because `sys.path` always exists in a
+/// live interpreter, so `PySys_GetObject` always returns a non-NULL object.
+/// This test uses the test-only `PySys_GetObject` override seam to force a
+/// NULL return and verify `BundleInterface::new` propagates the error as
+/// `Err("Failed to get sys.path")`.
+#[test]
+fn test_bundle_interface_new_sys_path_null() {
+    // SAFETY: Test-only override; returns NULL without touching the Python
+    // error indicator.
+    unsafe fn null_sys_get_object(_name: *const c_char) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
+
+    struct SysGetObjectOverrideGuard(Option<PySysGetObjectFn>);
+    impl SysGetObjectOverrideGuard {
+        fn install(f: PySysGetObjectFn) -> Self {
+            Self(set_sys_get_object_override(Some(f)))
+        }
+    }
+    impl Drop for SysGetObjectOverrideGuard {
+        fn drop(&mut self) {
+            set_sys_get_object_override(self.0);
+        }
+    }
+
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let _override = SysGetObjectOverrideGuard::install(null_sys_get_object);
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to get sys.path"),
+            "a NULL sys.path should fail with 'Failed to get sys.path'"
         );
     }
     inner();
