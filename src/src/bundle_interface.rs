@@ -98,6 +98,30 @@ pub fn set_json_loads_override(f: Option<JsonLoadsFn>) -> Option<JsonLoadsFn> {
     std::mem::replace(&mut *guard, f)
 }
 
+// ─── Test-only json_dumps override seam ──────────────────────────────────────
+// The `Err` branch in `BundleInterface::json_dumps` (and the corresponding
+// `load_bundle_and_job_id` failure branch in `bundle_db`) is hard to reach
+// through the public API because `json.dumps` succeeds on any valid dict.
+// This seam lets tests force `json_dumps` to return `Err` without changing
+// production behavior. Tests run serially (`--test-threads=1`), so the
+// global override cannot race across tests.
+
+#[cfg(test)]
+pub type JsonDumpsFn = unsafe fn(&BundleInterface, *mut PyObject) -> Result<String, String>;
+
+#[cfg(test)]
+static JSON_DUMPS_OVERRIDE: StdMutex<Option<JsonDumpsFn>> = StdMutex::new(None);
+
+/// Test-only: install an override for `BundleInterface::json_dumps`, returning
+/// the previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_json_dumps_override(f: Option<JsonDumpsFn>) -> Option<JsonDumpsFn> {
+    let mut guard = JSON_DUMPS_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    std::mem::replace(&mut *guard, f)
+}
+
 impl BundleInterface {
     /// Return the bundle hash for this interface.
     pub fn bundle_hash(&self) -> &str {
@@ -492,6 +516,14 @@ impl BundleInterface {
 
     /// Call json.dumps on a `PyObject`. Mirrors C++ `BundleInterface::jsonDumps()`.
     pub unsafe fn json_dumps(&self, obj: *mut PyObject) -> Result<String, String> {
+        #[cfg(test)]
+        if let Some(f) = *JSON_DUMPS_OVERRIDE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            return f(self, obj);
+        }
+
         if obj.is_null() {
             return Ok("null".to_string());
         }
