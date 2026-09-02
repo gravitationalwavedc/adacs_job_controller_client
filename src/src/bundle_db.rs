@@ -16,8 +16,8 @@ use crate::messaging::{
     DB_BUNDLE_GET_JOB_BY_ID,
 };
 use crate::python_interface::{
-    return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException, PyErr_Occurred,
-    PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef,
+    py_long_from_unsigned_long_long, return_py_none, PyDict_SetItemString, PyErr_Clear,
+    PyErr_NewException, PyErr_Occurred, PyErr_SetString, PyLong_AsUnsignedLongLong, PyMethodDef,
     PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
     PyTuple_GetItem, Py_DecRef, Py_IncRef, Py_XDECREF, METH_VARARGS, PYTHON_API_VERSION,
 };
@@ -372,7 +372,7 @@ pub unsafe extern "C" fn create_or_update_job(
             };
 
             // Set job_id in the original dict (matches C++ exactly)
-            let value = PyLong_FromUnsignedLongLong(new_job_id);
+            let value = py_long_from_unsigned_long_long(new_job_id);
             if !set_job_id_in_dict(
                 dict,
                 value,
@@ -464,7 +464,7 @@ pub unsafe extern "C" fn get_job_by_id(_self: *mut PyObject, args: *mut PyObject
             }
 
             // Set job_id in the dict
-            let value = PyLong_FromUnsignedLongLong(job_id);
+            let value = py_long_from_unsigned_long_long(job_id);
             if !set_job_id_in_dict(
                 dict,
                 value,
@@ -631,6 +631,7 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
 mod tests {
     use super::*;
     use crate::messaging::DB_RESPONSE;
+    use crate::python_interface::PyLong_FromUnsignedLongLong;
 
     #[test]
     fn err_cstring_preserves_well_formed_message() {

@@ -267,6 +267,36 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyLongFromUnsignedLongLongFn = unsafe fn(u64) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_LONG_FROM_UNSIGNED_LONG_LONG_OVERRIDE: Mutex<Option<PyLongFromUnsignedLongLongFn>> =
+    Mutex::new(None);
+
+/// Test-only: install an override for `py_long_from_unsigned_long_long`,
+/// returning the previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_long_from_unsigned_long_long_override(
+    f: Option<PyLongFromUnsignedLongLongFn>,
+) -> Option<PyLongFromUnsignedLongLongFn> {
+    let mut guard = PY_LONG_FROM_UNSIGNED_LONG_LONG_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyLong_FromUnsignedLongLong` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyLong_FromUnsignedLongLong`: caller holds `PYTHON_MUTEX`
+/// and the GIL.
+pub unsafe fn py_long_from_unsigned_long_long(value: u64) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_LONG_FROM_UNSIGNED_LONG_LONG_OVERRIDE.lock() {
+        return f(value);
+    }
+    PyLong_FromUnsignedLongLong(value)
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///
