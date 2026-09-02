@@ -19,7 +19,7 @@ use crate::python_interface::{
     return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException, PyErr_Occurred,
     PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef,
     PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
-    PyTuple_GetItem, Py_DecRef, Py_IncRef, Py_XDECREF, METH_VARARGS, PYTHON_API_VERSION,
+    PyTuple_GetItem, Py_DecRef, METH_VARARGS, PYTHON_API_VERSION,
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
 use crate::websocket::get_websocket_client;
@@ -610,10 +610,8 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
         Py_DecRef(module);
         return ptr::null_mut();
     }
-    Py_IncRef(exc);
 
     if PyModule_AddObject(module, c"error".as_ptr(), exc) < 0 {
-        Py_XDECREF(exc);
         Py_DecRef(exc);
         Py_DecRef(module);
         return ptr::null_mut();
