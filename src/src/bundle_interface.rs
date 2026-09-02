@@ -6,9 +6,9 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_object_call_object, py_tuple_set_item,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
+    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
     PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
@@ -684,7 +684,7 @@ impl BundleInterface {
                         Py_DecRef(tb_args);
                         Py_XDECREF(tb_func);
                     } else {
-                        let tb_lines = PyObject_CallObject(tb_func, tb_args);
+                        let tb_lines = py_object_call_object(tb_func, tb_args);
                         let tb_ok = !tb_lines.is_null() && PyErr_Occurred().is_null();
                         if tb_ok {
                             error!("Traceback (most recent call last):");
@@ -761,7 +761,7 @@ impl BundleInterface {
                 if !set_exception_value_slot(eo_args, value, eo_func) {
                     return;
                 }
-                let eo_lines = PyObject_CallObject(eo_func, eo_args);
+                let eo_lines = py_object_call_object(eo_func, eo_args);
                 let eo_ok = !eo_lines.is_null() && PyErr_Occurred().is_null();
                 if eo_ok {
                     log_python_lines(eo_lines);

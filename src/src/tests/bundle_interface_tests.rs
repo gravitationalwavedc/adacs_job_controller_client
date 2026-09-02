@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_object_call_object_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObjectCallObjectFn, PyObject_CallObject, PyObject_SetAttrString, PyRun_StringFlags,
+    PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef,
+    Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1485,6 +1486,106 @@ fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
     assert!(
         logs.contains("Error setting exception value in args tuple"),
         "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
+    );
+}
+
+// ─── PyObject_CallObject failure-branch tests ────────────────────────────────
+//
+// The two `PyObject_CallObject` calls in `print_last_python_exception`
+// (`format_tb` and `format_exception_only`) are hard to force to fail through
+// the public API alone. These tests use the test-only FFI override seam to
+// return NULL and verify the defensive is_null() failure branches.
+
+/// RAII guard that installs a `py_object_call_object` override for the duration
+/// of a test and restores the previous override on drop.
+struct PyObjectCallObjectOverrideGuard(Option<PyObjectCallObjectFn>);
+
+impl PyObjectCallObjectOverrideGuard {
+    fn install(f: PyObjectCallObjectFn) -> Self {
+        Self(set_py_object_call_object_override(Some(f)))
+    }
+}
+
+impl Drop for PyObjectCallObjectOverrideGuard {
+    fn drop(&mut self) {
+        set_py_object_call_object_override(self.0);
+    }
+}
+
+/// Returns NULL for the `format_tb` (size-1) and `format_exception_only`
+/// (size-2) calls, delegating everything else to `PyObject_CallObject`.
+// SAFETY: Test-only; `callable`/`args` are live objects from the caller.
+unsafe fn null_traceback_calls(callable: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
+    let size = PyTuple_Size(args);
+    if size == 1 || size == 2 {
+        std::ptr::null_mut()
+    } else {
+        PyObject_CallObject(callable, args)
+    }
+}
+
+/// Forces `py_object_call_object(tb_func, tb_args)` (the `format_tb`
+/// invocation) to return NULL. `tb_ok` is false, so
+/// `print_last_python_exception` logs the "Error formatting python traceback
+/// frames" marker and continues to the exception header.
+#[test]
+fn test_print_last_python_exception_handles_format_tb_call_null() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyObjectCallObjectOverrideGuard::install(null_traceback_calls);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "PyDict_New should succeed");
+            PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
+            let code = c"def f():\n    raise RuntimeError('boom')\nf()";
+            let _result = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_file_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            Py_DecRef(globals);
+            bundle.print_last_python_exception();
+        }
+    });
+
+    assert!(
+        logs.contains("Error formatting python traceback frames"),
+        "expected 'Error formatting python traceback frames' marker in logs, got:\n{logs}"
+    );
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected exception header after format_tb NULL, got:\n{logs}"
+    );
+}
+
+/// Forces `py_object_call_object(eo_func, eo_args)` (the
+/// `format_exception_only` invocation) to return NULL. `eo_ok` is false, so
+/// `print_last_python_exception` falls back to a synthesized `type: value`
+/// header.
+#[test]
+fn test_print_last_python_exception_handles_format_exception_only_call_null() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyObjectCallObjectOverrideGuard::install(null_traceback_calls);
+
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let exc = runtime_error_type();
+            PyErr_SetString(exc, c"boom".as_ptr());
+            Py_DecRef(exc);
+            bundle.print_last_python_exception();
+        }
+    });
+
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected synthesized final exception line after format_exception_only NULL, got:\n{logs}"
     );
 }
 
