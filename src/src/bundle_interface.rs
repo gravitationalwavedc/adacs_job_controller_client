@@ -6,8 +6,8 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_callable_check, py_tuple_set_item,
+    MyPy_IsNone, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
     PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
@@ -369,7 +369,7 @@ impl BundleInterface {
         let p_func = PyObject_GetAttrString(self.inner.p_bundle_module, s_func.as_ptr());
 
         // Check if function exists
-        if p_func.is_null() || PyCallable_Check(p_func) == 0 {
+        if p_func.is_null() || py_callable_check(p_func) == 0 {
             // Clear the AttributeError
             swallow_python_error();
             Py_XDECREF(p_func);

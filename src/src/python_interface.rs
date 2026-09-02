@@ -267,6 +267,33 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyCallableCheckFn = unsafe fn(*mut PyObject) -> c_int;
+
+#[cfg(test)]
+static PY_CALLABLE_CHECK_OVERRIDE: Mutex<Option<PyCallableCheckFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_callable_check`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_callable_check_override(f: Option<PyCallableCheckFn>) -> Option<PyCallableCheckFn> {
+    let mut guard = PY_CALLABLE_CHECK_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyCallable_Check` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyCallable_Check`: caller holds `PYTHON_MUTEX` and the
+/// GIL; `callable` is a valid object.
+pub unsafe fn py_callable_check(callable: *mut PyObject) -> c_int {
+    #[cfg(test)]
+    if let Some(f) = *PY_CALLABLE_CHECK_OVERRIDE.lock() {
+        return f(callable);
+    }
+    PyCallable_Check(callable)
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///

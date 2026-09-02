@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_callable_check_override, set_py_tuple_set_item_override,
+    PyCallableCheckFn, PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred,
+    PyErr_SetString, PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong,
+    PyObject, PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem,
+    PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t,
+    PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -738,6 +739,44 @@ fn test_run_returns_err_for_non_callable_function() {
     inner();
 }
 
+/// DIRECT UNIT TEST — forces the `PyCallable_Check == 0` branch in `run` via
+/// the test-only `py_callable_check` override seam, so `run` must return
+/// `Err(NoneException)` without relying on a real non-callable attribute.
+#[test]
+fn test_run_returns_err_when_py_callable_check_returns_zero() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            // SAFETY: Test-only override; returns 0 (not callable) to force the
+            // `PyCallable_Check == 0` failure branch.
+            let _override = PyCallableCheckOverrideGuard::install(|_| 0);
+            let result = bundle.run("submit", &serde_json::json!({}), "");
+            assert!(
+                result.is_err(),
+                "non-callable check should make run return Err"
+            );
+        }
+    }
+    inner();
+}
+
 /// A bundle function that returns `None` makes `run` return
 /// `Err(NoneException)`.
 #[test]
@@ -1301,6 +1340,22 @@ def submit(details, job_data):
 // always succeeds. These tests use the test-only FFI override seam
 // (`set_py_tuple_set_item_override`) to force each branch and verify the
 // defensive error handling.
+
+/// RAII guard that installs a `py_callable_check` override for the duration of
+/// a test and restores the previous override on drop.
+struct PyCallableCheckOverrideGuard(Option<PyCallableCheckFn>);
+
+impl PyCallableCheckOverrideGuard {
+    fn install(f: PyCallableCheckFn) -> Self {
+        Self(set_py_callable_check_override(Some(f)))
+    }
+}
+
+impl Drop for PyCallableCheckOverrideGuard {
+    fn drop(&mut self) {
+        set_py_callable_check_override(self.0);
+    }
+}
 
 /// RAII guard that installs a `py_tuple_set_item` override for the duration of
 /// a test and restores the previous override on drop.
