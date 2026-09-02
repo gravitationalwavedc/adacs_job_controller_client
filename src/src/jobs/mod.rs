@@ -32,7 +32,8 @@ fn get_default_job_details() -> Value {
 fn queue_job_update(job_id: i64, source: &str, status: u32, message: &str) {
     let ws = get_websocket_client();
     let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-    result.push_uint(job_id as u32);
+    let wire_job_id = u32::try_from(job_id).unwrap_or(u32::MAX);
+    result.push_uint(wire_job_id);
     result.push_string(source);
     result.push_uint(status);
     result.push_string(message);
@@ -1140,6 +1141,28 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         queue_job_update(42, SYSTEM_SOURCE, ERROR, "Job has failed");
+    }
+
+    #[test]
+    fn queue_job_update_caps_job_id_above_u32_max() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_queue_message()
+            .with(always(), always(), eq(Priority::Medium))
+            .times(1)
+            .returning(|source, data, priority| {
+                assert_eq!(source, "4294967298");
+                assert_eq!(priority, Priority::Medium);
+                let mut msg = Message::from_data(data);
+                assert_eq!(msg.id, UPDATE_JOB);
+                assert_eq!(msg.pop_uint(), u32::MAX);
+                assert_eq!(msg.pop_string(), SYSTEM_SOURCE);
+                assert_eq!(msg.pop_uint(), ERROR);
+                assert_eq!(msg.pop_string(), "Job has failed");
+            });
+        set_websocket_client(Arc::new(mock));
+
+        queue_job_update(4_294_967_298, SYSTEM_SOURCE, ERROR, "Job has failed");
     }
 
     #[test]
