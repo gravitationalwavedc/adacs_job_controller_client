@@ -1005,6 +1005,34 @@ mod bundle_interface_conversion_tests {
     }
 
     #[test]
+    fn to_bool_returns_true_for_true_singleton() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state for the Python
+        // singleton lookup performed by `to_bool`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            assert!(BundleInterface::to_bool(my_py_true_struct()));
+        }
+    }
+
+    #[test]
+    fn to_bool_returns_false_for_non_true_object() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state for the Python
+        // singleton lookup performed by `to_bool`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            assert!(!BundleInterface::to_bool(my_py_none_struct()));
+        }
+    }
+
+    #[test]
     fn to_uint64_returns_zero_for_null_pointer() {
         unsafe {
             assert_eq!(BundleInterface::to_uint64(std::ptr::null_mut()), 0);
