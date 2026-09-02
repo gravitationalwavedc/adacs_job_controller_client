@@ -369,9 +369,16 @@ impl BundleInterface {
         let p_func = PyObject_GetAttrString(self.inner.p_bundle_module, s_func.as_ptr());
 
         // Check if function exists
-        if p_func.is_null() || PyCallable_Check(p_func) == 0 {
-            // Clear the AttributeError
+        if p_func.is_null() {
+            // PyObject_GetAttrString set an AttributeError; clear it
             swallow_python_error();
+            Py_XDECREF(p_func);
+            Py_DecRef(json_obj);
+            return Err(NoneException);
+        }
+        if PyCallable_Check(p_func) == 0 {
+            // Attribute exists but is not callable; PyCallable_Check returns 0
+            // without setting a Python error, so no error needs clearing.
             Py_XDECREF(p_func);
             Py_DecRef(json_obj);
             return Err(NoneException);
