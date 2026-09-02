@@ -122,6 +122,16 @@ impl BundleInterface {
             }),
         }
     }
+
+    /// Test-only: return whether the main thread state is currently saved in
+    /// `STATE` (i.e. the GIL has been released). Used to verify that
+    /// `BundleInterface::new`'s error path re-saves the main thread state via
+    /// `PyEval_SaveThread` so the GIL is not leaked before returning the error.
+    #[cfg(test)]
+    pub fn main_thread_state_is_saved() -> bool {
+        let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+        !state.0.is_null()
+    }
 }
 
 /// Custom error for when a Python function returns None

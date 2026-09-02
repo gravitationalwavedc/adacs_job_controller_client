@@ -453,6 +453,10 @@ impl SubInterpreter {
     /// Creates a new sub-interpreter. MUST be called with the GIL held
     /// (i.e., with a valid current thread state).
     pub unsafe fn new() -> Result<Self, String> {
+        #[cfg(test)]
+        if let Some(f) = *SUB_INTERPRETER_NEW_OVERRIDE.lock() {
+            return f();
+        }
         debug!("SubInterpreter::new - creating new sub-interpreter");
         // RestoreThreadStateScope – save current ts, restore on drop
         let saved_ts = PyThreadState_Get();
@@ -506,6 +510,31 @@ impl Drop for SubInterpreter {
             }
         }
     }
+}
+
+// ─── Test-only SubInterpreter::new override seam ─────────────────────────────
+// `SubInterpreter::new`'s failure branch (Py_NewInterpreter returns NULL) is
+// not reliably triggerable through the public API, so `BundleInterface::new`'s
+// error path — which must re-save the main thread state via `PyEval_SaveThread`
+// so the GIL is not leaked — is otherwise unreachable. This seam lets tests
+// force `SubInterpreter::new` to fail without changing production behavior.
+// Tests run serially (`--test-threads=1`), so the global override cannot race
+// across tests.
+
+#[cfg(test)]
+pub type SubInterpreterNewFn = unsafe fn() -> Result<SubInterpreter, String>;
+
+#[cfg(test)]
+static SUB_INTERPRETER_NEW_OVERRIDE: Mutex<Option<SubInterpreterNewFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `SubInterpreter::new`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_sub_interpreter_new_override(
+    f: Option<SubInterpreterNewFn>,
+) -> Option<SubInterpreterNewFn> {
+    let mut guard = SUB_INTERPRETER_NEW_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
 }
 
 // ─── ThreadScope ─────────────────────────────────────────────────────────────

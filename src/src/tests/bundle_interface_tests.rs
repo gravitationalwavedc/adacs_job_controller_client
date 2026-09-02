@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_tuple_set_item_override, set_sub_interpreter_new_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, SubInterpreter,
+    PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1172,6 +1173,63 @@ fn test_bundle_interface_new_missing_bundle_module() {
         );
     }
     inner();
+}
+
+/// DIRECT UNIT TEST for `BundleInterface::new`'s error path when
+/// `SubInterpreter::new` fails.
+///
+/// When sub-interpreter creation fails, `BundleInterface::new` must re-save
+/// the main thread state via `PyEval_SaveThread` before returning the error,
+/// or the GIL is leaked and all subsequent Python FFI calls deadlock. This
+/// branch is otherwise unreachable because `Py_NewInterpreter` reliably
+/// succeeds in the test environment, so it uses the test-only
+/// `SubInterpreter::new` override seam to force the failure.
+#[test]
+fn test_bundle_interface_new_resaves_main_thread_state_when_sub_interpreter_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+
+        // Force SubInterpreter::new to fail, mirroring the real error message.
+        let prev = set_sub_interpreter_new_override(Some(force_sub_interpreter_new_failure));
+
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Py_NewInterpreter failed"),
+            "SubInterpreter::new failure should propagate from BundleInterface::new"
+        );
+
+        // The main thread state must have been re-saved (GIL released) so it
+        // is not leaked before returning the error.
+        assert!(
+            BundleInterface::main_thread_state_is_saved(),
+            "main thread state must be re-saved via PyEval_SaveThread on the error path"
+        );
+
+        // Restore the override, then verify a subsequent successful
+        // BundleInterface::new works — proving the GIL was not leaked.
+        set_sub_interpreter_new_override(prev);
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        let bundle =
+            unsafe { BundleInterface::new(&bundle_hash, &path_root) }.expect("bundle should load");
+        assert_eq!(bundle.bundle_hash(), bundle_hash);
+    }
+    inner();
+}
+
+/// Test-only: force `SubInterpreter::new` to fail, mirroring the real
+/// `Py_NewInterpreter failed` error message.
+// SAFETY: Test-only; returns `Err` without touching any Python state, so no
+// GIL or thread state is required.
+unsafe fn force_sub_interpreter_new_failure() -> Result<SubInterpreter, String> {
+    Err("Py_NewInterpreter failed".to_string())
 }
 
 /// DIRECT UNIT TEST — reviewer request on MR !200 ("Needs coverage." /
