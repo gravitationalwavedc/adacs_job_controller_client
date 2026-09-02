@@ -123,7 +123,11 @@ impl TungsteniteWebsocketClient {
         }
         let now = Self::get_epoch_millis();
         let ping_ts = self.ping_timestamp.load(Ordering::SeqCst);
-        let latency = if ping_ts != 0 { now - ping_ts } else { -1 };
+        let latency = if ping_ts != 0 {
+            now.saturating_sub(ping_ts)
+        } else {
+            -1
+        };
         self.pong_timestamp.store(now, Ordering::SeqCst);
         debug!("WS: Received pong at {} (latency: {}ms)", now, latency);
     }
