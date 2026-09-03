@@ -43,6 +43,10 @@ fn queue_job_update(job_id: i64, source: &str, status: u32, message: &str) {
     );
 }
 
+fn capped_status_from_json(json_status: &Value) -> u32 {
+    u32::try_from(json_status.as_u64().unwrap_or(0)).unwrap_or(u32::MAX)
+}
+
 fn get_job_details(job: &job::Model) -> Value {
     let mut details = get_default_job_details();
     details["job_id"] = json!(job.job_id);
@@ -271,7 +275,7 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
                 continue;
             }
 
-            let status = json_status.as_u64().unwrap_or(0) as u32;
+            let status = capped_status_from_json(json_status);
             let mut v_status = db::get_job_status_by_job_id_and_what(job.id, what)
                 .await
                 .unwrap_or_else(|e| {
@@ -734,6 +738,23 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
     use tar::Archive;
+
+    #[test]
+    fn capped_status_from_json_caps_oversized_value() {
+        let oversized = json!(u64::from(u32::MAX) + 1);
+        assert_eq!(capped_status_from_json(&oversized), u32::MAX);
+    }
+
+    #[test]
+    fn capped_status_from_json_returns_normal_value() {
+        assert_eq!(capped_status_from_json(&json!(42)), 42);
+        assert_eq!(capped_status_from_json(&json!(0)), 0);
+    }
+
+    #[test]
+    fn capped_status_from_json_handles_null() {
+        assert_eq!(capped_status_from_json(&Value::Null), 0);
+    }
 
     #[test]
     #[serial_test::serial]
