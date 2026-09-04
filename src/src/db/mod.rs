@@ -28,7 +28,7 @@ fn parse_job(resp: &mut Message) -> job::Model {
         job_id: pop_optional_id(resp),
         scheduler_id: pop_optional_id(resp),
         submitting: resp.pop_bool(),
-        submitting_count: resp.pop_uint() as i32,
+        submitting_count: i32::try_from(resp.pop_uint()).unwrap_or(i32::MAX),
         bundle_hash: resp.pop_string(),
         working_directory: resp.pop_string(),
         running: resp.pop_bool(),
@@ -42,7 +42,7 @@ fn parse_status(resp: &mut Message) -> jobstatus::Model {
         id: resp.pop_ulong() as i64,
         job_id: resp.pop_ulong() as i64,
         what: resp.pop_string(),
-        state: resp.pop_uint() as i32,
+        state: i32::try_from(resp.pop_uint()).unwrap_or(i32::MAX),
     }
 }
 
@@ -446,6 +446,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_job_caps_submitting_count_above_i32_max() {
+        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        msg.push_ulong(5);
+        msg.push_ulong(0);
+        msg.push_ulong(0);
+        msg.push_bool(false);
+        msg.push_uint(u32::MAX);
+        msg.push_string("hash");
+        msg.push_string("/work");
+        msg.push_bool(false);
+        msg.push_bool(false);
+        msg.push_bool(false);
+
+        let mut resp = Message::from_data(msg.get_data().clone());
+        let model = parse_job(&mut resp);
+
+        assert_eq!(model.submitting_count, i32::MAX);
+    }
+
+    #[test]
     fn parse_status_reads_state_as_uint() {
         let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
         msg.push_ulong(99); // id
@@ -461,6 +481,23 @@ mod tests {
         assert_eq!(model.job_id, 42);
         assert_eq!(model.what, "scheduler_id");
         assert_eq!(model.state, 500);
+    }
+
+    #[test]
+    fn parse_status_caps_state_above_i32_max() {
+        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        msg.push_ulong(99); // id
+        msg.push_ulong(42); // job_id
+        msg.push_string("scheduler_id"); // what
+        msg.push_uint(u32::MAX); // state (as u32, matching server)
+
+        let mut resp = Message::from_data(msg.get_data().clone());
+
+        let model = parse_status(&mut resp);
+        assert_eq!(model.id, 99);
+        assert_eq!(model.job_id, 42);
+        assert_eq!(model.what, "scheduler_id");
+        assert_eq!(model.state, i32::MAX);
     }
 
     #[test]
