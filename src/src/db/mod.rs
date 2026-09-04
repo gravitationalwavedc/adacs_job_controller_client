@@ -24,7 +24,7 @@ fn pop_count(resp: &mut Message) -> usize {
 
 fn parse_job(resp: &mut Message) -> job::Model {
     job::Model {
-        id: resp.pop_ulong() as i64,
+        id: i64::try_from(resp.pop_ulong()).unwrap_or(i64::MAX),
         job_id: pop_optional_id(resp),
         scheduler_id: pop_optional_id(resp),
         submitting: resp.pop_bool(),
@@ -443,6 +443,26 @@ mod tests {
         assert!(!model.running);
         assert!(!model.deleting);
         assert!(model.deleted);
+    }
+
+    #[test]
+    fn parse_job_caps_id_above_i64_max() {
+        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        msg.push_ulong(u64::MAX);
+        msg.push_ulong(0);
+        msg.push_ulong(0);
+        msg.push_bool(false);
+        msg.push_uint(0);
+        msg.push_string("hash");
+        msg.push_string("/work");
+        msg.push_bool(false);
+        msg.push_bool(false);
+        msg.push_bool(false);
+
+        let mut resp = Message::from_data(msg.get_data().clone());
+        let model = parse_job(&mut resp);
+
+        assert_eq!(model.id, i64::MAX);
     }
 
     #[test]
