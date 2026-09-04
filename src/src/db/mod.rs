@@ -14,7 +14,7 @@ fn parse_response(resp: &Message) -> Message {
 }
 
 fn pop_optional_id(resp: &mut Message) -> Option<i64> {
-    let v = resp.pop_ulong() as i64;
+    let v = i64::try_from(resp.pop_ulong()).unwrap_or(i64::MAX);
     (v != 0).then_some(v)
 }
 
@@ -971,5 +971,18 @@ mod tests {
             result.unwrap_err(),
             "Database operation failed to save job status"
         );
+    }
+
+    #[test]
+    fn pop_optional_id_caps_overflowing_ulong_to_i64_max() {
+        let mut wire = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        wire.push_ulong(u64::MAX);
+        let mut resp = Message::from_data(wire.get_data().clone());
+        assert_eq!(pop_optional_id(&mut resp), Some(i64::MAX));
+
+        let mut zero_wire = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        zero_wire.push_ulong(0);
+        let mut zero = Message::from_data(zero_wire.get_data().clone());
+        assert_eq!(pop_optional_id(&mut zero), None);
     }
 }
