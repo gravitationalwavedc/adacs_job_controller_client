@@ -39,8 +39,8 @@ fn parse_job(resp: &mut Message) -> job::Model {
 
 fn parse_status(resp: &mut Message) -> jobstatus::Model {
     jobstatus::Model {
-        id: resp.pop_ulong() as i64,
-        job_id: resp.pop_ulong() as i64,
+        id: i64::try_from(resp.pop_ulong()).unwrap_or(i64::MAX),
+        job_id: i64::try_from(resp.pop_ulong()).unwrap_or(i64::MAX),
         what: resp.pop_string(),
         state: resp.pop_uint() as i32,
     }
@@ -459,6 +459,23 @@ mod tests {
         let model = parse_status(&mut resp);
         assert_eq!(model.id, 99);
         assert_eq!(model.job_id, 42);
+        assert_eq!(model.what, "scheduler_id");
+        assert_eq!(model.state, 500);
+    }
+
+    #[test]
+    fn parse_status_caps_id_and_job_id_above_i64_max() {
+        let mut msg = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        msg.push_ulong(u64::MAX); // id
+        msg.push_ulong(u64::MAX); // job_id
+        msg.push_string("scheduler_id"); // what
+        msg.push_uint(500); // state
+
+        let mut resp = Message::from_data(msg.get_data().clone());
+
+        let model = parse_status(&mut resp);
+        assert_eq!(model.id, i64::MAX);
+        assert_eq!(model.job_id, i64::MAX);
         assert_eq!(model.what, "scheduler_id");
         assert_eq!(model.state, 500);
     }
