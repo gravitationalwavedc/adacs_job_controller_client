@@ -216,7 +216,7 @@ pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
     msg.push_ulong(job.job_id.unwrap_or(0) as u64);
     msg.push_ulong(job.scheduler_id.unwrap_or(0) as u64);
     msg.push_bool(job.submitting);
-    msg.push_uint(job.submitting_count as u32);
+    msg.push_uint(u32::try_from(job.submitting_count).unwrap_or(u32::MAX));
     msg.push_string(&job.bundle_hash);
     msg.push_string(&job.working_directory);
     msg.push_bool(job.running);
@@ -239,7 +239,7 @@ pub async fn save_status(status: jobstatus::Model) -> Result<jobstatus::Model, S
     msg.push_ulong(status.id as u64);
     msg.push_ulong(status.job_id as u64);
     msg.push_string(&status.what);
-    msg.push_uint(status.state as u32);
+    msg.push_uint(u32::try_from(status.state).unwrap_or(u32::MAX));
     let saved_id = send_save_request(
         msg,
         "save_status",
@@ -710,6 +710,76 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let saved = rt.block_on(async { save_job(job).await }).unwrap();
         assert_eq!(saved.id, 99);
+    }
+
+    #[test]
+    fn save_job_caps_negative_submitting_count_to_u32_max() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|message| {
+            let mut parsed = Message::from_data(message.get_data().clone());
+            assert_eq!(parsed.id, DB_JOB_SAVE);
+            assert_eq!(parsed.pop_ulong(), 1);
+            assert_eq!(parsed.pop_ulong(), 22);
+            assert_eq!(parsed.pop_ulong(), 33);
+            assert!(parsed.pop_bool());
+            assert_eq!(parsed.pop_uint(), u32::MAX);
+            assert_eq!(parsed.pop_string(), "bundle-hash");
+
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(99);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let job = job::Model {
+            id: 1,
+            job_id: Some(22),
+            scheduler_id: Some(33),
+            submitting: true,
+            submitting_count: -1,
+            bundle_hash: "bundle-hash".to_string(),
+            working_directory: "/tmp/workdir".to_string(),
+            running: true,
+            deleting: false,
+            deleted: false,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let saved = rt.block_on(async { save_job(job).await }).unwrap();
+        assert_eq!(saved.id, 99);
+    }
+
+    #[test]
+    fn save_status_caps_negative_state_to_u32_max() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|message| {
+            let mut parsed = Message::from_data(message.get_data().clone());
+            assert_eq!(parsed.id, DB_JOBSTATUS_SAVE);
+            assert_eq!(parsed.pop_ulong(), 0);
+            assert_eq!(parsed.pop_ulong(), 42);
+            assert_eq!(parsed.pop_string(), "scheduler_id");
+            assert_eq!(parsed.pop_uint(), u32::MAX);
+
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(77);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let status = jobstatus::Model {
+            id: 0,
+            job_id: 42,
+            what: "scheduler_id".to_string(),
+            state: -1,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let saved = rt.block_on(async { save_status(status).await }).unwrap();
+        assert_eq!(saved.id, 77);
     }
 
     #[test]
