@@ -1471,6 +1471,26 @@ mod append_bundle_path_to_sys_path_tests {
     }
 
     #[test]
+    fn returns_err_on_nul_byte_in_bundle_path() {
+        let bundle = load_test_bundle();
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let p_path = PySys_GetObject(c"path".as_ptr());
+            assert!(!p_path.is_null(), "sys.path should exist");
+            let result = BundleInterface::append_bundle_path_to_sys_path(
+                p_path,
+                Path::new("/some/bundle\0path"),
+            );
+            assert_eq!(
+                result,
+                Err("Bundle path contains NUL byte".to_string()),
+                "interior NUL byte should make append return Err"
+            );
+        }
+    }
+
+    #[test]
     fn appends_bundle_path_on_success() {
         let bundle = load_test_bundle();
         let _guard = PYTHON_MUTEX.lock();
