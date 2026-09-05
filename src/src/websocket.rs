@@ -112,9 +112,15 @@ impl TungsteniteWebsocketClient {
     }
 
     fn get_epoch_millis() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as i64)
+        Self::millis_to_i64(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis()),
+        )
+    }
+
+    fn millis_to_i64(millis: u128) -> i64 {
+        i64::try_from(millis).unwrap_or(i64::MAX)
     }
 
     fn handle_pong(&self, connection_id: u64) {
@@ -1053,6 +1059,23 @@ mod tests {
         assert!(
             now <= after,
             "get_epoch_millis() returned {now}, which is after the reference time {after}"
+        );
+    }
+
+    #[test]
+    fn millis_to_i64_saturates_on_overflow() {
+        assert_eq!(TungsteniteWebsocketClient::millis_to_i64(0), 0);
+        assert_eq!(
+            TungsteniteWebsocketClient::millis_to_i64(i64::MAX as u128),
+            i64::MAX
+        );
+        assert_eq!(
+            TungsteniteWebsocketClient::millis_to_i64(i64::MAX as u128 + 1),
+            i64::MAX
+        );
+        assert_eq!(
+            TungsteniteWebsocketClient::millis_to_i64(u128::MAX),
+            i64::MAX
         );
     }
 
