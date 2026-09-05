@@ -29,6 +29,10 @@ fn get_default_job_details() -> Value {
     })
 }
 
+fn cap_scheduler_id(scheduler_id: u64) -> i64 {
+    i64::try_from(scheduler_id).unwrap_or(i64::MAX)
+}
+
 fn queue_job_update(job_id: i64, source: &str, status: u32, message: &str) {
     let ws = get_websocket_client();
     let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
@@ -177,7 +181,7 @@ pub fn handle_job_submit(mut msg: Message) {
             scheduler_id, job_id
         );
 
-        job_model.scheduler_id = Some(scheduler_id as i64);
+        job_model.scheduler_id = Some(cap_scheduler_id(scheduler_id));
 
         if scheduler_id == 0 {
             warn!("Job with UI ID {} could not be submitted", job_id);
@@ -803,6 +807,14 @@ mod tests {
             deleting: false,
             deleted: false,
         }
+    }
+
+    #[test]
+    fn cap_scheduler_id_caps_overflow_to_i64_max() {
+        assert_eq!(cap_scheduler_id(u64::MAX), i64::MAX);
+        assert_eq!(cap_scheduler_id(i64::MAX as u64), i64::MAX);
+        assert_eq!(cap_scheduler_id(0), 0);
+        assert_eq!(cap_scheduler_id(42), 42);
     }
 
     #[test]
