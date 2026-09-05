@@ -90,7 +90,7 @@ async fn get_job_by_message(
 ) -> Result<Option<job::Model>, String> {
     debug!("DB: {} - requesting id={}", context, id);
     let mut msg = Message::new(msg_type, Priority::Medium, "database");
-    msg.push_ulong(id as u64);
+    msg.push_ulong(u64::try_from(id).unwrap_or(0));
     let (raw, elapsed) = send_db_request_timed(msg, |e| {
         format!("DB: {context} - request failed for id={id}: {e}")
     })
@@ -117,7 +117,7 @@ pub async fn get_job_by_job_id(job_id_val: i64) -> Result<Option<job::Model>, St
 pub async fn delete_job(id: i64) -> Result<(), String> {
     debug!("DB: delete_job - deleting job id={}", id);
     let mut msg = Message::new(DB_JOB_DELETE, Priority::Medium, "database");
-    msg.push_ulong(id as u64);
+    msg.push_ulong(u64::try_from(id).unwrap_or(0));
     let (raw, elapsed) = send_db_request_timed(msg, |e| {
         format!("DB: delete_job - request failed for id={id}: {e}")
     })
@@ -164,7 +164,7 @@ pub async fn get_job_status_by_job_id_and_what(
         Priority::Medium,
         "database",
     );
-    msg.push_ulong(job_id as u64);
+    msg.push_ulong(u64::try_from(job_id).unwrap_or(0));
     msg.push_string(what);
     get_job_statuses(msg, "get_job_status_by_job_id_and_what").await
 }
@@ -172,7 +172,7 @@ pub async fn get_job_status_by_job_id_and_what(
 pub async fn get_job_status_by_job_id(job_id: i64) -> Result<Vec<jobstatus::Model>, String> {
     debug!("DB: get_job_status_by_job_id - job_id={}", job_id);
     let mut msg = Message::new(DB_JOBSTATUS_GET_BY_JOB_ID, Priority::Medium, "database");
-    msg.push_ulong(job_id as u64);
+    msg.push_ulong(u64::try_from(job_id).unwrap_or(0));
     get_job_statuses(msg, "get_job_status_by_job_id").await
 }
 
@@ -180,7 +180,7 @@ pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     let mut msg = Message::new(DB_JOBSTATUS_DELETE_BY_ID_LIST, Priority::Medium, "database");
     msg.push_uint(ids.len() as u32);
     for id in ids {
-        msg.push_ulong(id as u64);
+        msg.push_ulong(u64::try_from(id).unwrap_or(0));
     }
     let (raw, _elapsed) = send_db_request_timed(msg, |e| {
         format!("DB: delete_status_by_id_list - request failed: {e}")
@@ -212,9 +212,9 @@ pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
         job.id, job.job_id
     );
     let mut msg = Message::new(DB_JOB_SAVE, Priority::Medium, "database");
-    msg.push_ulong(job.id as u64);
-    msg.push_ulong(job.job_id.unwrap_or(0) as u64);
-    msg.push_ulong(job.scheduler_id.unwrap_or(0) as u64);
+    msg.push_ulong(u64::try_from(job.id).unwrap_or(0));
+    msg.push_ulong(u64::try_from(job.job_id.unwrap_or(0)).unwrap_or(0));
+    msg.push_ulong(u64::try_from(job.scheduler_id.unwrap_or(0)).unwrap_or(0));
     msg.push_bool(job.submitting);
     msg.push_uint(job.submitting_count as u32);
     msg.push_string(&job.bundle_hash);
@@ -236,8 +236,8 @@ pub async fn save_status(status: jobstatus::Model) -> Result<jobstatus::Model, S
         status.id, status.job_id, status.what, status.state
     );
     let mut msg = Message::new(DB_JOBSTATUS_SAVE, Priority::Medium, "database");
-    msg.push_ulong(status.id as u64);
-    msg.push_ulong(status.job_id as u64);
+    msg.push_ulong(u64::try_from(status.id).unwrap_or(0));
+    msg.push_ulong(u64::try_from(status.job_id).unwrap_or(0));
     msg.push_string(&status.what);
     msg.push_uint(status.state as u32);
     let saved_id = send_save_request(
@@ -971,5 +971,133 @@ mod tests {
             result.unwrap_err(),
             "Database operation failed to save job status"
         );
+    }
+
+    fn run_with_negative_id<F, Fut>(expected_id: u32, run: F)
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request()
+            .times(1)
+            .returning(move |message| {
+                let mut parsed = Message::from_data(message.get_data().clone());
+                assert_eq!(parsed.id, expected_id);
+                assert_eq!(parsed.pop_ulong(), 0);
+                let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+                resp.push_uint(0);
+                Box::pin(async move { Ok(resp) })
+            });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(run());
+    }
+
+    #[test]
+    fn negative_ids_push_zero_on_wire_for_single_id_requests() {
+        run_with_negative_id(DB_JOB_GET_BY_ID, || async {
+            let _ = get_job_by_id(-1).await;
+        });
+        run_with_negative_id(DB_JOB_DELETE, || async {
+            let _ = delete_job(-1).await;
+        });
+        run_with_negative_id(DB_JOBSTATUS_GET_BY_JOB_ID, || async {
+            let _ = get_job_status_by_job_id(-1).await;
+        });
+    }
+
+    #[test]
+    fn delete_status_by_id_list_negative_ids_push_zero_on_wire() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|message| {
+            let mut parsed = Message::from_data(message.get_data().clone());
+            assert_eq!(parsed.id, DB_JOBSTATUS_DELETE_BY_ID_LIST);
+            assert_eq!(parsed.pop_uint(), 2);
+            assert_eq!(parsed.pop_ulong(), 0);
+            assert_eq!(parsed.pop_ulong(), 0);
+
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_uint(0);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async { delete_status_by_id_list(vec![-1, -2]).await })
+            .unwrap();
+    }
+
+    #[test]
+    fn save_job_negative_ids_push_zero_on_wire() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|message| {
+            let mut parsed = Message::from_data(message.get_data().clone());
+            assert_eq!(parsed.id, DB_JOB_SAVE);
+            assert_eq!(parsed.pop_ulong(), 0);
+            assert_eq!(parsed.pop_ulong(), 0);
+            assert_eq!(parsed.pop_ulong(), 0);
+            assert!(!parsed.pop_bool());
+            assert_eq!(parsed.pop_uint(), 0);
+            assert_eq!(parsed.pop_string(), "");
+            assert_eq!(parsed.pop_string(), "");
+            assert!(!parsed.pop_bool());
+            assert!(!parsed.pop_bool());
+            assert!(!parsed.pop_bool());
+
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(99);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let job = job::Model {
+            id: -1,
+            job_id: Some(-2),
+            scheduler_id: Some(-3),
+            ..job::Model::default()
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let saved = rt.block_on(async { save_job(job).await }).unwrap();
+        assert_eq!(saved.id, 99);
+    }
+
+    #[test]
+    fn save_status_negative_ids_push_zero_on_wire() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|message| {
+            let mut parsed = Message::from_data(message.get_data().clone());
+            assert_eq!(parsed.id, DB_JOBSTATUS_SAVE);
+            assert_eq!(parsed.pop_ulong(), 0);
+            assert_eq!(parsed.pop_ulong(), 0);
+            assert_eq!(parsed.pop_string(), "scheduler_id");
+            assert_eq!(parsed.pop_uint(), 500);
+
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(77);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let status = jobstatus::Model {
+            id: -1,
+            job_id: -2,
+            what: "scheduler_id".to_string(),
+            state: 500,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let saved = rt.block_on(async { save_status(status).await }).unwrap();
+        assert_eq!(saved.id, 77);
     }
 }
