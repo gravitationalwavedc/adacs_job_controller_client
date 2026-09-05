@@ -21,6 +21,10 @@ static SUBMIT_MUTEX: std::sync::LazyLock<TokioMutex<()>> =
 
 pub const MAX_SUBMIT_COUNT: i32 = 60;
 
+fn saturating_increment_submit_count(count: i32) -> i32 {
+    count.saturating_add(1)
+}
+
 pub const ARCHIVE_FILE_NAME: &str = "archive.tar.gz";
 
 fn status_to_i32(status: u32) -> i32 {
@@ -109,7 +113,8 @@ pub fn handle_job_submit(mut msg: Message) {
             };
 
             if job_model.submitting {
-                job_model.submitting_count += 1;
+                job_model.submitting_count =
+                    saturating_increment_submit_count(job_model.submitting_count);
                 if job_model.submitting_count >= MAX_SUBMIT_COUNT {
                     warn!("Job with ID {} took too long to submit - assuming it's failed and trying again...", job_id);
                     job_model.submitting_count = 0;
@@ -850,6 +855,13 @@ mod tests {
         assert_eq!(cap_scheduler_id(i64::MAX as u64), i64::MAX);
         assert_eq!(cap_scheduler_id(0), 0);
         assert_eq!(cap_scheduler_id(42), 42);
+    }
+
+    #[test]
+    fn saturating_increment_submit_count_saturates_at_i32_max() {
+        assert_eq!(saturating_increment_submit_count(0), 1);
+        assert_eq!(saturating_increment_submit_count(i32::MAX), i32::MAX);
+        assert_eq!(saturating_increment_submit_count(i32::MAX - 1), i32::MAX);
     }
 
     #[test]
