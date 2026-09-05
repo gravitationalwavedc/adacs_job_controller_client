@@ -23,6 +23,10 @@ pub const MAX_SUBMIT_COUNT: i32 = 60;
 
 pub const ARCHIVE_FILE_NAME: &str = "archive.tar.gz";
 
+fn status_to_i32(status: u32) -> i32 {
+    i32::try_from(status).unwrap_or(i32::MAX)
+}
+
 fn get_default_job_details() -> Value {
     json!({
         "cluster": read_client_config()["cluster"]
@@ -303,14 +307,14 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
                         id: 0,
                         job_id: job.id,
                         what: what.to_string(),
-                        state: status as i32,
+                        state: status_to_i32(status),
                     }
                 } else {
                     v_status[0].clone()
                 };
 
                 state_item.what = what.to_string();
-                state_item.state = status as i32;
+                state_item.state = status_to_i32(status);
                 debug!("check_job_status: saving status to DB");
                 if let Err(e) = db::save_status(state_item).await {
                     error!("Failed to save status for job {}: {}", job_id, e);
@@ -734,6 +738,15 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
     use tar::Archive;
+
+    #[test]
+    #[serial_test::serial]
+    fn status_to_i32_caps_overflow_to_i32_max() {
+        assert_eq!(status_to_i32(0), 0);
+        assert_eq!(status_to_i32(i32::MAX as u32), i32::MAX);
+        assert_eq!(status_to_i32(i32::MAX as u32 + 1), i32::MAX);
+        assert_eq!(status_to_i32(u32::MAX), i32::MAX);
+    }
 
     #[test]
     #[serial_test::serial]
