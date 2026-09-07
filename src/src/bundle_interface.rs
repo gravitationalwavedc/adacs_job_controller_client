@@ -1168,6 +1168,89 @@ mod bundle_interface_conversion_tests {
         }
     }
 
+    /// `extract_value_string` must return `""` and clear the Python error
+    /// indicator when the real `PyObject_Repr` raises on the value (the FFI
+    /// failure branch used by `print_last_python_exception`), rather than
+    /// leaking a stale error to the caller.
+    #[test]
+    fn extract_value_string_returns_empty_when_repr_raises() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `extract_value_string` and `swallow_python_error`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "globals dict should be created");
+            assert_eq!(
+                PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins()),
+                0,
+                "setting __builtins__ should succeed"
+            );
+            let code = c"type('_R', (), {'__repr__': lambda self: 1/0})()";
+            let value = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_eval_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            assert!(!value.is_null(), "repr-raising object should be created");
+            assert_eq!(extract_value_string(value, PyObject_Repr), "");
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyObject_Repr must be cleared"
+            );
+            Py_DecRef(value);
+            Py_DecRef(globals);
+        }
+    }
+
+    /// `extract_value_string` must return `""` and clear the Python error
+    /// indicator when the real `PyObject_Str` raises on the value (the FFI
+    /// failure branch used by `print_last_python_exception`), rather than
+    /// leaking a stale error to the caller.
+    #[test]
+    fn extract_value_string_returns_empty_when_str_raises() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `extract_value_string` and `swallow_python_error`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "globals dict should be created");
+            assert_eq!(
+                PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins()),
+                0,
+                "setting __builtins__ should succeed"
+            );
+            let code = c"type('_S', (), {'__str__': lambda self: 1/0})()";
+            let value = PyRun_StringFlags(
+                code.as_ptr(),
+                Py_eval_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            assert!(!value.is_null(), "str-raising object should be created");
+            assert_eq!(
+                extract_value_string(value, crate::python_interface::PyObject_Str),
+                ""
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from PyObject_Str must be cleared"
+            );
+            Py_DecRef(value);
+            Py_DecRef(globals);
+        }
+    }
+
     #[test]
     fn extract_type_name_returns_unknown_when_unicode_as_utf8_fails() {
         crate::tests::init_python_global();
