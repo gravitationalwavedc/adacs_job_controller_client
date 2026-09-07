@@ -41,7 +41,12 @@ fn get_update_path(executable_path: &Path) -> PathBuf {
 
 /// Computes the delay in seconds for retry attempt N (1-indexed using exponential backoff).
 fn retry_delay_secs(attempt: u32) -> u64 {
-    INITIAL_RETRY_DELAY_SECS * 2u64.pow(attempt.saturating_sub(1))
+    // Use checked_pow so a large attempt count can't overflow u64 (which would
+    // wrap to 0 in release or panic in debug); cap at u64::MAX instead.
+    INITIAL_RETRY_DELAY_SECS
+        * 2u64
+            .checked_pow(attempt.saturating_sub(1))
+            .unwrap_or(u64::MAX)
 }
 
 /// Parse a GitHub releases API JSON response and return the download URL
@@ -330,6 +335,16 @@ mod tests {
         assert_eq!(retry_delay_secs(3), 4);
         assert_eq!(retry_delay_secs(4), 8);
         assert_eq!(retry_delay_secs(5), 16);
+    }
+
+    #[test]
+    fn test_retry_delay_secs_no_overflow() {
+        // 2^64 would overflow u64; the delay must cap at u64::MAX instead of
+        // wrapping to 0 (release) or panicking (debug).
+        assert_eq!(retry_delay_secs(u32::MAX), u64::MAX);
+        assert_eq!(retry_delay_secs(65), u64::MAX);
+        assert_eq!(retry_delay_secs(64), 1u64 << 63);
+        assert_eq!(retry_delay_secs(63), 1u64 << 62);
     }
 
     #[test]
