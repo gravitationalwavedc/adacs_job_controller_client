@@ -178,8 +178,9 @@ pub async fn get_job_status_by_job_id(job_id: i64) -> Result<Vec<jobstatus::Mode
 
 pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     let mut msg = Message::new(DB_JOBSTATUS_DELETE_BY_ID_LIST, Priority::Medium, "database");
-    msg.push_uint(ids.len() as u32);
-    for id in ids {
+    let count = u32::try_from(ids.len()).unwrap_or(u32::MAX);
+    msg.push_uint(count);
+    for id in ids.into_iter().take(count as usize) {
         msg.push_ulong(id as u64);
     }
     let (raw, _elapsed) = send_db_request_timed(msg, |e| {
