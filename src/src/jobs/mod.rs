@@ -27,6 +27,10 @@ fn status_to_i32(status: u32) -> i32 {
     i32::try_from(status).unwrap_or(i32::MAX)
 }
 
+fn state_to_u32(state: i32) -> u32 {
+    u32::try_from(state).unwrap_or(u32::MAX)
+}
+
 fn get_default_job_details() -> Value {
     json!({
         "cluster": read_client_config()["cluster"]
@@ -306,7 +310,10 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
                 v_status = vec![];
             }
 
-            if force_notification || v_status.is_empty() || status != v_status[0].state as u32 {
+            if force_notification
+                || v_status.is_empty()
+                || status != state_to_u32(v_status[0].state)
+            {
                 debug!(
                     "check_job_status: updating status for job_id={}, what={}, status={}",
                     job_id, what, status
@@ -346,12 +353,16 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
         });
     let job_error = v_status
         .iter()
-        .filter(|state| state.state as u32 >= ERROR && state.state as u32 != COMPLETED)
-        .map(|state| state.state as u32)
+        .filter(|state| {
+            state_to_u32(state.state) >= ERROR && state_to_u32(state.state) != COMPLETED
+        })
+        .map(|state| state_to_u32(state.state))
         .next_back()
         .unwrap_or(0);
 
-    let job_complete = v_status.iter().all(|state| state.state as u32 == COMPLETED);
+    let job_complete = v_status
+        .iter()
+        .all(|state| state_to_u32(state.state) == COMPLETED);
 
     if job_error != 0 || (status_json["complete"].as_bool().unwrap_or(false) && job_complete) {
         debug!("check_job_status: job complete, saving to DB");
@@ -586,7 +597,7 @@ pub fn handle_job_cancel(mut msg: Message) {
                 vec![]
             }
         };
-        if db_status.iter().any(|s| s.state as u32 == CANCELLED) {
+        if db_status.iter().any(|s| state_to_u32(s.state) == CANCELLED) {
             debug!(
                 "Job {} already has CANCELLED status, skipping cancel",
                 job_id
@@ -643,7 +654,7 @@ pub fn handle_job_cancel(mut msg: Message) {
                 vec![]
             }
         };
-        if db_status.iter().any(|s| s.state as u32 == CANCELLED) {
+        if db_status.iter().any(|s| state_to_u32(s.state) == CANCELLED) {
             return;
         }
 
@@ -772,6 +783,13 @@ mod tests {
         assert_eq!(status_to_i32(i32::MAX as u32), i32::MAX);
         assert_eq!(status_to_i32(i32::MAX as u32 + 1), i32::MAX);
         assert_eq!(status_to_i32(u32::MAX), i32::MAX);
+    }
+
+    #[test]
+    fn state_to_u32_caps_negative_state_to_max() {
+        assert_eq!(state_to_u32(-1), u32::MAX);
+        assert_eq!(state_to_u32(0), 0);
+        assert_eq!(state_to_u32(ERROR as i32), ERROR);
     }
 
     #[test]
