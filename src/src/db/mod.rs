@@ -1166,6 +1166,9 @@ mod tests {
         run_with_negative_id(DB_JOBSTATUS_GET_BY_JOB_ID, || async {
             let _ = get_job_status_by_job_id(-1).await;
         });
+        run_with_negative_id(DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT, || async {
+            let _ = get_job_status_by_job_id_and_what(-1, "scheduler_id").await;
+        });
     }
 
     #[test]
@@ -1176,7 +1179,8 @@ mod tests {
         mock.expect_send_db_request().times(1).returning(|message| {
             let mut parsed = Message::from_data(message.get_data().clone());
             assert_eq!(parsed.id, DB_JOBSTATUS_DELETE_BY_ID_LIST);
-            assert_eq!(parsed.pop_uint(), 2);
+            assert_eq!(parsed.pop_uint(), 3);
+            assert_eq!(parsed.pop_ulong(), 0);
             assert_eq!(parsed.pop_ulong(), 0);
             assert_eq!(parsed.pop_ulong(), 0);
 
@@ -1187,7 +1191,7 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async { delete_status_by_id_list(vec![-1, -2]).await })
+        rt.block_on(async { delete_status_by_id_list(vec![-1, -2, -3]).await })
             .unwrap();
     }
 
