@@ -267,6 +267,35 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyThreadStateNewFn = unsafe fn(*mut PyInterpreterState) -> *mut PyThreadState;
+
+#[cfg(test)]
+static PY_THREAD_STATE_NEW_OVERRIDE: Mutex<Option<PyThreadStateNewFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_thread_state_new`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_thread_state_new_override(
+    f: Option<PyThreadStateNewFn>,
+) -> Option<PyThreadStateNewFn> {
+    let mut guard = PY_THREAD_STATE_NEW_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyThreadState_New` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyThreadState_New`: caller holds `PYTHON_MUTEX` and
+/// `interp` is a valid interpreter state.
+pub unsafe fn py_thread_state_new(interp: *mut PyInterpreterState) -> *mut PyThreadState {
+    #[cfg(test)]
+    if let Some(f) = *PY_THREAD_STATE_NEW_OVERRIDE.lock() {
+        return f(interp);
+    }
+    PyThreadState_New(interp)
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///
@@ -522,7 +551,7 @@ impl ThreadScope {
     /// This is the equivalent of C++ `SubInterpreter::ThreadScope`.
     pub unsafe fn new(interp: *mut PyInterpreterState) -> Result<Self, String> {
         trace!("ThreadScope::new - creating for interpreter: {:?}", interp);
-        let ts = PyThreadState_New(interp);
+        let ts = py_thread_state_new(interp);
         if ts.is_null() {
             error!("ThreadScope::new - PyThreadState_New failed");
             return Err("PyThreadState_New failed".to_string());
@@ -598,5 +627,20 @@ mod tests {
             dlopen_error_detail(msg.as_ptr()),
             "cannot open shared object file"
         );
+    }
+
+    /// When `PyThreadState_New` returns NULL, `ThreadScope::new` must surface the
+    /// failure as `Err("PyThreadState_New failed")` instead of dereferencing a
+    /// null thread state.
+    #[test]
+    #[serial_test::serial]
+    fn thread_scope_new_returns_err_when_py_thread_state_new_is_null() {
+        let prev = set_py_thread_state_new_override(Some(|_interp| std::ptr::null_mut()));
+        let result = unsafe { ThreadScope::new(std::ptr::null_mut()) };
+        set_py_thread_state_new_override(prev);
+        assert!(matches!(
+            result,
+            Err(ref e) if e == "PyThreadState_New failed"
+        ));
     }
 }
