@@ -9,12 +9,15 @@
 //! bundle scripts and capture the structured log output to verify that
 //! the full stack trace is printed to the console.
 
-use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoadsFn};
+use crate::bundle_interface::{
+    set_json_dumps_getattr_fail, set_json_dumps_tuple_fail, set_json_loads_override,
+    BundleInterface, JsonLoadsFn,
+};
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
+    my_py_none_struct, my_py_true_struct, set_py_tuple_set_item_override, PyDict_GetItemString,
+    PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
     PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
     PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
     Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
@@ -1662,5 +1665,86 @@ fn test_run_returns_err_when_json_loads_returns_null() {
     assert!(
         result.is_err(),
         "run should return Err(NoneException) when json_loads returns NULL"
+    );
+}
+
+// ─── json_dumps FFI failure-branch tests ────────────────────────────────────
+// The three FFI failure branches in `json_dumps` are unreachable through the
+// public API. These tests use the test-only override seams to force each
+// branch and verify `json_dumps` returns `Err` without leaking references.
+
+/// RAII guard that sets a `json_dumps` bool seam for the duration of a test
+/// and restores the previous value on drop.
+struct JsonDumpsFailGuard {
+    getattr: bool,
+    tuple: bool,
+}
+
+impl JsonDumpsFailGuard {
+    fn new(getattr: bool, tuple: bool) -> Self {
+        set_json_dumps_getattr_fail(getattr);
+        set_json_dumps_tuple_fail(tuple);
+        Self { getattr, tuple }
+    }
+}
+
+impl Drop for JsonDumpsFailGuard {
+    fn drop(&mut self) {
+        set_json_dumps_getattr_fail(self.getattr);
+        set_json_dumps_tuple_fail(self.tuple);
+    }
+}
+
+/// DIRECT UNIT TEST — covers the p_func-null branch (`PyObject_GetAttrString`
+/// returns NULL) in `BundleInterface::json_dumps`. Must return Err without
+/// leaking references.
+#[test]
+fn json_dumps_returns_err_when_getattr_returns_null() {
+    let bundle = load_bundle_for_exception_printer();
+    let _seam = JsonDumpsFailGuard::new(true, false);
+    let result = unsafe {
+        let _guard = PYTHON_MUTEX.lock();
+        let _scope = bundle.thread_scope().expect("thread scope");
+        bundle.json_dumps(my_py_true_struct())
+    };
+    assert!(
+        result.is_err(),
+        "json_dumps should return Err when GetAttrString returns NULL"
+    );
+}
+
+/// DIRECT UNIT TEST — covers the p_args-null branch (`PyTuple_New` returns
+/// NULL) in `BundleInterface::json_dumps`. Must return Err without leaking
+/// references.
+#[test]
+fn json_dumps_returns_err_when_tuple_new_returns_null() {
+    let bundle = load_bundle_for_exception_printer();
+    let _seam = JsonDumpsFailGuard::new(false, true);
+    let result = unsafe {
+        let _guard = PYTHON_MUTEX.lock();
+        let _scope = bundle.thread_scope().expect("thread scope");
+        bundle.json_dumps(my_py_true_struct())
+    };
+    assert!(
+        result.is_err(),
+        "json_dumps should return Err when PyTuple_New returns NULL"
+    );
+}
+
+/// DIRECT UNIT TEST — covers the `PyTuple_SetItem`-failure branch in
+/// `BundleInterface::json_dumps`. Must return Err without leaking references.
+#[test]
+fn json_dumps_returns_err_when_tuple_set_item_fails() {
+    let bundle = load_bundle_for_exception_printer();
+    let _seam = JsonDumpsFailGuard::new(false, false);
+    let _setitem = TupleSetItemOverrideGuard::install(fail_size_one_tuple);
+    let result = unsafe {
+        let _guard = PYTHON_MUTEX.lock();
+        let _scope = bundle.thread_scope().expect("thread scope");
+        bundle.json_dumps(my_py_true_struct())
+    };
+    assert!(
+        result.is_err(),
+        "json_dumps should return Err when PyTuple_SetItem fails"
     );
 }

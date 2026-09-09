@@ -98,6 +98,49 @@ pub fn set_json_loads_override(f: Option<JsonLoadsFn>) -> Option<JsonLoadsFn> {
     std::mem::replace(&mut *guard, f)
 }
 
+// ─── Test-only json_dumps override seams ────────────────────────────────────
+// The p_func-null (`PyObject_GetAttrString`) and p_args-null (`PyTuple_New`)
+// branches in `json_dumps` are unreachable through the public API. Tests run
+// serially (`--test-threads=1`), so the global overrides cannot race.
+
+#[cfg(test)]
+static JSON_DUMPS_GETATTR_FAIL: StdMutex<bool> = StdMutex::new(false);
+
+#[cfg(test)]
+static JSON_DUMPS_TUPLE_FAIL: StdMutex<bool> = StdMutex::new(false);
+
+/// Test-only: force `json_dumps`' attribute lookup to return NULL.
+#[cfg(test)]
+pub fn set_json_dumps_getattr_fail(fail: bool) -> bool {
+    let mut guard = JSON_DUMPS_GETATTR_FAIL
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    std::mem::replace(&mut *guard, fail)
+}
+
+/// Test-only: force `json_dumps`' `PyTuple_New` to return NULL.
+#[cfg(test)]
+pub fn set_json_dumps_tuple_fail(fail: bool) -> bool {
+    let mut guard = JSON_DUMPS_TUPLE_FAIL
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    std::mem::replace(&mut *guard, fail)
+}
+
+#[cfg(test)]
+fn json_dumps_getattr_fail() -> bool {
+    *JSON_DUMPS_GETATTR_FAIL
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+fn json_dumps_tuple_fail() -> bool {
+    *JSON_DUMPS_TUPLE_FAIL
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
 impl BundleInterface {
     /// Return the bundle hash for this interface.
     pub fn bundle_hash(&self) -> &str {
@@ -503,12 +546,26 @@ impl BundleInterface {
             return Ok("null".to_string());
         }
 
+        #[cfg(test)]
+        let p_func = if json_dumps_getattr_fail() {
+            std::ptr::null_mut()
+        } else {
+            PyObject_GetAttrString(self.inner.json_module, c"dumps".as_ptr())
+        };
+        #[cfg(not(test))]
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"dumps".as_ptr());
         if p_func.is_null() {
             PyErr_Clear();
             return Err("Failed to get json.dumps function".to_string());
         }
 
+        #[cfg(test)]
+        let p_args = if json_dumps_tuple_fail() {
+            std::ptr::null_mut()
+        } else {
+            PyTuple_New(1)
+        };
+        #[cfg(not(test))]
         let p_args = PyTuple_New(1);
         if p_args.is_null() {
             Py_XDECREF(p_func);
@@ -519,7 +576,7 @@ impl BundleInterface {
         Py_IncRef(obj);
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if PyTuple_SetItem(p_args, 0, obj) < 0 {
+        if py_tuple_set_item(p_args, 0, obj) < 0 {
             error!("Error setting object in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
