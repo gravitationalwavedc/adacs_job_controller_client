@@ -318,7 +318,7 @@ impl BundleInterface {
         }
         let c_bundle_path = CString::new(bundle_path.to_string_lossy().as_ref())
             .map_err(|_| "Bundle path contains NUL byte".to_string())?;
-        let p_bundle_path = PyUnicode_FromString(c_bundle_path.as_ptr());
+        let p_bundle_path = py_unicode_from_string(c_bundle_path.as_ptr());
         if p_bundle_path.is_null() {
             error!("Error creating bundle path string");
             PyErr_Print();
@@ -1505,7 +1505,9 @@ mod set_exception_value_slot_tests {
 mod append_bundle_path_to_sys_path_tests {
     use super::*;
     use crate::bundle_manager::BundleManager;
+    use crate::python_interface::{set_py_unicode_from_string_override, PyUnicodeFromStringFn};
     use crate::tests::fixtures::bundle_fixture::BundleFixture;
+    use std::ffi::c_char;
     use uuid::Uuid;
 
     /// Load a real bundle so the sub-interpreter has a live `sys.path`.
@@ -1576,6 +1578,53 @@ mod append_bundle_path_to_sys_path_tests {
                 result,
                 Err("Bundle path contains NUL byte".to_string()),
                 "interior NUL byte should make append return Err"
+            );
+        }
+    }
+
+    /// RAII guard that installs a `py_unicode_from_string` override for the
+    /// duration of a test and restores the previous override on drop.
+    struct UnicodeFromStringOverrideGuard(Option<PyUnicodeFromStringFn>);
+
+    impl UnicodeFromStringOverrideGuard {
+        fn install(f: PyUnicodeFromStringFn) -> Self {
+            Self(set_py_unicode_from_string_override(Some(f)))
+        }
+    }
+
+    impl Drop for UnicodeFromStringOverrideGuard {
+        fn drop(&mut self) {
+            set_py_unicode_from_string_override(self.0);
+        }
+    }
+
+    /// Override that always fails `PyUnicode_FromString` (returns NULL) to
+    /// exercise the `is_null()` failure branch of
+    /// `append_bundle_path_to_sys_path`.
+    // SAFETY: Test-only; returns NULL without touching the Python error
+    // indicator.
+    unsafe fn always_null_unicode_from_string(_s: *const c_char) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
+
+    #[test]
+    fn returns_err_when_pyunicode_fromstring_fails() {
+        let bundle = load_test_bundle();
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _override =
+                UnicodeFromStringOverrideGuard::install(always_null_unicode_from_string);
+            let p_path = PySys_GetObject(c"path".as_ptr());
+            assert!(!p_path.is_null(), "sys.path should exist");
+            let result = BundleInterface::append_bundle_path_to_sys_path(
+                p_path,
+                Path::new("/some/bundle/path"),
+            );
+            assert_eq!(
+                result,
+                Err("Failed to create bundle path string".to_string()),
+                "PyUnicode_FromString failure should make append return Err"
             );
         }
     }
