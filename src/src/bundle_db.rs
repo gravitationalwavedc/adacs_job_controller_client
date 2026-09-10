@@ -16,7 +16,7 @@ use crate::messaging::{
     DB_BUNDLE_GET_JOB_BY_ID,
 };
 use crate::python_interface::{
-    return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException, PyErr_Occurred,
+    py_err_newexception, return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_Occurred,
     PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef,
     PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
     PyTuple_GetItem, Py_DecRef, METH_VARARGS, PYTHON_API_VERSION,
@@ -601,7 +601,7 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
         return ptr::null_mut();
     }
 
-    let exc = PyErr_NewException(
+    let exc = py_err_newexception(
         c"_bundledb.error".as_ptr(),
         ptr::null_mut(),
         ptr::null_mut(),
@@ -870,6 +870,37 @@ mod tests {
             assert!(!module.is_null(), "module should be created");
             crate::python_interface::Py_DecRef(module);
         }
+    }
+
+    #[test]
+    fn py_init_bundledb_decrefs_module_and_returns_null_when_exception_creation_fails() {
+        use crate::python_interface::set_py_err_newexception_override;
+
+        // SAFETY: Test-only override; args are ignored and NULL is returned to
+        // simulate PyErr_NewException failure.
+        unsafe fn fail_newexception(
+            _name: *const std::os::raw::c_char,
+            _base: *mut PyObject,
+            _dict: *mut PyObject,
+        ) -> *mut PyObject {
+            ptr::null_mut()
+        }
+
+        crate::tests::init_python_global();
+        let prev = set_py_err_newexception_override(Some(fail_newexception));
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            crate::thread_bundle_map::clear_current_thread_bundle();
+            let module = PyInit_bundledb();
+            assert!(
+                module.is_null(),
+                "PyInit_bundledb should return NULL when exception creation fails"
+            );
+        }
+        set_py_err_newexception_override(prev);
     }
 
     #[test]
