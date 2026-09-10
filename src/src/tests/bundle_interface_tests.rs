@@ -13,11 +13,11 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_tuple_new_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -922,6 +922,53 @@ fn test_json_loads_returns_null_when_loads_lookup_fails() {
         }
     }
     inner();
+}
+
+/// `PyTuple_New` can fail (e.g. under memory pressure), so `json_loads` must
+/// return NULL (the "failed to create arguments tuple" branch) after logging,
+/// decref'ing `p_func`, and clearing the error. The branch is unreachable
+/// through the public API because `PyTuple_New(1)` always succeeds, so this
+/// test uses the test-only `py_tuple_new` override seam to force it.
+#[test]
+fn test_json_loads_returns_null_when_tuple_creation_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            // Force PyTuple_New to fail so json_loads hits the
+            // "failed to create arguments tuple" branch.
+            let _override = set_py_tuple_new_override(Some(null_py_tuple_new));
+            let obj = bundle.json_loads(r#"{"key": "value"}"#);
+            assert!(
+                obj.is_null(),
+                "json_loads should return NULL when PyTuple_New fails"
+            );
+            set_py_tuple_new_override(None);
+        }
+    }
+    inner();
+}
+
+/// Override that makes `PyTuple_New` always return NULL, forcing the
+/// "failed to create arguments tuple" branch in `json_loads`.
+unsafe fn null_py_tuple_new(_len: Py_ssize_t) -> *mut PyObject {
+    std::ptr::null_mut()
 }
 
 /// A non-string `PyObject` (e.g. an int) makes `PyUnicode_AsUTF8` fail and set
