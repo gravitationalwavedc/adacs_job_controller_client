@@ -6,14 +6,14 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, py_unicode_from_string,
-    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
-    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
-    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
-    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_new, py_tuple_set_item,
+    py_unicode_from_string, MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString,
+    PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins,
+    PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule, PyIter_Next, PyList_Append,
+    PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject, PyObject_GetAttrString,
+    PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject, PyThreadState,
+    PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef,
+    Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -564,7 +564,7 @@ impl BundleInterface {
             return std::ptr::null_mut();
         }
 
-        let p_args = PyTuple_New(1);
+        let p_args = py_tuple_new(1);
         if p_args.is_null() {
             error!("json_loads: failed to create arguments tuple");
             Py_XDECREF(p_func);
