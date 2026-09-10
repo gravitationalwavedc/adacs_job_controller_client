@@ -1056,6 +1056,36 @@ fn test_to_uint64_clears_stale_error_for_non_integer_object() {
     inner();
 }
 
+/// A null `PyObject` pointer short-circuits `to_string_py` before any FFI
+/// call, so it can be tested directly and deterministically without a Python
+/// interpreter.
+#[test]
+fn test_to_string_py_returns_empty_for_null_pointer() {
+    unsafe {
+        assert_eq!(BundleInterface::to_string_py(std::ptr::null_mut()), "");
+    }
+}
+
+/// A null `PyObject` pointer short-circuits `to_uint64` before any FFI
+/// call, so it can be tested directly and deterministically without a Python
+/// interpreter.
+#[test]
+fn test_to_uint64_returns_zero_for_null_pointer() {
+    unsafe {
+        assert_eq!(BundleInterface::to_uint64(std::ptr::null_mut()), 0);
+    }
+}
+
+/// A null `PyObject` pointer short-circuits `to_bool` before any FFI call,
+/// so it can be tested directly and deterministically without a Python
+/// interpreter.
+#[test]
+fn test_to_bool_returns_false_for_null_pointer() {
+    unsafe {
+        assert!(!BundleInterface::to_bool(std::ptr::null_mut()));
+    }
+}
+
 /// DIRECT UNIT TEST for `BundleManager::run_bundle_json`'s `json_dumps`
 /// failure path.
 ///
