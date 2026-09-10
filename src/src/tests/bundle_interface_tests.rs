@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_object_callobject_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObjectCallObjectFn, PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn,
+    PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input,
+    Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1662,5 +1663,61 @@ fn test_run_returns_err_when_json_loads_returns_null() {
     assert!(
         result.is_err(),
         "run should return Err(NoneException) when json_loads returns NULL"
+    );
+}
+
+// ─── json_dumps CallObject failure override test ─────────────────────────────
+//
+// The `p_value.is_null()` branch in `BundleInterface::json_dumps`
+// (bundle_interface.rs) is unreachable through the public API because
+// `json.dumps` rarely fails. This test uses the test-only
+// `py_object_callobject` override seam to force `PyObject_CallObject` to
+// return NULL and verify `json_dumps` returns `Err("Error calling
+// json.dumps")`.
+
+/// RAII guard that installs a `py_object_callobject` override for the duration
+/// of a test and restores the previous override on drop.
+struct PyObjectCallObjectOverrideGuard(Option<PyObjectCallObjectFn>);
+
+impl PyObjectCallObjectOverrideGuard {
+    fn install(f: PyObjectCallObjectFn) -> Self {
+        Self(set_py_object_callobject_override(Some(f)))
+    }
+}
+
+impl Drop for PyObjectCallObjectOverrideGuard {
+    fn drop(&mut self) {
+        set_py_object_callobject_override(self.0);
+    }
+}
+
+/// Override that makes `PyObject_CallObject` always return NULL, forcing the
+/// `p_value.is_null()` failure branch in `BundleInterface::json_dumps`.
+// SAFETY: Test-only; returns NULL without touching the Python error indicator.
+unsafe fn null_callobject(_callable: *mut PyObject, _args: *mut PyObject) -> *mut PyObject {
+    std::ptr::null_mut()
+}
+
+/// DIRECT UNIT TEST — covers the `p_value.is_null()` failure branch in
+/// `BundleInterface::json_dumps`. Forcing `PyObject_CallObject` to return
+/// NULL via the test-only override seam must make `json_dumps` return
+/// `Err("Error calling json.dumps")`.
+#[test]
+fn test_json_dumps_returns_err_when_callobject_returns_null() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyObjectCallObjectOverrideGuard::install(null_callobject);
+
+    let result = unsafe {
+        let _guard = PYTHON_MUTEX.lock();
+        let _scope = bundle.thread_scope().expect("thread scope");
+        let obj = PyLong_FromUnsignedLongLong(42);
+        let res = bundle.json_dumps(obj);
+        Py_DecRef(obj);
+        res
+    };
+    assert_eq!(
+        result,
+        Err("Error calling json.dumps".to_string()),
+        "json_dumps should return Err when PyObject_CallObject returns NULL"
     );
 }
