@@ -6,9 +6,9 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_new, py_tuple_set_item,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
+    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
     PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
@@ -671,7 +671,7 @@ impl BundleInterface {
                 Py_XDECREF(traceback);
                 swallow_python_error();
             } else {
-                let tb_args = PyTuple_New(1);
+                let tb_args = py_tuple_new(1);
                 if tb_args.is_null() {
                     // The `traceback` ref is still owned here; release it and
                     // the function ref before falling through to the header.
@@ -734,7 +734,7 @@ impl BundleInterface {
                 fallback_value_text(&value_display, &value_str)
             );
         } else {
-            let eo_args = PyTuple_New(2);
+            let eo_args = py_tuple_new(2);
             if eo_args.is_null() {
                 // The `extype` and `value` refs are still owned here; release
                 // them and the function ref before the fallback.
@@ -985,7 +985,9 @@ mod fallback_value_text_tests {
 mod bundle_interface_conversion_tests {
     use super::*;
     use crate::python_interface::{
-        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, PyUnicode_FromString, Py_eval_input,
+        set_py_tuple_new_override, PyErr_NewException, PyErr_SetString,
+        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, PyTupleNewFn, PyUnicode_FromString,
+        Py_eval_input, Py_ssize_t,
     };
 
     /// Helper: create a minimal `BundleInterface` with null pointer fields.
@@ -1353,6 +1355,115 @@ mod bundle_interface_conversion_tests {
                 "stale error from PyObject_GetAttrString must be cleared"
             );
             Py_DecRef(int_obj);
+        }
+    }
+
+    /// `BundleInterface` with a real `traceback` module but null
+    /// sub-interpreter fields (all `print_last_python_exception` needs).
+    ///
+    /// # Safety
+    /// Caller holds `PYTHON_MUTEX` and the GIL.
+    unsafe fn bundle_with_traceback_module() -> BundleInterface {
+        let traceback_module = PyImport_ImportModule(c"traceback".as_ptr());
+        assert!(
+            !traceback_module.is_null(),
+            "traceback module should import"
+        );
+        BundleInterface {
+            inner: Arc::new(BundleInterfaceInner {
+                python_interpreter: SubInterpreter::null(),
+                p_global: std::ptr::null_mut(),
+                p_bundle_module: std::ptr::null_mut(),
+                json_module: std::ptr::null_mut(),
+                traceback_module,
+                bundle_hash: "test-bundle".to_string(),
+                thread_scope_error: None,
+            }),
+        }
+    }
+
+    struct TupleNewOverrideGuard(Option<PyTupleNewFn>);
+
+    impl TupleNewOverrideGuard {
+        fn install(f: PyTupleNewFn) -> Self {
+            Self(set_py_tuple_new_override(Some(f)))
+        }
+    }
+
+    impl Drop for TupleNewOverrideGuard {
+        fn drop(&mut self) {
+            set_py_tuple_new_override(self.0);
+        }
+    }
+
+    // SAFETY: Test-only; delegates to the real `PyTuple_New` for other sizes.
+    unsafe fn fail_size_1(len: Py_ssize_t) -> *mut PyObject {
+        if len == 1 {
+            std::ptr::null_mut()
+        } else {
+            PyTuple_New(len)
+        }
+    }
+
+    // SAFETY: Test-only; delegates to the real `PyTuple_New` for other sizes.
+    unsafe fn fail_size_2(len: Py_ssize_t) -> *mut PyObject {
+        if len == 2 {
+            std::ptr::null_mut()
+        } else {
+            PyTuple_New(len)
+        }
+    }
+
+    /// The `tb_args` ``PyTuple_New(1)`` failure branch releases the owned refs.
+    #[test]
+    fn print_last_python_exception_releases_refs_when_tb_args_alloc_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX held + ThreadScope provides a valid thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let bundle = bundle_with_traceback_module();
+            let globals = PyDict_New();
+            assert!(!globals.is_null(), "globals dict should be created");
+            PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
+            PyRun_StringFlags(
+                c"raise ValueError('boom')".as_ptr(),
+                Py_file_input,
+                globals,
+                globals,
+                std::ptr::null_mut(),
+            );
+            assert!(!PyErr_Occurred().is_null(), "an exception should be active");
+            let _guard = TupleNewOverrideGuard::install(fail_size_1);
+            bundle.print_last_python_exception();
+            assert!(PyErr_Occurred().is_null(), "error should be cleared");
+            Py_DecRef(globals);
+        }
+    }
+
+    /// The `eo_args` ``PyTuple_New(2)`` failure branch releases the owned refs.
+    #[test]
+    fn print_last_python_exception_releases_refs_when_eo_args_alloc_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX held + ThreadScope provides a valid thread state.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let bundle = bundle_with_traceback_module();
+            let exc = PyErr_NewException(
+                c"test.Exc".as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            assert!(!exc.is_null(), "exception type should be created");
+            PyErr_SetString(exc, c"boom".as_ptr());
+            assert!(!PyErr_Occurred().is_null(), "an exception should be active");
+            let _guard = TupleNewOverrideGuard::install(fail_size_2);
+            bundle.print_last_python_exception();
+            assert!(PyErr_Occurred().is_null(), "error should be cleared");
+            Py_DecRef(exc);
         }
     }
 }
