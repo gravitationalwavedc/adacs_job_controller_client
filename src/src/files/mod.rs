@@ -2115,6 +2115,29 @@ mod tests {
     }
 
     #[test]
+    fn read_dir_into_logs_warning_and_skips_handler_when_read_dir_fails() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("a.txt");
+        fs::write(&file, "a").unwrap();
+        let logs = capture_logs(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let mut count = 0usize;
+                let mut handler = CountHandler { count: &mut count };
+                read_dir_into(&file, &mut handler).await;
+                assert_eq!(
+                    count, 0,
+                    "handler should never be called on read_dir failure"
+                );
+            });
+        });
+        assert!(
+            logs.contains("handle_file_list: failed to read directory"),
+            "expected read_dir failure warning, got: {logs}"
+        );
+    }
+
+    #[test]
     fn test_path_within_working_dir() {
         let tmp = TempDir::new().unwrap();
         let wd = tmp.path().to_str().unwrap().to_string();
