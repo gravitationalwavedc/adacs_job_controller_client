@@ -267,6 +267,35 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+#[cfg(test)]
+pub type PyUnicodeFromStringFn = unsafe fn(*const c_char) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_UNICODE_FROMSTRING_OVERRIDE: Mutex<Option<PyUnicodeFromStringFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_unicode_fromstring`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_unicode_fromstring_override(
+    f: Option<PyUnicodeFromStringFn>,
+) -> Option<PyUnicodeFromStringFn> {
+    let mut guard = PY_UNICODE_FROMSTRING_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyUnicode_FromString` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyUnicode_FromString`: caller holds `PYTHON_MUTEX` and
+/// the GIL; `obj` points to a NUL-terminated string.
+pub unsafe fn py_unicode_fromstring(obj: *const c_char) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_UNICODE_FROMSTRING_OVERRIDE.lock() {
+        return f(obj);
+    }
+    PyUnicode_FromString(obj)
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///

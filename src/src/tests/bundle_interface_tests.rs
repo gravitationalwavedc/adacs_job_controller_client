@@ -13,17 +13,18 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_tuple_set_item_override, set_py_unicode_fromstring_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
+    PyUnicodeFromStringFn, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t,
+    PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1662,5 +1663,57 @@ fn test_run_returns_err_when_json_loads_returns_null() {
     assert!(
         result.is_err(),
         "run should return Err(NoneException) when json_loads returns NULL"
+    );
+}
+
+// ─── json_loads PyUnicode_FromString failure branch ──────────────────────────
+//
+// The `p_value.is_null()` branch in `BundleInterface::json_loads`
+// (bundle_interface.rs) is unreachable through the public API because
+// `PyUnicode_FromString` always succeeds on valid NUL-terminated content.
+// These tests use the test-only `py_unicode_fromstring` override seam to force
+// the branch and verify it releases `p_args` and `p_func`, clears the error,
+// and returns NULL.
+
+/// RAII guard that installs a `py_unicode_fromstring` override for the
+/// duration of a test and restores the previous override on drop.
+struct PyUnicodeFromStringOverrideGuard(Option<PyUnicodeFromStringFn>);
+
+impl PyUnicodeFromStringOverrideGuard {
+    fn install(f: PyUnicodeFromStringFn) -> Self {
+        Self(set_py_unicode_fromstring_override(Some(f)))
+    }
+}
+
+impl Drop for PyUnicodeFromStringOverrideGuard {
+    fn drop(&mut self) {
+        set_py_unicode_fromstring_override(self.0);
+    }
+}
+
+/// Override that makes `py_unicode_fromstring` always return NULL, forcing the
+/// `p_value.is_null()` branch in `BundleInterface::json_loads`.
+// SAFETY: Test-only; returns NULL without touching the Python error indicator.
+unsafe fn null_py_unicode_fromstring(_obj: *const c_char) -> *mut PyObject {
+    std::ptr::null_mut()
+}
+
+/// DIRECT UNIT TEST — covers the `p_value.is_null()` branch in
+/// `BundleInterface::json_loads`. Forcing `py_unicode_fromstring` to return
+/// NULL via the test-only override seam must make `json_loads` release the
+/// arguments tuple and function, clear the error, and return NULL.
+#[test]
+fn test_json_loads_returns_null_when_py_unicode_fromstring_fails() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyUnicodeFromStringOverrideGuard::install(null_py_unicode_fromstring);
+
+    let result = unsafe {
+        let _guard = PYTHON_MUTEX.lock();
+        let _scope = bundle.thread_scope().expect("thread scope");
+        bundle.json_loads("{\"key\": \"value\"}")
+    };
+    assert!(
+        result.is_null(),
+        "json_loads should return NULL when PyUnicode_FromString fails"
     );
 }
