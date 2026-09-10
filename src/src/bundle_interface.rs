@@ -6,7 +6,7 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_dict_new, py_tuple_set_item, MyPy_IsNone,
     PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
     PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
@@ -188,7 +188,7 @@ impl BundleInterface {
         debug!("BundleInterface::new bundle path {:?}", bundle_path);
 
         // Create a new globals dict and enable the python builtins
-        let p_global = PyDict_New();
+        let p_global = py_dict_new();
         if p_global.is_null() {
             error!("Error creating global dict");
             PyErr_Print();
@@ -1828,5 +1828,52 @@ mod log_python_lines_tests {
             Py_DecRef(list);
             Py_DecRef(globals);
         }
+    }
+}
+
+// ─── BundleInterface::new tests ──────────────────────────────────────────────
+
+#[cfg(test)]
+mod new_tests {
+    use super::*;
+    use crate::python_interface::{set_py_dict_new_override, PyDictNewFn};
+
+    /// RAII guard that installs a `py_dict_new` override for the duration of a
+    /// test and restores the previous override on drop.
+    struct DictNewOverrideGuard(Option<PyDictNewFn>);
+
+    impl DictNewOverrideGuard {
+        fn install(f: PyDictNewFn) -> Self {
+            Self(set_py_dict_new_override(Some(f)))
+        }
+    }
+
+    impl Drop for DictNewOverrideGuard {
+        fn drop(&mut self) {
+            set_py_dict_new_override(self.0);
+        }
+    }
+
+    /// Override that makes `PyDict_New` fail (return NULL) for the globals
+    /// dict in `BundleInterface::new`.
+    // SAFETY: Test-only; returns a NULL pointer, which `new` treats as failure.
+    unsafe fn fail_globals_dict() -> *mut PyObject {
+        std::ptr::null_mut()
+    }
+
+    /// `BundleInterface::new` must log, print the error, and return
+    /// `Err("Failed to create global dict")` when `PyDict_New` returns NULL.
+    #[test]
+    fn returns_err_when_globals_dict_creation_fails() {
+        crate::tests::init_python_global();
+        let _override = DictNewOverrideGuard::install(fail_globals_dict);
+        // SAFETY: PYTHON_MUTEX is held internally by `new`; the override
+        // forces the globals-dict creation to fail.
+        let result = unsafe { BundleInterface::new("some-hash", "/some/root") };
+        assert_eq!(
+            result.err(),
+            Some("Failed to create global dict".to_string()),
+            "NULL globals dict should make new return Err"
+        );
     }
 }

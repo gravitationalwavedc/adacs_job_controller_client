@@ -267,6 +267,39 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+// ─── Test-only PyDict_New override seam ─────────────────────────────────────
+// The `PyDict_New` failure branch in `BundleInterface::new` (the globals
+// dict) is unreachable through the public API because `PyDict_New` always
+// succeeds in practice. This seam lets tests force it to return NULL without
+// changing production behavior. Tests run serially (`--test-threads=1`), so
+// the global override cannot race across tests.
+
+#[cfg(test)]
+pub type PyDictNewFn = unsafe fn() -> *mut PyObject;
+
+#[cfg(test)]
+static PY_DICT_NEW_OVERRIDE: Mutex<Option<PyDictNewFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_dict_new`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_dict_new_override(f: Option<PyDictNewFn>) -> Option<PyDictNewFn> {
+    let mut guard = PY_DICT_NEW_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyDict_New` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyDict_New`: caller holds `PYTHON_MUTEX` and the GIL.
+pub unsafe fn py_dict_new() -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_DICT_NEW_OVERRIDE.lock() {
+        return f();
+    }
+    PyDict_New()
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///
