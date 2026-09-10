@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_callable_check_override, set_py_tuple_set_item_override,
+    PyCallableCheckFn, PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred,
+    PyErr_SetString, PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong,
+    PyObject, PyObject_GetAttrString, PyObject_Head, PyObject_SetAttrString, PyRun_StringFlags,
+    PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef,
+    Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -733,6 +734,94 @@ fn test_run_returns_err_for_non_callable_function() {
                 result.is_err(),
                 "non-callable function should make run return Err"
             );
+        }
+    }
+    inner();
+}
+
+/// RAII guard that installs a `py_callable_check` override for the duration of
+/// a test and restores the previous override on drop.
+struct CallableCheckOverrideGuard(Option<PyCallableCheckFn>);
+
+impl CallableCheckOverrideGuard {
+    fn install(f: PyCallableCheckFn) -> Self {
+        Self(set_py_callable_check_override(Some(f)))
+    }
+}
+
+impl Drop for CallableCheckOverrideGuard {
+    fn drop(&mut self) {
+        set_py_callable_check_override(self.0);
+    }
+}
+
+/// Override that always reports the object as not callable.
+// SAFETY: Test-only; `_callable` is a live object from the caller.
+unsafe fn always_not_callable(_callable: *mut PyObject) -> c_int {
+    0
+}
+
+/// DIRECT UNIT TEST — reviewer request.
+///
+/// Forces `PyCallable_Check` to return 0 (attribute exists but not callable)
+/// via the test-only override seam, even though the attribute is actually a
+/// callable function. Verifies `run` releases `p_func` (refcount balanced) and
+/// returns `Err(NoneException)` without leaving a Python error set.
+#[test]
+fn test_run_returns_err_when_py_callable_check_returns_zero() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+
+            // The attribute exists and is callable, so this refcount must be
+            // balanced by `run` when the forced PyCallable_Check==0 branch
+            // releases p_func.
+            let bundle_module = PyImport_ImportModule(c"bundle".as_ptr());
+            assert!(
+                !bundle_module.is_null(),
+                "bundle module should be importable"
+            );
+            let s_func = CString::new("submit").unwrap();
+            let p_func = PyObject_GetAttrString(bundle_module, s_func.as_ptr());
+            assert!(!p_func.is_null(), "submit attribute should exist");
+            let refcount_before = (*p_func.cast::<PyObject_Head>()).ob_refcnt;
+
+            let _override = CallableCheckOverrideGuard::install(always_not_callable);
+            let result = bundle.run("submit", &serde_json::json!({}), "");
+
+            assert!(
+                result.is_err(),
+                "PyCallable_Check==0 should make run return Err"
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "PyCallable_Check==0 branch must not leave a Python error set"
+            );
+            let refcount_after = (*p_func.cast::<PyObject_Head>()).ob_refcnt;
+            assert_eq!(
+                refcount_after, refcount_before,
+                "run must release p_func when PyCallable_Check returns 0"
+            );
+
+            Py_DecRef(p_func);
+            Py_DecRef(bundle_module);
         }
     }
     inner();
