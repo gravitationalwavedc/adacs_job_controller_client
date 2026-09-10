@@ -13,17 +13,18 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_object_getattrstring_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObjectGetAttrStringFn, PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn,
+    PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input,
+    Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1529,6 +1530,102 @@ fn test_print_last_python_exception_null_traceback_skips_format_tb() {
     assert!(
         logs.contains("RuntimeError: boom"),
         "expected exception header line in logs, got:\n{logs}"
+    );
+}
+
+/// RAII guard installing a `py_object_getattrstring` override for the test.
+struct GetAttrStringOverrideGuard(Option<PyObjectGetAttrStringFn>);
+
+impl GetAttrStringOverrideGuard {
+    fn install(f: PyObjectGetAttrStringFn) -> Self {
+        Self(set_py_object_getattrstring_override(Some(f)))
+    }
+}
+
+impl Drop for GetAttrStringOverrideGuard {
+    fn drop(&mut self) {
+        set_py_object_getattrstring_override(self.0);
+    }
+}
+
+/// Override returning NULL only for `traceback.format_tb`.
+// SAFETY: Test-only; delegates to the real FFI for all other lookups.
+unsafe fn fail_format_tb_lookup(obj: *mut PyObject, name: *const c_char) -> *mut PyObject {
+    if CStr::from_ptr(name).to_bytes() == b"format_tb" {
+        std::ptr::null_mut()
+    } else {
+        crate::python_interface::PyObject_GetAttrString(obj, name)
+    }
+}
+
+/// Override returning NULL only for `traceback.format_exception_only`.
+// SAFETY: Test-only; delegates to the real FFI for all other lookups.
+unsafe fn fail_format_exception_only_lookup(
+    obj: *mut PyObject,
+    name: *const c_char,
+) -> *mut PyObject {
+    if CStr::from_ptr(name).to_bytes() == b"format_exception_only" {
+        std::ptr::null_mut()
+    } else {
+        crate::python_interface::PyObject_GetAttrString(obj, name)
+    }
+}
+
+/// Covers the `format_tb` `is_null()` branch (releases `traceback`, emits header).
+#[test]
+fn test_print_last_python_exception_handles_format_tb_attr_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = GetAttrStringOverrideGuard::install(fail_format_tb_lookup);
+
+    let mut no_stale_error = false;
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let exc = runtime_error_type();
+            PyErr_SetString(exc, c"boom".as_ptr());
+            Py_DecRef(exc);
+            bundle.print_last_python_exception();
+            no_stale_error = PyErr_Occurred().is_null();
+        }
+    });
+
+    assert!(
+        no_stale_error,
+        "stale error from failed format_tb lookup must be cleared"
+    );
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected exception header after format_tb lookup failure, got:\n{logs}"
+    );
+}
+
+/// Covers the `format_exception_only` `is_null()` branch (releases refs, fallback).
+#[test]
+fn test_print_last_python_exception_handles_format_exception_only_attr_failure() {
+    let bundle = load_bundle_for_exception_printer();
+    let _override = GetAttrStringOverrideGuard::install(fail_format_exception_only_lookup);
+
+    let mut no_stale_error = false;
+    let logs = capture_logs(|| {
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let exc = runtime_error_type();
+            PyErr_SetString(exc, c"boom".as_ptr());
+            Py_DecRef(exc);
+            bundle.print_last_python_exception();
+            no_stale_error = PyErr_Occurred().is_null();
+        }
+    });
+
+    assert!(
+        no_stale_error,
+        "stale error from failed format_exception_only lookup must be cleared"
+    );
+    assert!(
+        logs.contains("RuntimeError: boom"),
+        "expected synthesized exception header after format_exception_only failure, got:\n{logs}"
     );
 }
 
