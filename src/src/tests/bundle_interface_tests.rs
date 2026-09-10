@@ -13,11 +13,12 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_run_stringflags_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRunStringFlagsFn, PyRun_StringFlags, PyTupleSetItemFn,
+    PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input,
+    Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1169,6 +1170,62 @@ fn test_bundle_interface_new_missing_bundle_module() {
             result.err().as_deref(),
             Some("Failed to load bundle module"),
             "missing bundle module should fail with 'Failed to load bundle module'"
+        );
+    }
+    inner();
+}
+
+/// RAII guard that installs a `py_run_stringflags` override for the duration of
+/// a test and restores the previous override on drop.
+struct RunStringFlagsOverrideGuard(Option<PyRunStringFlagsFn>);
+
+impl RunStringFlagsOverrideGuard {
+    fn install(f: PyRunStringFlagsFn) -> Self {
+        Self(set_py_run_stringflags_override(Some(f)))
+    }
+}
+
+impl Drop for RunStringFlagsOverrideGuard {
+    fn drop(&mut self) {
+        set_py_run_stringflags_override(self.0);
+    }
+}
+
+/// DIRECT UNIT TEST — covers the `PyRun_StringFlags` failure branch in
+/// `BundleInterface::new` (the stdout/stderr redirection install). The call
+/// always succeeds on the real interpreter because `STDOUT_REDIRECTION` is a
+/// constant that always compiles, so this branch is unreachable through the
+/// public API. The test-only `py_run_stringflags` override seam forces it to
+/// return NULL and verifies the defensive path: logs, calls `PyErr_Print`,
+/// decrefs `p_global` and `p_local`, and returns the expected error.
+#[test]
+fn test_bundle_interface_new_stdout_redirection_failure() {
+    // SAFETY: Test-only; returns NULL to simulate a redirection-script
+    // compile failure without touching the interpreter.
+    unsafe fn fail_redirect(
+        _code: *const std::os::raw::c_char,
+        _start: std::os::raw::c_int,
+        _globals: *mut PyObject,
+        _locals: *mut PyObject,
+        _flags: *mut std::os::raw::c_void,
+    ) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
+
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+
+        let _override = RunStringFlagsOverrideGuard::install(fail_redirect);
+
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to install stdout/stderr redirection"),
+            "failed redirection install should return 'Failed to install stdout/stderr redirection'"
         );
     }
     inner();
