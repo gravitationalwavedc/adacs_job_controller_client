@@ -1617,6 +1617,36 @@ fn test_archive_dir_nested_files() {
     assert!(!entries.iter().any(|p| p == "archive.tar.gz"));
 }
 
+#[test]
+fn test_archive_dir_unreadable_subdirectory_returns_error() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::write(temp_dir.path().join("root.txt"), "root").unwrap();
+    let unreadable = temp_dir.path().join("unreadable");
+    fs::create_dir(&unreadable).unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+    }
+
+    let archive_path = temp_dir.path().join("archive.tar.gz");
+    let result = crate::jobs::archive_dir(temp_dir.path(), &archive_path);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.starts_with("Failed to read directory entry:"),
+        "unexpected error: {err}"
+    );
+
+    // Restore permissions so TempDir cleanup can remove the directory
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
 #[test_fork::test]
 fn test_archive_fail() {
     #[tokio::main(flavor = "current_thread")]
