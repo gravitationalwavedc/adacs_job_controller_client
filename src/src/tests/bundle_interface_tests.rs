@@ -13,17 +13,17 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, PyDict_GetItemString, PyDict_New,
-    PyDict_SetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicode_FromString,
-    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
+    my_py_none_struct, set_py_dict_setitemstring_override, set_py_tuple_set_item_override,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
+    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1174,6 +1174,33 @@ fn test_bundle_interface_new_missing_bundle_module() {
     inner();
 }
 
+/// DIRECT UNIT TEST — reviewer request.
+///
+/// Forces the `PyDict_SetItemString` call that stores the `json` module in the
+/// globals dict to fail. The branch logs "Error setting json module in globals
+/// dict" and returns `Err("Failed to set json module in globals dict")` after
+/// releasing the `json_module` and `p_global` references.
+#[test]
+fn test_bundle_interface_new_json_setitemstring_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+
+        let previous = set_py_dict_setitemstring_override(Some(fail_json_key));
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        set_py_dict_setitemstring_override(previous);
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to set json module in globals dict"),
+            "json SetItemString failure should propagate as 'Failed to set json module in globals dict'"
+        );
+    }
+    inner();
+}
+
 /// DIRECT UNIT TEST — reviewer request on MR !200 ("Needs coverage." /
 /// "Please test the new branches.").
 ///
@@ -1390,6 +1417,20 @@ unsafe fn fail_eo_args_non_none_item(
         -1
     } else {
         PyTuple_SetItem(tuple, pos, item)
+    }
+}
+
+/// Override that fails `PyDict_SetItemString` only for the `json` key (the
+/// module-storage call in `BundleInterface::new`), letting the `__builtins__`
+/// call succeed. Mirrors `CPython`'s failure behaviour: releases the item
+/// reference and returns -1.
+// SAFETY: Test-only; `dict`/`item` are live objects from the caller.
+unsafe fn fail_json_key(dict: *mut PyObject, key: *const c_char, item: *mut PyObject) -> c_int {
+    if std::ffi::CStr::from_ptr(key).to_bytes() == b"json" {
+        Py_DecRef(item);
+        -1
+    } else {
+        PyDict_SetItemString(dict, key, item)
     }
 }
 

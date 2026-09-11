@@ -267,6 +267,48 @@ pub unsafe fn py_tuple_set_item(
     PyTuple_SetItem(tuple, pos, item)
 }
 
+// ─── Test-only FFI override seam for PyDict_SetItemString ────────────────────
+// The `PyDict_SetItemString` failure branch in `BundleInterface::new` (storing
+// the `json` module in the globals dict) is unreachable through the public API
+// because the call always succeeds on a freshly-created dict with a valid key.
+// This seam lets tests force a failure without changing production behavior.
+// Tests run serially (`--test-threads=1`), so the global override cannot race
+// across tests.
+
+#[cfg(test)]
+pub type PyDictSetItemStringFn = unsafe fn(*mut PyObject, *const c_char, *mut PyObject) -> c_int;
+
+#[cfg(test)]
+static PY_DICT_SET_ITEM_STRING_OVERRIDE: Mutex<Option<PyDictSetItemStringFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_dict_setitemstring`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_dict_setitemstring_override(
+    f: Option<PyDictSetItemStringFn>,
+) -> Option<PyDictSetItemStringFn> {
+    let mut guard = PY_DICT_SET_ITEM_STRING_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyDict_SetItemString` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyDict_SetItemString`: caller holds `PYTHON_MUTEX`
+/// and the GIL; `dict` is a valid dict, `key` is a valid C string, `item` is a
+/// live object.
+pub unsafe fn py_dict_setitemstring(
+    dict: *mut PyObject,
+    key: *const c_char,
+    item: *mut PyObject,
+) -> c_int {
+    #[cfg(test)]
+    if let Some(f) = *PY_DICT_SET_ITEM_STRING_OVERRIDE.lock() {
+        return f(dict, key, item);
+    }
+    PyDict_SetItemString(dict, key, item)
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///
