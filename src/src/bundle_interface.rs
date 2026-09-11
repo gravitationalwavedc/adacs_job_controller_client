@@ -6,9 +6,9 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_object_getattrstring, py_tuple_set_item,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
+    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
     PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
@@ -366,7 +366,7 @@ impl BundleInterface {
             Py_DecRef(json_obj);
             return Err(NoneException);
         };
-        let p_func = PyObject_GetAttrString(self.inner.p_bundle_module, s_func.as_ptr());
+        let p_func = py_object_getattrstring(self.inner.p_bundle_module, s_func.as_ptr());
 
         // Check if function exists
         if p_func.is_null() {
@@ -1827,6 +1827,109 @@ mod log_python_lines_tests {
             );
             Py_DecRef(list);
             Py_DecRef(globals);
+        }
+    }
+}
+
+// ─── run() bundle-module attribute lookup tests ─────────────────────────────
+
+#[cfg(test)]
+mod run_bundle_attr_lookup_tests {
+    use super::*;
+    use crate::python_interface::{
+        set_py_object_getattrstring_override, PyLong_FromUnsignedLongLong, PyObjectGetAttrStringFn,
+    };
+    use std::os::raw::c_char;
+
+    /// RAII guard that installs a `py_object_getattrstring` override for the
+    /// duration of a test and restores the previous override on drop.
+    struct GetAttrStringOverrideGuard(Option<PyObjectGetAttrStringFn>);
+
+    impl GetAttrStringOverrideGuard {
+        fn install(f: PyObjectGetAttrStringFn) -> Self {
+            Self(set_py_object_getattrstring_override(Some(f)))
+        }
+    }
+
+    impl Drop for GetAttrStringOverrideGuard {
+        fn drop(&mut self) {
+            set_py_object_getattrstring_override(self.0);
+        }
+    }
+
+    /// RAII guard that installs a `json_loads` override for the duration of a
+    /// test and restores the previous override on drop.
+    struct JsonLoadsOverrideGuard(Option<JsonLoadsFn>);
+
+    impl JsonLoadsOverrideGuard {
+        fn install(f: JsonLoadsFn) -> Self {
+            Self(set_json_loads_override(Some(f)))
+        }
+    }
+
+    impl Drop for JsonLoadsOverrideGuard {
+        fn drop(&mut self) {
+            set_json_loads_override(self.0);
+        }
+    }
+
+    /// Override that always fails the bundle-module attribute lookup, returning
+    /// NULL as `PyObject_GetAttrString` does when the attribute is missing.
+    // SAFETY: Test-only; `obj` is a live object from the caller.
+    unsafe fn fail_attr_lookup(_obj: *mut PyObject, _name: *const c_char) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
+
+    /// Helper: create a `BundleInterface` with the given bundle module pointer.
+    fn bundle_with_module(module: *mut PyObject) -> BundleInterface {
+        BundleInterface {
+            inner: Arc::new(BundleInterfaceInner {
+                python_interpreter: SubInterpreter::null(),
+                p_global: std::ptr::null_mut(),
+                p_bundle_module: module,
+                json_module: std::ptr::null_mut(),
+                traceback_module: std::ptr::null_mut(),
+                bundle_hash: "test-bundle".to_string(),
+                thread_scope_error: None,
+            }),
+        }
+    }
+
+    /// `run` must return `Err(NoneException)` when the bundle-module
+    /// attribute lookup fails, swallowing the raised Python error and releasing
+    /// `json_obj`.
+    #[test]
+    fn run_returns_none_exception_when_bundle_attr_lookup_fails() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `run` and the Python FFI calls it makes.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+
+            // `json_loads` must succeed so `run` reaches the attribute lookup.
+            let _json_guard = JsonLoadsOverrideGuard::install(|_, _| {
+                // SAFETY: PYTHON_MUTEX is held; returns a fresh owned reference.
+                PyLong_FromUnsignedLongLong(1)
+            });
+            let _attr_guard = GetAttrStringOverrideGuard::install(fail_attr_lookup);
+
+            let module = PyLong_FromUnsignedLongLong(2);
+            let bundle = bundle_with_module(module);
+
+            let result = bundle.run("missing_func", &serde_json::json!({}), "");
+            assert!(
+                result.is_err(),
+                "run should fail on missing bundle attribute"
+            );
+            assert!(
+                PyErr_Occurred().is_null(),
+                "stale error from failed attribute lookup must be swallowed"
+            );
+
+            Py_DecRef(module);
         }
     }
 }
