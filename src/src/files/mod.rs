@@ -3290,6 +3290,49 @@ mod tests {
         set_server_ready_timeout_for_test(None);
     }
 
+    #[tokio::test]
+    async fn validate_server_ready_rejects_text_frame() {
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::NonBinary,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let mut server = WebsocketServerFixture::with_config(config).await;
+        let url = format!("ws://127.0.0.1:{}/ws/", server.port);
+        let (_, mut ws_receiver) = connect_file_ws_raw(&url, "test-uuid", "", "file download")
+            .await
+            .expect("expected connection to succeed");
+
+        let Err(err) = validate_server_ready(&mut ws_receiver).await else {
+            panic!("text frame must be rejected");
+        };
+        assert_eq!(err, "expected binary SERVER_READY, got unexpected frame");
+
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn validate_server_ready_reports_connection_closed() {
+        let mut server = WebsocketServerFixture::new().await;
+        let url = format!("ws://127.0.0.1:{}/ws/", server.port);
+        let (_, mut ws_receiver) = connect_file_ws_raw(&url, "test-uuid", "", "file download")
+            .await
+            .expect("expected connection to succeed");
+
+        // Peer closes the connection during the handshake: send a Close frame,
+        // then drain the receive half until EOF (None) so the subsequent
+        // readiness read observes a closed connection.
+        server.send_peer_close().await;
+        while ws_receiver.next().await.is_some() {}
+
+        let Err(err) = validate_server_ready(&mut ws_receiver).await else {
+            panic!("closed connection must be reported");
+        };
+        assert_eq!(err, "server closed connection before sending SERVER_READY");
+
+        server.stop().await;
+    }
+
     #[test]
     fn test_collect_dir_entry_regular_file() {
         let tmp = TempDir::new().unwrap();
