@@ -6,9 +6,9 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_dict_setitemstring, py_tuple_set_item,
+    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
+    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
     PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
@@ -194,7 +194,7 @@ impl BundleInterface {
             PyErr_Print();
             return Err("Failed to create global dict".to_string());
         }
-        if PyDict_SetItemString(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins()) < 0 {
+        if py_dict_setitemstring(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins()) < 0 {
             error!("Error setting __builtins__ in globals dict");
             PyErr_Print();
             Py_DecRef(p_global);
@@ -1594,6 +1594,74 @@ mod append_bundle_path_to_sys_path_tests {
             );
             assert!(result.is_ok(), "append should succeed: {result:?}");
         }
+    }
+}
+
+// ─── BundleInterface::new __builtins__ failure branch tests ──────────────────
+
+#[cfg(test)]
+mod new_builtins_failure_tests {
+    use super::*;
+    use crate::python_interface::{set_py_dict_setitemstring_override, PyDictSetItemStringFn};
+    use crate::tests::fixtures::bundle_fixture::BundleFixture;
+    use std::ffi::CStr;
+    use std::os::raw::c_char;
+    use std::os::raw::c_int;
+    use uuid::Uuid;
+
+    /// RAII guard that installs a `py_dict_setitemstring` override for the
+    /// duration of a test and restores the previous override on drop.
+    struct DictSetItemStringOverrideGuard(Option<PyDictSetItemStringFn>);
+
+    impl DictSetItemStringOverrideGuard {
+        fn install(f: PyDictSetItemStringFn) -> Self {
+            Self(set_py_dict_setitemstring_override(Some(f)))
+        }
+    }
+
+    impl Drop for DictSetItemStringOverrideGuard {
+        fn drop(&mut self) {
+            set_py_dict_setitemstring_override(self.0);
+        }
+    }
+
+    /// Override that fails `PyDict_SetItemString` only for the `__builtins__`
+    /// key, passing every other key through to the real call.
+    // SAFETY: Test-only; `dict`/`item` are live objects and `key` is a valid
+    // NUL-terminated string from the caller.
+    unsafe fn fail_builtins_set(
+        dict: *mut PyObject,
+        key: *const c_char,
+        item: *mut PyObject,
+    ) -> c_int {
+        if CStr::from_ptr(key).to_bytes() == b"__builtins__" {
+            -1
+        } else {
+            PyDict_SetItemString(dict, key, item)
+        }
+    }
+
+    /// `BundleInterface::new` must log, print the Python error, decref the
+    /// globals dict, and return `Err` when setting `__builtins__` fails.
+    #[test]
+    fn returns_err_when_builtins_set_fails() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        let _override = DictSetItemStringOverrideGuard::install(fail_builtins_set);
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        assert!(
+            matches!(
+                result,
+                Err(ref e) if e == "Failed to set __builtins__ in globals dict"
+            ),
+            "failing __builtins__ set should make new return Err"
+        );
     }
 }
 
