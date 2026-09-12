@@ -172,6 +172,20 @@ pub(crate) fn set_pre_details_send_barrier_for_test(barrier: Option<Arc<Lifecycl
     set_barrier_for_test(&TEST_PRE_DETAILS_SEND_BARRIER, barrier);
 }
 
+/// Test-only seam that parks the supervisor immediately before a file chunk
+/// send in [`run_sending_phase`]. Lets a test reset the peer transport so the
+/// chunk send deterministically fails, exercising the mid-transfer
+/// `"chunk send failed"` primary-error branch. The seam is a no-op when no
+/// barrier is installed.
+#[cfg(test)]
+static TEST_PRE_CHUNK_SEND_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_pre_chunk_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    set_barrier_for_test(&TEST_PRE_CHUNK_SEND_BARRIER, barrier);
+}
+
 /// Test-only seam that exposes the supervisor's authoritative transfer result
 /// to integration tests. The supervisor sends the selected `TransferOutcome`
 /// at the start of unified cleanup — covering both transfer-loop results and
@@ -1091,16 +1105,16 @@ async fn run_sending_phase(
         return LoopStep::SetState(ChunkState::Reading);
     };
     let chunk_len = state.pending_chunk_len;
+    // Test seam: arrive-and-wait on the pre-chunk-send barrier if installed,
+    // so a test can reset the peer transport before the chunk send. The seam
+    // is a no-op when no barrier is set.
+    #[cfg(test)]
+    arrive_barrier(&TEST_PRE_CHUNK_SEND_BARRIER).await;
     let ws_msg = WsMessage::Binary(pending_bytes.clone());
     let mut send_fut = Box::pin(ws_sender.send(ws_msg));
 
     tokio::select! {
         biased;
-        incoming = ws_receiver.next() => {
-            // Restore the chunk so the next Sending phase can retry.
-            state.pending_chunk_bytes = Some(pending_bytes);
-            handle_incoming_event(incoming, is_paused, resume_notify, state)
-        }
         send_result = &mut send_fut => {
             state.pending_chunk_bytes = None;
             state.pending_chunk_len = 0;
@@ -1135,6 +1149,11 @@ async fn run_sending_phase(
                     LoopStep::Finish(state.primary("chunk send failed"))
                 }
             }
+        }
+        incoming = ws_receiver.next() => {
+            // Restore the chunk so the next Sending phase can retry.
+            state.pending_chunk_bytes = Some(pending_bytes);
+            handle_incoming_event(incoming, is_paused, resume_notify, state)
         }
     }
 }
