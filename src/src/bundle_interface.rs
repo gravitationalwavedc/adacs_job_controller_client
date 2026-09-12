@@ -6,14 +6,13 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, MyPy_IsNone,
-    PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred,
-    PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
-    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
-    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_dict_new, py_tuple_set_item, MyPy_IsNone,
+    PyCallable_Check, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print,
+    PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule,
+    PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject,
+    PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject,
+    PyThreadState, PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef,
+    Py_IncRef, Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -188,7 +187,7 @@ impl BundleInterface {
         debug!("BundleInterface::new bundle path {:?}", bundle_path);
 
         // Create a new globals dict and enable the python builtins
-        let p_global = PyDict_New();
+        let p_global = py_dict_new();
         if p_global.is_null() {
             error!("Error creating global dict");
             PyErr_Print();
@@ -202,7 +201,7 @@ impl BundleInterface {
         }
 
         // Set up logging so print() works as expected (run the redirection script)
-        let p_local = PyDict_New();
+        let p_local = py_dict_new();
         if p_local.is_null() {
             error!("Error creating local dict");
             PyErr_Print();
@@ -985,7 +984,8 @@ mod fallback_value_text_tests {
 mod bundle_interface_conversion_tests {
     use super::*;
     use crate::python_interface::{
-        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, PyUnicode_FromString, Py_eval_input,
+        PyDict_New, PyLong_FromUnsignedLongLong, PyObject_SetAttrString, PyUnicode_FromString,
+        Py_eval_input,
     };
 
     /// Helper: create a minimal `BundleInterface` with null pointer fields.
@@ -1602,7 +1602,7 @@ mod append_bundle_path_to_sys_path_tests {
 #[cfg(test)]
 mod log_python_lines_tests {
     use super::*;
-    use crate::python_interface::{PyLong_FromUnsignedLongLong, Py_eval_input};
+    use crate::python_interface::{PyDict_New, PyLong_FromUnsignedLongLong, Py_eval_input};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;
@@ -1828,5 +1828,66 @@ mod log_python_lines_tests {
             Py_DecRef(list);
             Py_DecRef(globals);
         }
+    }
+}
+
+// ─── BundleInterface::new locals-dict tests ────────────────────────────────
+
+#[cfg(test)]
+mod new_locals_dict_tests {
+    use super::*;
+    use crate::python_interface::{set_py_dict_new_override, PyDictNewFn};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// RAII guard that installs a `py_dict_new` override for the duration of a
+    /// test and restores the previous override on drop.
+    struct DictNewOverrideGuard(Option<PyDictNewFn>);
+
+    impl DictNewOverrideGuard {
+        fn install(f: PyDictNewFn) -> Self {
+            Self(set_py_dict_new_override(Some(f)))
+        }
+    }
+
+    impl Drop for DictNewOverrideGuard {
+        fn drop(&mut self) {
+            set_py_dict_new_override(self.0);
+        }
+    }
+
+    /// Call counter so the override fails only the second `PyDict_New` call
+    /// (the locals dict) while letting the first (the globals dict) succeed.
+    static DICT_NEW_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Override that returns a real dict on the first call and NULL on the
+    /// second, forcing the locals-dict creation in `BundleInterface::new` to
+    /// fail.
+    // SAFETY: Test-only; returns a live dict or a NULL pointer, which `new`
+    // treats as failure.
+    unsafe fn fail_second_dict_new() -> *mut PyObject {
+        let n = DICT_NEW_CALLS.fetch_add(1, Ordering::SeqCst);
+        if n == 1 {
+            std::ptr::null_mut()
+        } else {
+            crate::python_interface::PyDict_New()
+        }
+    }
+
+    /// `BundleInterface::new` must log, print the error, release the globals
+    /// dict, and return `Err("Failed to create local dict")` when the locals
+    /// `PyDict_New` call returns NULL.
+    #[test]
+    fn returns_err_when_locals_dict_creation_fails() {
+        crate::tests::init_python_global();
+        DICT_NEW_CALLS.store(0, Ordering::SeqCst);
+        let _override = DictNewOverrideGuard::install(fail_second_dict_new);
+        // SAFETY: PYTHON_MUTEX is held internally by `new`; the override
+        // forces the locals-dict creation to fail.
+        let result = unsafe { BundleInterface::new("some-hash", "/some/root") };
+        assert_eq!(
+            result.err(),
+            Some("Failed to create local dict".to_string()),
+            "NULL locals dict should make new return Err"
+        );
     }
 }
