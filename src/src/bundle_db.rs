@@ -16,9 +16,9 @@ use crate::messaging::{
     DB_BUNDLE_GET_JOB_BY_ID,
 };
 use crate::python_interface::{
-    return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException, PyErr_Occurred,
-    PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef,
-    PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
+    py_module_addobject, return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException,
+    PyErr_Occurred, PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong,
+    PyMethodDef, PyModuleDef, PyModuleDef_Base, PyModule_Create2, PyObject, PyObject_Head,
     PyTuple_GetItem, Py_DecRef, METH_VARARGS, PYTHON_API_VERSION,
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
@@ -611,7 +611,7 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
         return ptr::null_mut();
     }
 
-    if PyModule_AddObject(module, c"error".as_ptr(), exc) < 0 {
+    if py_module_addobject(module, c"error".as_ptr(), exc) < 0 {
         Py_DecRef(exc);
         Py_DecRef(module);
         return ptr::null_mut();
@@ -869,6 +869,56 @@ mod tests {
             let module = PyInit_bundledb();
             assert!(!module.is_null(), "module should be created");
             crate::python_interface::Py_DecRef(module);
+        }
+    }
+
+    #[test]
+    fn py_init_bundledb_returns_null_when_module_add_object_fails() {
+        use crate::python_interface::{set_py_module_addobject_override, PyModuleAddObjectFn};
+
+        /// RAII guard that installs a `py_module_addobject` override for the
+        /// duration of a test and restores the previous override on drop.
+        struct ModuleAddObjectOverrideGuard(Option<PyModuleAddObjectFn>);
+
+        impl ModuleAddObjectOverrideGuard {
+            fn install(f: PyModuleAddObjectFn) -> Self {
+                Self(set_py_module_addobject_override(Some(f)))
+            }
+        }
+
+        impl Drop for ModuleAddObjectOverrideGuard {
+            fn drop(&mut self) {
+                set_py_module_addobject_override(self.0);
+            }
+        }
+
+        // SAFETY: Test-only; `module`/`name`/`value` are live objects from the
+        // caller. Always fails to exercise the PyModule_AddObject < 0 branch.
+        unsafe fn always_fail(
+            _module: *mut PyObject,
+            _name: *const std::os::raw::c_char,
+            _value: *mut PyObject,
+        ) -> std::os::raw::c_int {
+            -1
+        }
+
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of PyInit_bundledb. The override forces
+        // PyModule_AddObject to fail, so PyInit_bundledb must decref the
+        // exception and module and return null.
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let _override = ModuleAddObjectOverrideGuard::install(always_fail);
+            let module = PyInit_bundledb();
+            assert!(
+                module.is_null(),
+                "module should be null when AddObject fails"
+            );
         }
     }
 
