@@ -3735,4 +3735,30 @@ mod tests {
         assert_eq!(err_msg.pop_string(), "Exception reading file");
         assert_eq!(err_msg.source, uuid);
     }
+
+    #[tokio::test]
+    async fn sending_phase_with_no_pending_chunk_returns_to_reading() {
+        let server = WebsocketServerFixture::new().await;
+        let (mut ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
+
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+
+        // No pending chunk and no pause: the sending phase must fall back to
+        // reading rather than attempting to transmit a chunk.
+        let mut state = TransferState::new(64);
+
+        let step = run_sending_phase(
+            &mut ws_sender,
+            &mut ws_receiver,
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        )
+        .await;
+        assert!(
+            matches!(step, LoopStep::SetState(ChunkState::Reading)),
+            "expected fallback to Reading when no chunk is pending"
+        );
+    }
 }
