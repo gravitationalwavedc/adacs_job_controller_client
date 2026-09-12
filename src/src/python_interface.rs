@@ -323,6 +323,58 @@ pub extern "C" fn myPyGILState_Release(_state: PyGILState_STATE) {
 // ─── subhook FFI bindings ────────────────────────────────────────────────────
 include!(concat!(env!("OUT_DIR"), "/subhook_bindings.rs"));
 
+// ─── Test-only subhook override seams ───────────────────────────────────────
+// `install_gil_hook`'s two FFI failure branches are unreachable through the
+// public init path (subhook always succeeds on supported platforms). These seams
+// let tests force each branch. Tests run serially (`--test-threads=1`), so the
+// global overrides cannot race across tests.
+
+#[cfg(test)]
+pub type SubhookNewFn = unsafe fn(*mut c_void, *mut c_void, subhook_flags_t) -> subhook_t;
+
+#[cfg(test)]
+pub type SubhookInstallFn = unsafe fn(subhook_t) -> c_int;
+
+#[cfg(test)]
+static SUBHOOK_NEW_OVERRIDE: Mutex<Option<SubhookNewFn>> = Mutex::new(None);
+
+#[cfg(test)]
+static SUBHOOK_INSTALL_OVERRIDE: Mutex<Option<SubhookInstallFn>> = Mutex::new(None);
+
+#[cfg(test)]
+pub fn set_subhook_new_override(f: Option<SubhookNewFn>) -> Option<SubhookNewFn> {
+    let mut guard = SUBHOOK_NEW_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+#[cfg(test)]
+pub fn set_subhook_install_override(f: Option<SubhookInstallFn>) -> Option<SubhookInstallFn> {
+    let mut guard = SUBHOOK_INSTALL_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `subhook_new` wrapper that honours the test-only override.
+unsafe fn subhook_new_wrapper(
+    src: *mut c_void,
+    dst: *mut c_void,
+    flags: subhook_flags_t,
+) -> subhook_t {
+    #[cfg(test)]
+    if let Some(f) = *SUBHOOK_NEW_OVERRIDE.lock() {
+        return f(src, dst, flags);
+    }
+    subhook_new(src, dst, flags)
+}
+
+/// `subhook_install` wrapper that honours the test-only override.
+unsafe fn subhook_install_wrapper(hook: subhook_t) -> c_int {
+    #[cfg(test)]
+    if let Some(f) = *SUBHOOK_INSTALL_OVERRIDE.lock() {
+        return f(hook);
+    }
+    subhook_install(hook)
+}
+
 /// Install subhook-based patches on `PyGILState_Ensure` and `PyGILState_Release`.
 /// Mirrors the C++ `PythonInterface::initPython()` hook installation exactly.
 ///
@@ -335,11 +387,11 @@ unsafe fn install_gil_hook(
     install_err: &str,
 ) -> Result<(), String> {
     debug!("Creating subhook for {name}");
-    let hook = subhook_new(target, replacement, subhook_flags_SUBHOOK_64BIT_OFFSET);
+    let hook = subhook_new_wrapper(target, replacement, subhook_flags_SUBHOOK_64BIT_OFFSET);
     if hook.is_null() {
         return Err(format!("Failed to create subhook for {name}"));
     }
-    let result = subhook_install(hook);
+    let result = subhook_install_wrapper(hook);
     if result < 0 {
         return Err(install_err.to_string());
     }
@@ -597,6 +649,94 @@ mod tests {
         assert_eq!(
             dlopen_error_detail(msg.as_ptr()),
             "cannot open shared object file"
+        );
+    }
+
+    // ─── install_gil_hook FFI failure branches ──────────────────────────────
+    // `subhook_new` always succeeds and `subhook_install` always returns 0 on
+    // supported platforms, so the two failure branches of `install_gil_hook`
+    // are unreachable through the public init path. These tests use the
+    // test-only override seams to force each branch and verify the error.
+
+    /// RAII guard that installs `subhook_new` and `subhook_install` overrides
+    /// for the duration of a test and restores the previous overrides on drop.
+    struct SubhookOverrideGuard {
+        prev_new: Option<SubhookNewFn>,
+        prev_install: Option<SubhookInstallFn>,
+    }
+
+    impl SubhookOverrideGuard {
+        fn install(new: Option<SubhookNewFn>, install: Option<SubhookInstallFn>) -> Self {
+            let prev_new = set_subhook_new_override(new);
+            let prev_install = set_subhook_install_override(install);
+            Self {
+                prev_new,
+                prev_install,
+            }
+        }
+    }
+
+    impl Drop for SubhookOverrideGuard {
+        fn drop(&mut self) {
+            set_subhook_new_override(self.prev_new);
+            set_subhook_install_override(self.prev_install);
+        }
+    }
+
+    unsafe fn subhook_new_returns_null(
+        _src: *mut c_void,
+        _dst: *mut c_void,
+        _flags: subhook_flags_t,
+    ) -> subhook_t {
+        std::ptr::null_mut()
+    }
+
+    unsafe fn subhook_install_returns_negative(_hook: subhook_t) -> c_int {
+        -1
+    }
+
+    unsafe fn subhook_new_returns_dummy(
+        _src: *mut c_void,
+        _dst: *mut c_void,
+        _flags: subhook_flags_t,
+    ) -> subhook_t {
+        std::ptr::dangling_mut::<subhook_struct>()
+    }
+
+    #[test]
+    fn install_gil_hook_returns_err_when_subhook_new_is_null() {
+        let _guard = SubhookOverrideGuard::install(Some(subhook_new_returns_null), None);
+        let result = unsafe {
+            install_gil_hook(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                "PyGILState_Ensure",
+                "PyGILState_Ensure redirection failed to install",
+            )
+        };
+        assert_eq!(
+            result,
+            Err("Failed to create subhook for PyGILState_Ensure".to_string())
+        );
+    }
+
+    #[test]
+    fn install_gil_hook_returns_err_when_subhook_install_is_negative() {
+        let _guard = SubhookOverrideGuard::install(
+            Some(subhook_new_returns_dummy),
+            Some(subhook_install_returns_negative),
+        );
+        let result = unsafe {
+            install_gil_hook(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                "PyGILState_Ensure",
+                "PyGILState_Ensure redirection failed to install",
+            )
+        };
+        assert_eq!(
+            result,
+            Err("PyGILState_Ensure redirection failed to install".to_string())
         );
     }
 }
