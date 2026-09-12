@@ -1372,6 +1372,55 @@ fn test_get_file_download_job_submitting() {
 }
 
 #[test_fork::test]
+fn test_get_file_download_connect_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_dl_connect_failure");
+
+        let mut mock_ws = MockWebsocketClient::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "test-uuid-dl-connect-failure".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let msg = Message::from_data(data);
+                let _ = tx_clone.send(msg);
+            });
+        set_websocket_client(Arc::new(mock_ws));
+
+        // Point the file WebSocket endpoint at an invalid port so connect fails.
+        set_test_config(1);
+
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(2234);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("test.txt");
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+        handle_file_download(msg);
+
+        let response = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_ERROR")
+            .expect("No response");
+        assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
+        let mut response_msg = response;
+        assert_eq!(response_msg.pop_string(), test_uuid);
+        assert_eq!(
+            response_msg.pop_string(),
+            "Failed to connect to file websocket"
+        );
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
 fn test_get_file_download_job_outside_working_directory() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
