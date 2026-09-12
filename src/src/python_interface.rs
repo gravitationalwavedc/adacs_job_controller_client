@@ -123,7 +123,7 @@ pub fn load_python_library(path: &str) -> Result<(), String> {
     // C strings and the handle is checked before wrapping via libloading.
     let lib = unsafe {
         let flags = libc::RTLD_NOW | libc::RTLD_GLOBAL;
-        let c_path = CString::new(path).map_err(|_| "invalid library path".to_string())?;
+        let c_path = c_path_from_str(path)?;
         debug!("dlopen {} with flags RTLD_NOW|RTLD_GLOBAL", path);
         let handle = libc::dlopen(c_path.as_ptr(), flags);
         if handle.is_null() {
@@ -139,6 +139,14 @@ pub fn load_python_library(path: &str) -> Result<(), String> {
     let _ = PY_LIB.set(Arc::new(lib));
     info!("Python library loaded successfully");
     Ok(())
+}
+
+/// Converts a filesystem path to a null-terminated C string for `dlopen`.
+///
+/// Returns `Err("invalid library path")` if `path` contains an interior NUL
+/// byte, which cannot be represented in a C string.
+fn c_path_from_str(path: &str) -> Result<CString, String> {
+    CString::new(path).map_err(|_| "invalid library path".to_string())
 }
 
 /// Formats the dlopen error detail from the `dlerror()` result pointer.
@@ -559,6 +567,16 @@ impl Drop for ThreadScope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DIRECT UNIT TEST for the `CString::new(path)` NUL-byte failure branch in
+    /// `load_python_library` (via `c_path_from_str`). A path containing an
+    /// interior NUL byte must be rejected with `Err("invalid library path")`
+    /// before any dlopen call.
+    #[test]
+    fn c_path_from_str_rejects_nul_byte_path() {
+        let err = c_path_from_str("/usr/lib/libpython\0.so").unwrap_err();
+        assert_eq!(err, "invalid library path");
+    }
 
     #[test]
     #[serial_test::serial]
