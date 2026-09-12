@@ -475,12 +475,43 @@ async fn validate_list_target_is_directory(abs_path: &Path) -> Result<(), ()> {
     }
 }
 
+// ─── Test-only directory-entry metadata lookup override seam ─────────────────
+// `collect_dir_entry`'s metadata-failure branch (which logs a warning and
+// returns `None`) is hard to reach through the public API because entries from
+// a real `read_dir` normally have readable metadata. This seam lets tests force
+// `entry.metadata()` to fail without changing production behavior. Tests run
+// serially (`--test-threads=1`), so the global override cannot race across
+// tests.
+
+#[cfg(test)]
+type DirEntryMetadataFn = fn(&fs::DirEntry) -> std::io::Result<std::fs::Metadata>;
+
+#[cfg(test)]
+static DIR_ENTRY_METADATA_OVERRIDE: Mutex<Option<DirEntryMetadataFn>> = Mutex::new(None);
+
+/// Test-only: install an override for the directory-entry metadata lookup,
+/// returning the previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+fn set_dir_entry_metadata_override(f: Option<DirEntryMetadataFn>) -> Option<DirEntryMetadataFn> {
+    let mut guard = DIR_ENTRY_METADATA_OVERRIDE.lock().unwrap();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// Look up a directory entry's metadata, honouring the test-only override.
+async fn dir_entry_metadata(entry: &fs::DirEntry) -> std::io::Result<std::fs::Metadata> {
+    #[cfg(test)]
+    if let Some(f) = *DIR_ENTRY_METADATA_OVERRIDE.lock().unwrap() {
+        return f(entry);
+    }
+    entry.metadata().await
+}
+
 async fn collect_dir_entry(
     entry: fs::DirEntry,
     working_directory: &str,
 ) -> Option<(String, bool, u64)> {
     let path = entry.path();
-    let metadata = match entry.metadata().await {
+    let metadata = match dir_entry_metadata(&entry).await {
         Ok(metadata) => metadata,
         Err(e) => {
             warn!(
@@ -2112,6 +2143,23 @@ mod tests {
             assert!(names.contains("a.txt"));
             assert!(names.contains("b.txt"));
         });
+    }
+
+    #[test]
+    fn collect_dir_entry_returns_none_when_metadata_lookup_fails() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("a.txt"), "a").unwrap();
+        let entry = collect_entries(tmp.path()).into_iter().next().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+
+        let prev = set_dir_entry_metadata_override(Some(|_| {
+            Err(std::io::Error::other("forced metadata failure"))
+        }));
+
+        let result = run_collect(entry, &wd);
+        assert!(result.is_none(), "metadata failure should yield None");
+
+        set_dir_entry_metadata_override(prev);
     }
 
     #[test]
