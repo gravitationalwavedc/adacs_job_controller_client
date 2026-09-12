@@ -8,8 +8,8 @@
 //! We use thread-local storage for safety.
 
 use crate::python_interface::{
-    my_py_true_struct, return_py_none, PyErr_Clear, PyMethodDef, PyModuleDef, PyModuleDef_Base,
-    PyModule_Create2, PyObject, PyObject_Head, PyTuple_GetItem, PyUnicode_AsUTF8, METH_VARARGS,
+    my_py_true_struct, py_module_create2, return_py_none, PyErr_Clear, PyMethodDef, PyModuleDef,
+    PyModuleDef_Base, PyObject, PyObject_Head, PyTuple_GetItem, PyUnicode_AsUTF8, METH_VARARGS,
     PYTHON_API_VERSION,
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
@@ -137,9 +137,40 @@ static mut BUNDLE_LOGGING_MODULE: PyModuleDef = PyModuleDef {
 pub unsafe extern "C" fn PyInit_bundlelogging() -> *mut PyObject {
     BUNDLE_LOGGING_MODULE.m_methods = (&raw mut BUNDLE_LOGGING_METHODS).cast::<PyMethodDef>();
 
-    let module = PyModule_Create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION);
+    let module = py_module_create2(&raw mut BUNDLE_LOGGING_MODULE, PYTHON_API_VERSION);
     if module.is_null() {
         return std::ptr::null_mut();
     }
     module
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::python_interface::{
+        set_py_module_create2_override, PyModuleCreate2Fn, PYTHON_MUTEX,
+    };
+    use std::os::raw::c_int;
+
+    /// DIRECT UNIT TEST for the `PyModule_Create2` failure branch in
+    /// `PyInit_bundlelogging`. The branch is unreachable through the public API
+    /// because module creation normally succeeds, so we use the test-only
+    /// override seam to force `py_module_create2` to return NULL and verify the
+    /// function propagates the NULL (rather than dereferencing it).
+    #[test]
+    fn pyinit_bundlelogging_returns_null_when_module_create2_fails() {
+        let _guard = PYTHON_MUTEX.lock();
+        let prev =
+            set_py_module_create2_override(Some(module_create2_returns_null as PyModuleCreate2Fn));
+        // SAFETY: `PyInit_bundlelogging` is the module init entry point; the
+        // override returns NULL without touching Python, so no live interpreter
+        // or GIL is required.
+        let result = unsafe { PyInit_bundlelogging() };
+        assert!(result.is_null());
+        set_py_module_create2_override(prev);
+    }
+
+    unsafe fn module_create2_returns_null(_def: *mut PyModuleDef, _apiver: c_int) -> *mut PyObject {
+        std::ptr::null_mut()
+    }
 }
