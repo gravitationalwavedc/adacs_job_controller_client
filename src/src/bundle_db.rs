@@ -16,10 +16,10 @@ use crate::messaging::{
     DB_BUNDLE_GET_JOB_BY_ID,
 };
 use crate::python_interface::{
-    return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException, PyErr_Occurred,
-    PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong, PyMethodDef,
-    PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject, PyObject_Head,
-    PyTuple_GetItem, Py_DecRef, METH_VARARGS, PYTHON_API_VERSION,
+    py_err_newexception, return_py_none, PyDict_SetItemString, PyErr_Clear, PyErr_NewException,
+    PyErr_Occurred, PyErr_SetString, PyLong_AsUnsignedLongLong, PyLong_FromUnsignedLongLong,
+    PyMethodDef, PyModuleDef, PyModuleDef_Base, PyModule_AddObject, PyModule_Create2, PyObject,
+    PyObject_Head, PyTuple_GetItem, Py_DecRef, METH_VARARGS, PYTHON_API_VERSION,
 };
 use crate::thread_bundle_map::get_current_thread_bundle;
 use crate::websocket::get_websocket_client;
@@ -52,7 +52,7 @@ fn get_bundle_db_error(bundle_hash: &str) -> *mut crate::python_interface::PyObj
     // SAFETY: PyErr_NewException is called with a valid C string pointer
     // and null parent/base dicts, which is always safe.
     let err = unsafe {
-        crate::python_interface::PyErr_NewException(
+        py_err_newexception(
             c"_bundledb.error".as_ptr(),
             ptr::null_mut(),
             ptr::null_mut(),
@@ -845,6 +845,37 @@ mod tests {
                 "fallback exception should be cached for the bundle hash"
             );
         }
+    }
+
+    #[test]
+    fn get_bundle_db_error_returns_null_when_exception_creation_fails() {
+        use crate::python_interface::set_py_err_newexception_override;
+
+        // SAFETY: Test-only override; args are ignored and NULL is returned to
+        // simulate PyErr_NewException failure.
+        unsafe fn fail_newexception(
+            _name: *const std::os::raw::c_char,
+            _base: *mut PyObject,
+            _dict: *mut PyObject,
+        ) -> *mut PyObject {
+            ptr::null_mut()
+        }
+
+        crate::tests::init_python_global();
+        let prev = set_py_err_newexception_override(Some(fail_newexception));
+        unsafe {
+            let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+            let interp = (*crate::python_interface::get_main_ts()).interp;
+            let _scope = crate::python_interface::ThreadScope::new(interp)
+                .expect("thread scope should be created");
+            let bundle_hash = "test_get_bundle_db_error_null";
+            let result = get_bundle_db_error(bundle_hash);
+            assert!(
+                result.is_null(),
+                "get_bundle_db_error should return NULL when exception creation fails"
+            );
+        }
+        set_py_err_newexception_override(prev);
     }
 
     #[test]
