@@ -195,7 +195,7 @@ async fn send_save_request(msg: Message, context: &str, error_string: &str) -> R
     let (raw, elapsed) =
         send_db_request_timed(msg, |e| format!("DB: {context} - request failed: {e}")).await?;
     let mut resp = parse_response(&raw);
-    let saved_id = resp.pop_ulong() as i64;
+    let saved_id = i64::try_from(resp.pop_ulong()).unwrap_or(i64::MAX);
     if saved_id == 0 {
         error!("DB: {} - database returned saved_id=0", context);
         return Err(error_string.to_string());
@@ -1129,6 +1129,31 @@ mod tests {
         zero_wire.push_ulong(0);
         let mut zero = Message::from_data(zero_wire.get_data().clone());
         assert_eq!(pop_optional_id(&mut zero), None);
+    }
+
+    #[test]
+    fn send_save_request_caps_overflowing_saved_id_to_i64_max() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+            resp.push_ulong(u64::MAX);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let saved_id = rt.block_on(async {
+            send_save_request(
+                Message::new(DB_JOB_SAVE, Priority::Medium, "database"),
+                "save_job",
+                "Database operation failed to save job",
+            )
+            .await
+        });
+
+        assert_eq!(saved_id, Ok(i64::MAX));
     }
 
     fn run_with_negative_id<F, Fut>(expected_id: u32, run: F)
