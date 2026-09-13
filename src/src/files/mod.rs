@@ -1487,6 +1487,7 @@ where
     {
         warn!("handle_file_upload_internal: Failed to send SERVER_READY ack: {e}");
         let mut error_msg = Message::new(FILE_UPLOAD_ERROR, Priority::Highest, uuid);
+        error_msg.push_string(uuid);
         error_msg.push_string(&format!("Failed to send SERVER_READY ack: {e}"));
         get_websocket_client().queue_message(
             uuid.to_string(),
@@ -2893,6 +2894,11 @@ mod tests {
         let mut resp = Message::from_data(data);
         assert_eq!(resp.id, FILE_UPLOAD_ERROR);
         assert_eq!(resp.source, "uuid-123");
+        let popped_uuid = resp.pop_string();
+        assert_eq!(
+            popped_uuid, "uuid-123",
+            "upload error should carry the uuid first"
+        );
         let error = resp.pop_string();
         assert!(
             error.starts_with("Failed to send SERVER_READY ack:"),
