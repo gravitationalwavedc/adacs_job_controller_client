@@ -1885,3 +1885,45 @@ fn test_run_returns_err_when_json_loads_returns_null() {
         "run should return Err(NoneException) when json_loads returns NULL"
     );
 }
+
+/// A bundle function that raises a Python exception makes `PyObject_CallObject`
+/// return NULL with `PyErr_Occurred` set, so `run` must log
+/// "Error calling bundle function" and return `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_when_bundle_function_raises() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    raise RuntimeError(\"intentional failure for run test\")\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let logs = capture_logs(|| {
+            let _guard = PYTHON_MUTEX.lock();
+            unsafe {
+                let _scope = bundle
+                    .thread_scope()
+                    .expect("thread scope should be created");
+                let result = bundle.run("submit", &serde_json::json!({}), "job-data");
+                assert!(
+                    result.is_err(),
+                    "raising bundle function should make run return Err(NoneException)"
+                );
+            }
+        });
+
+        assert!(
+            logs.contains("Error calling bundle function"),
+            "expected 'Error calling bundle function' log marker, got:\n{logs}"
+        );
+    }
+    inner();
+}
