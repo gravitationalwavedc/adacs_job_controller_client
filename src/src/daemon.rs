@@ -65,10 +65,12 @@ pub fn daemonize_with_log_redirect(
         warn!("setsid() failed: {}", std::io::Error::last_os_error());
     }
 
-    // Reset umask to have full control over file permissions
+    // Set a restrictive umask so created files (e.g. log files) are not
+    // world-writable. 0o022 masks group/other write, yielding 0o644 for
+    // files created with the default 0o666 mode.
     // SAFETY: umask() always succeeds and returns the previous mask value.
     unsafe {
-        libc::umask(0);
+        libc::umask(0o022);
     }
 
     // Second fork
@@ -173,6 +175,7 @@ pub fn daemonize_with_log_redirect(
 mod tests {
     use super::*;
     use serial_test::serial;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
     use test_fork::test;
 
@@ -202,5 +205,16 @@ mod tests {
             created,
             "stdout.log and stderr.log should be created by daemon"
         );
+
+        // Log files should not be world-writable (restrictive umask applied)
+        for path in [&stdout_path, &stderr_path] {
+            let mode = std::fs::metadata(path).unwrap().permissions().mode();
+            assert_eq!(
+                mode & 0o002,
+                0,
+                "{} should not be world-writable (mode {mode:o})",
+                path.display()
+            );
+        }
     }
 }
