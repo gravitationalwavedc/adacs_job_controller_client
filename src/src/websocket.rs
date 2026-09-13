@@ -1010,7 +1010,10 @@ pub fn reset_websocket_client_for_test() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::messaging::DB_JOB_GET_RUNNING_JOBS;
+    use crate::messaging::{
+        CANCEL_JOB, DB_JOB_GET_RUNNING_JOBS, DELETE_JOB, FILE_DOWNLOAD, FILE_LIST, SUBMIT_JOB,
+        UPLOAD_FILE,
+    };
     use crate::tests::fixtures::websocket_server_fixture::WebsocketServerFixture;
 
     // ============================================================================
@@ -1513,6 +1516,147 @@ mod tests {
             !client.is_server_ready(),
             "message from a superseded connection must be ignored"
         );
+    }
+
+    fn db_signal_mock(tx: tokio::sync::mpsc::UnboundedSender<()>) -> MockWebsocketClient {
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(move |_| {
+            let _ = tx.send(());
+            Box::pin(async move {
+                Err(Box::new(std::io::Error::other("db down"))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            })
+        });
+        mock
+    }
+
+    fn queue_signal_mock(tx: tokio::sync::mpsc::UnboundedSender<()>) -> MockWebsocketClient {
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_queue_message()
+            .times(1)
+            .returning(move |_, _, _| {
+                let _ = tx.send(());
+            });
+        mock
+    }
+
+    fn dispatch_and_wait(
+        client: &Arc<TungsteniteWebsocketClient>,
+        msg: Message,
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<()>,
+        what: &str,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            client.handle_message(1, msg);
+            tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .unwrap_or_else(|_| panic!("{what} should dispatch to its handler"));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_handle_message_submit_job_dispatches_to_job_submit_handler() {
+        reset_websocket_client_for_test();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(false);
+        mock.expect_is_server_ready().returning(move || {
+            let _ = tx.send(());
+            false
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+        let mut msg = Message::new(SUBMIT_JOB, Priority::Medium, "server");
+        msg.push_uint(1234);
+        msg.push_string("bundle-hash");
+        msg.push_string("params");
+        dispatch_and_wait(&client, msg, &mut rx, "SUBMIT_JOB");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_handle_message_cancel_job_dispatches_to_job_cancel_handler() {
+        reset_websocket_client_for_test();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        set_websocket_client(Arc::new(db_signal_mock(tx)));
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+        let mut msg = Message::new(CANCEL_JOB, Priority::Medium, "server");
+        msg.push_uint(1234);
+        dispatch_and_wait(&client, msg, &mut rx, "CANCEL_JOB");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_handle_message_delete_job_dispatches_to_job_delete_handler() {
+        reset_websocket_client_for_test();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        set_websocket_client(Arc::new(db_signal_mock(tx)));
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+        let mut msg = Message::new(DELETE_JOB, Priority::Medium, "server");
+        msg.push_uint(1234);
+        dispatch_and_wait(&client, msg, &mut rx, "DELETE_JOB");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_handle_message_file_download_dispatches_to_file_download_handler() {
+        reset_websocket_client_for_test();
+        *crate::config::TEST_CONFIG.lock().unwrap() =
+            Some(serde_json::json!({"websocketEndpoint": "ws://127.0.0.1:1/"}));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        set_websocket_client(Arc::new(queue_signal_mock(tx)));
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+        let mut msg = Message::new(FILE_DOWNLOAD, Priority::Medium, "server");
+        msg.push_uint(1234);
+        msg.push_string("uuid-1");
+        msg.push_string("bundle-hash");
+        msg.push_string("/data.txt");
+        dispatch_and_wait(&client, msg, &mut rx, "FILE_DOWNLOAD");
+        *crate::config::TEST_CONFIG.lock().unwrap() = None;
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_handle_message_upload_file_dispatches_to_file_upload_handler() {
+        reset_websocket_client_for_test();
+        *crate::config::TEST_CONFIG.lock().unwrap() =
+            Some(serde_json::json!({"websocketEndpoint": "ws://127.0.0.1:1/"}));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        set_websocket_client(Arc::new(queue_signal_mock(tx)));
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+        let mut msg = Message::new(UPLOAD_FILE, Priority::Medium, "server");
+        msg.push_string("uuid-1");
+        msg.push_uint(1234);
+        msg.push_string("bundle-hash");
+        msg.push_string("/data.txt");
+        msg.push_ulong(1024);
+        dispatch_and_wait(&client, msg, &mut rx, "UPLOAD_FILE");
+        *crate::config::TEST_CONFIG.lock().unwrap() = None;
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_handle_message_file_list_dispatches_to_file_list_handler() {
+        reset_websocket_client_for_test();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        set_websocket_client(Arc::new(db_signal_mock(tx)));
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+        let mut msg = Message::new(FILE_LIST, Priority::Medium, "server");
+        msg.push_uint(1234);
+        msg.push_string("uuid-1");
+        msg.push_string("bundle-hash");
+        msg.push_string("/data");
+        msg.push_bool(false);
+        dispatch_and_wait(&client, msg, &mut rx, "FILE_LIST");
     }
 
     // ============================================================================
