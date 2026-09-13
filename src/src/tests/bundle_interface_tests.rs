@@ -796,6 +796,124 @@ fn test_run_returns_err_for_non_callable_function() {
     inner();
 }
 
+/// Override that fails `py_tuple_set_item` only for the size-2 `p_args` tuple
+/// at index 0 (the json-object slot in `run`). Mirrors `CPython`'s failure
+/// behaviour: releases the item reference and returns -1.
+// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
+unsafe fn fail_run_args_index_zero(
+    tuple: *mut PyObject,
+    pos: Py_ssize_t,
+    item: *mut PyObject,
+) -> c_int {
+    if PyTuple_Size(tuple) == 2 && pos == 0 {
+        Py_DecRef(item);
+        -1
+    } else {
+        PyTuple_SetItem(tuple, pos, item)
+    }
+}
+
+/// Override that fails `py_tuple_set_item` only for the size-2 `p_args` tuple
+/// at index 1 (the job-data slot in `run`). Mirrors `CPython`'s failure
+/// behaviour: releases the item reference and returns -1.
+// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
+unsafe fn fail_run_args_index_one(
+    tuple: *mut PyObject,
+    pos: Py_ssize_t,
+    item: *mut PyObject,
+) -> c_int {
+    if PyTuple_Size(tuple) == 2 && pos == 1 {
+        Py_DecRef(item);
+        -1
+    } else {
+        PyTuple_SetItem(tuple, pos, item)
+    }
+}
+
+/// DIRECT UNIT TEST — forces `py_tuple_set_item(p_args, 0, json_obj)` to fail
+/// in `run`. The branch logs "Error setting json object in args tuple" and
+/// returns `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_when_json_obj_set_item_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _override = TupleSetItemOverrideGuard::install(fail_run_args_index_zero);
+        let logs = capture_logs(|| {
+            let _guard = PYTHON_MUTEX.lock();
+            unsafe {
+                let _scope = bundle
+                    .thread_scope()
+                    .expect("thread scope should be created");
+                let result = bundle.run("submit", &serde_json::json!({"a": 1}), "job-data");
+                assert!(
+                    result.is_err(),
+                    "json obj SetItem failure should make run return Err"
+                );
+            }
+        });
+        assert!(
+            logs.contains("Error setting json object in args tuple"),
+            "expected 'Error setting json object in args tuple' marker in logs, got:\n{logs}"
+        );
+    }
+    inner();
+}
+
+/// DIRECT UNIT TEST — forces `py_tuple_set_item(p_args, 1, p_job_data)` to
+/// fail in `run`. The branch logs "Error setting job data in args tuple" and
+/// returns `Err(NoneException)`.
+#[test]
+fn test_run_returns_err_when_job_data_set_item_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _override = TupleSetItemOverrideGuard::install(fail_run_args_index_one);
+        let logs = capture_logs(|| {
+            let _guard = PYTHON_MUTEX.lock();
+            unsafe {
+                let _scope = bundle
+                    .thread_scope()
+                    .expect("thread scope should be created");
+                let result = bundle.run("submit", &serde_json::json!({"a": 1}), "job-data");
+                assert!(
+                    result.is_err(),
+                    "job data SetItem failure should make run return Err"
+                );
+            }
+        });
+        assert!(
+            logs.contains("Error setting job data in args tuple"),
+            "expected 'Error setting job data in args tuple' marker in logs, got:\n{logs}"
+        );
+    }
+    inner();
+}
+
 /// A bundle function that returns `None` makes `run` return
 /// `Err(NoneException)`.
 #[test]
