@@ -232,6 +232,34 @@ fn notify_cleanup_failure(message: String) {
     }
 }
 
+/// Test-only seam that forces the chunk `write_all` in
+/// [`handle_file_upload_internal`] to fail, exercising the
+/// `"Failed to write chunk to file"` error branch and its partial-file
+/// cleanup. The seam is a no-op in production.
+#[cfg(test)]
+static TEST_FORCE_UPLOAD_WRITE_FAILURE: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+
+#[cfg(test)]
+pub(crate) fn set_force_upload_write_failure_for_test(force: bool) {
+    let mut guard = TEST_FORCE_UPLOAD_WRITE_FAILURE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = force;
+}
+
+#[cfg(test)]
+fn force_upload_write_failure() -> bool {
+    let guard = TEST_FORCE_UPLOAD_WRITE_FAILURE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard
+}
+
+#[cfg(not(test))]
+fn force_upload_write_failure() -> bool {
+    false
+}
+
 type WsSender = futures_util::stream::SplitSink<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     WsMessage,
@@ -1642,7 +1670,12 @@ fn handle_file_upload_internal(
                         )
                         .await;
                     }
-                    if let Err(e) = file.write_all(&chunk).await {
+                    let write_result = if force_upload_write_failure() {
+                        Err(std::io::Error::other("forced write failure"))
+                    } else {
+                        file.write_all(&chunk).await
+                    };
+                    if let Err(e) = write_result {
                         warn!("Failed to write chunk: {}", e);
                         return fail_upload(
                             &mut ws_sender,
