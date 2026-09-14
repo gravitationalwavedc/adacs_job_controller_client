@@ -5551,7 +5551,113 @@ fn test_task4_zero_byte_eof_race_peer_close_wins() {
     inner();
 }
 
-/// Race between the final chunk send and a peer EOF. We make the server
+/// Race between the clean-EOF boundary and a non-Close control frame. We park
+/// the supervisor on the zero-byte-EOF barrier, inject a WebSocket Ping from
+/// the fixture peer, then release the barrier. The supervisor's `now_or_never`
+/// poll observes the Ping (a control frame that is not a Close and not an
+/// error), which per the design is not a transfer failure: the authoritative
+/// result must be `CleanEof`, not a peer terminal event.
+#[test_fork::test]
+fn test_task4_zero_byte_eof_race_peer_ping_clean_eof_wins() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_eof_race_ping");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("eof_ping.bin");
+        let content = vec![0xED; 32 * 1024];
+        fs::write(&path, &content).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8014i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_zero_byte_eof_barrier_for_test(Some(barrier.clone()));
+
+        // Test-only authoritative-result observer: the race assertion must
+        // verify the supervisor selected CleanEof, not a peer terminal event.
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-task4-eof-ping".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("eof_ping.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        let mut server = server;
+        let _details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS");
+
+        // Wait for the supervisor to reach the zero-byte EOF barrier.
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the zero-byte EOF barrier");
+
+        // Inject a non-Close WebSocket control frame (Ping) while the
+        // supervisor is parked on the EOF barrier.
+        server.send_peer_ping().await;
+        // The supervisor's now_or_never poll is non-blocking, so give the
+        // client's reactor time to buffer the Ping before releasing.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Release the barrier so the supervisor proceeds to the now_or_never
+        // poll and observes the queued Ping.
+        barrier.release();
+
+        // A control frame at the boundary is not a transfer failure: the
+        // authoritative result must be CleanEof, not a peer terminal event.
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::CleanEof),
+            "non-Close control frame must commit CleanEof, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the clean-EOF boundary resolves to CleanEof"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
 /// drop the connection after receiving both chunks so the supervisor's
 /// biased select observes the dead connection instead of a clean EOF.
 #[test_fork::test]
