@@ -1,4 +1,5 @@
 use crate::messaging::{Message, Priority, SERVER_READY, SYSTEM_SOURCE};
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::{
     atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
@@ -219,6 +220,7 @@ pub struct WebsocketServerFixture {
     lifecycle: Arc<LifecycleState>,
     close_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
     reset_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
+    ping_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
     pub final_send_barrier: Arc<LifecycleBarrier>,
     pub zero_byte_eof_barrier: Arc<LifecycleBarrier>,
 }
@@ -229,6 +231,7 @@ struct SpawnArgs {
     inbound_rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
     close_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
     reset_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
+    ping_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
     stop_signal: Arc<Notify>,
     config: WebsocketServerConfig,
     lifecycle: Arc<LifecycleState>,
@@ -304,6 +307,7 @@ impl WebsocketServerFixture {
             inbound_rx,
             close_rx,
             reset_rx,
+            ping_rx,
             stop_signal,
             config,
             lifecycle,
@@ -444,6 +448,22 @@ impl WebsocketServerFixture {
                             }
                         }
                     }
+                    ping = async {
+                        let mut rx = ping_rx.lock().await;
+                        rx.recv().await
+                    } => {
+                        if let Some(ack_tx) = ping {
+                            let result = ws_sender.send(WsMessage::Ping(Bytes::new())).await;
+                            let _ = ack_tx.send(());
+                            if result.is_err() {
+                                Self::record_termination(
+                                    &lifecycle,
+                                    ConnectionTermination::OtherError,
+                                );
+                                break;
+                            }
+                        }
+                    }
                     reset = async {
                         let mut rx = reset_rx.lock().await;
                         rx.recv().await
@@ -486,6 +506,7 @@ impl WebsocketServerFixture {
         let (msg_tx_to_server, msg_rx_from_test) = mpsc::unbounded_channel::<Vec<u8>>();
         let (close_tx, close_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let (reset_tx, reset_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
+        let (ping_tx, ping_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -493,6 +514,7 @@ impl WebsocketServerFixture {
         let inbound_rx = Arc::new(Mutex::new(msg_rx_from_test));
         let close_rx = Arc::new(Mutex::new(close_rx_from_test));
         let reset_rx = Arc::new(Mutex::new(reset_rx_from_test));
+        let ping_rx = Arc::new(Mutex::new(ping_rx_from_test));
         let stop_tx = Arc::new(Notify::new());
         let lifecycle = Arc::new(LifecycleState::default());
         let handle = Self::spawn_server(SpawnArgs {
@@ -501,6 +523,7 @@ impl WebsocketServerFixture {
             inbound_rx: inbound_rx.clone(),
             close_rx: close_rx.clone(),
             reset_rx: reset_rx.clone(),
+            ping_rx: ping_rx.clone(),
             stop_signal: stop_tx.clone(),
             config: config.clone(),
             lifecycle: lifecycle.clone(),
@@ -519,6 +542,7 @@ impl WebsocketServerFixture {
             lifecycle,
             close_tx,
             reset_tx,
+            ping_tx,
             final_send_barrier: LifecycleBarrier::new(),
             zero_byte_eof_barrier: LifecycleBarrier::new(),
         }
@@ -554,6 +578,16 @@ impl WebsocketServerFixture {
         let _ = tokio::time::timeout(Duration::from_secs(2), ack_rx).await;
     }
 
+    /// Inject a genuine WebSocket Ping control frame from the fixture peer.
+    /// Awaits until the fixture has written the Ping to the transport so a
+    /// test can deterministically queue a non-Close control frame before
+    /// releasing a lifecycle barrier.
+    pub async fn send_peer_ping(&self) {
+        let (ack_tx, ack_rx) = oneshot::channel();
+        let _ = self.ping_tx.send(ack_tx);
+        let _ = tokio::time::timeout(Duration::from_secs(2), ack_rx).await;
+    }
+
     pub async fn stop(&mut self) {
         self.stop_tx.notify_waiters();
         if let Some(handle) = self.handle.take() {
@@ -569,10 +603,13 @@ impl WebsocketServerFixture {
         self.stop_tx = Arc::new(Notify::new());
         let (close_tx, close_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let (reset_tx, reset_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
+        let (ping_tx, ping_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         self.close_tx = close_tx;
         self.reset_tx = reset_tx;
+        self.ping_tx = ping_tx;
         let close_rx = Arc::new(Mutex::new(close_rx_from_test));
         let reset_rx = Arc::new(Mutex::new(reset_rx_from_test));
+        let ping_rx = Arc::new(Mutex::new(ping_rx_from_test));
         self.handle = Some(
             Self::spawn_server(SpawnArgs {
                 port: self.port,
@@ -580,6 +617,7 @@ impl WebsocketServerFixture {
                 inbound_rx: self.inbound_rx.clone(),
                 close_rx,
                 reset_rx,
+                ping_rx,
                 stop_signal: self.stop_tx.clone(),
                 config: self.config.clone(),
                 lifecycle: self.lifecycle.clone(),
