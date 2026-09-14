@@ -2552,6 +2552,32 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn wait_for_terminal_or_resume_resume_branch_clears_flag_and_continues() {
+        let server = WebsocketServerFixture::new().await;
+        let (_ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
+
+        let is_paused = Arc::new(AtomicBool::new(true));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+
+        // Pre-notify the resume waiter so the biased select picks the resume
+        // branch: the receiver has no incoming messages and thus pends.
+        resume_notify.notify_one();
+
+        let step =
+            wait_for_terminal_or_resume(&mut ws_receiver, &is_paused, &resume_notify, &mut state)
+                .await;
+        assert!(
+            matches!(step, LoopStep::Continue),
+            "an already-notified resume while paused must continue the transfer"
+        );
+        assert!(
+            !is_paused.load(Ordering::Acquire),
+            "Resume must clear the paused flag"
+        );
+    }
+
     #[test]
     fn drain_pending_incoming_close_finishes_with_peer_close() {
         let is_paused = Arc::new(AtomicBool::new(false));
