@@ -1237,6 +1237,63 @@ fn test_json_dumps_returns_err_when_dumps_lookup_fails() {
     inner();
 }
 
+/// Override that fails `py_tuple_set_item` only for the size-1 `p_args` tuple
+/// at index 0 (the json-object slot in `json_dumps`). Mirrors `CPython`'s
+/// failure behaviour: releases the item reference and returns -1.
+// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
+unsafe fn fail_json_dumps_args(
+    tuple: *mut PyObject,
+    pos: Py_ssize_t,
+    item: *mut PyObject,
+) -> c_int {
+    if PyTuple_Size(tuple) == 1 && pos == 0 {
+        Py_DecRef(item);
+        -1
+    } else {
+        PyTuple_SetItem(tuple, pos, item)
+    }
+}
+
+/// DIRECT UNIT TEST — forces `py_tuple_set_item(p_args, 0, obj)` to fail in
+/// `json_dumps`. The branch logs "Error setting object in args tuple" and
+/// returns `Err("Error calling json.dumps")`.
+#[test]
+fn test_json_dumps_returns_err_when_set_item_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let obj = bundle.json_loads(r#"{"key": "value"}"#);
+            assert!(!obj.is_null(), "json_loads should succeed");
+            let _override = TupleSetItemOverrideGuard::install(fail_json_dumps_args);
+            let result = bundle.json_dumps(obj);
+            BundleInterface::dispose_object(obj);
+            assert_eq!(
+                result,
+                Err("Error calling json.dumps".to_string()),
+                "set-item failure should make json_dumps return Err"
+            );
+        }
+    }
+    inner();
+}
+
 /// A non-integer `PyObject` (e.g. a str) makes `PyLong_AsUnsignedLongLong`
 /// fail and set a `TypeError`. `to_uint64` must clear that stale error so it
 /// can't poison later `PyErr_Occurred` checks on the same sub-interpreter

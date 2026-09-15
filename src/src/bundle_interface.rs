@@ -11,9 +11,9 @@ use crate::python_interface::{
     PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
     PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
     PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyUnicode_AsUTF8,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input, SubInterpreter,
+    ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -519,7 +519,7 @@ impl BundleInterface {
         Py_IncRef(obj);
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if PyTuple_SetItem(p_args, 0, obj) < 0 {
+        if py_tuple_set_item(p_args, 0, obj) < 0 {
             error!("Error setting object in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
@@ -1363,7 +1363,8 @@ mod bundle_interface_conversion_tests {
 mod set_exception_value_slot_tests {
     use super::*;
     use crate::python_interface::{
-        set_py_tuple_set_item_override, PyTupleSetItemFn, PyTuple_GetItem, PyTuple_Size, Py_ssize_t,
+        set_py_tuple_set_item_override, PyTupleSetItemFn, PyTuple_GetItem, PyTuple_SetItem,
+        PyTuple_Size, Py_ssize_t,
     };
     use std::os::raw::c_int;
 
