@@ -169,8 +169,57 @@ mod tests {
     use crate::websocket::{
         reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
     };
+    use std::io::Write;
     use std::sync::Arc;
     use test_fork::test;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct StatusLogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl StatusLogWriter {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn into_string(self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap_or_default()
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for StatusLogWriter {
+        type Writer = StatusLogWriterGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            StatusLogWriterGuard(self.0.clone())
+        }
+    }
+
+    struct StatusLogWriterGuard(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for StatusLogWriterGuard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn capture_warn_logs<F: FnOnce()>(f: F) -> String {
+        let writer = StatusLogWriter::new();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .with_target(true)
+            .with_level(true)
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        writer.into_string()
+    }
 
     fn make_test_response(success: bool, job_id: u64) -> Message {
         let mut resp = Message::new(DB_RESPONSE, Priority::Medium, "database");
@@ -374,6 +423,33 @@ mod tests {
             queue_depth.load(Ordering::SeqCst),
             0,
             "queue_depth should be decremented back to 0 after a failed recv"
+        );
+    }
+
+    #[test]
+    fn test_db_bridge_warns_when_queue_depth_exceeds_threshold() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<DbRequest>(1);
+        drop(rx);
+        let queue_depth = Arc::new(AtomicUsize::new(QUEUE_DEPTH_WARNING_THRESHOLD));
+        let bridge = DbBridge {
+            request_tx: tx,
+            queue_depth: Arc::clone(&queue_depth),
+        };
+
+        let logs = capture_warn_logs(|| {
+            let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
+            let result = bridge.send(msg);
+            assert!(result.is_err(), "expected channel-closed error");
+        });
+
+        assert!(
+            logs.contains("queue depth"),
+            "expected queue-depth warning, got: {logs}"
+        );
+        assert_eq!(
+            queue_depth.load(Ordering::SeqCst),
+            QUEUE_DEPTH_WARNING_THRESHOLD,
+            "queue_depth should be decremented back to threshold after a failed send"
         );
     }
 
