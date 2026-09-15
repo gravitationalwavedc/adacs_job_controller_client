@@ -402,6 +402,21 @@ async fn resolve_working_directory_for_job(
     }
 }
 
+/// Caps a file-listing length to the wire's `u32` count field, mirroring
+/// `cap_scheduler_id` / `capped_status_from_json` in `jobs/mod.rs`. When the
+/// listing exceeds `u32::MAX` entries the count saturates and the excess is
+/// dropped; callers should surface that truncation.
+fn cap_file_count(len: usize) -> u32 {
+    let capped = u32::try_from(len).unwrap_or(u32::MAX);
+    if len > u32::MAX as usize {
+        warn!(
+            "handle_file_list: file listing truncated to {} entries ({} present)",
+            capped, len
+        );
+    }
+    capped
+}
+
 /// Caller note: this function spawns internally and does not need to be awaited.
 pub fn handle_file_list(mut msg: Message) {
     let sem = FILE_LIST_SEMAPHORE.clone();
@@ -485,7 +500,7 @@ pub fn handle_file_list(mut msg: Message) {
 
         let mut result = Message::new(FILE_LIST, Priority::Highest, &uuid);
         result.push_string(&uuid);
-        let file_count = u32::try_from(file_list.len()).unwrap_or(u32::MAX);
+        let file_count = cap_file_count(file_list.len());
         result.push_uint(file_count);
         debug!(
             "handle_file_list: sending FILE_LIST response with {} files",
@@ -2148,6 +2163,30 @@ mod tests {
             for_each_dir_entry(&mut source, Path::new("/tmp"), &mut handler).await;
             assert_eq!(count, 0);
         });
+    }
+
+    #[test]
+    fn cap_file_count_returns_normal_value() {
+        assert_eq!(cap_file_count(0), 0);
+        assert_eq!(cap_file_count(42), 42);
+        assert_eq!(cap_file_count(u32::MAX as usize), u32::MAX);
+    }
+
+    #[test]
+    fn cap_file_count_caps_oversized_listing_to_max() {
+        assert_eq!(cap_file_count(u32::MAX as usize + 1), u32::MAX);
+        assert_eq!(cap_file_count(usize::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn cap_file_count_truncation_is_logged() {
+        let logs = capture_logs(|| {
+            let _ = cap_file_count(u32::MAX as usize + 1);
+        });
+        assert!(
+            logs.contains("file listing truncated"),
+            "expected truncation warning, got: {logs}"
+        );
     }
 
     #[test]
