@@ -45,10 +45,20 @@ fn cap_scheduler_id(scheduler_id: u64) -> i64 {
     i64::try_from(scheduler_id).unwrap_or(i64::MAX)
 }
 
+fn cap_job_id_for_wire(job_id: i64) -> u32 {
+    u32::try_from(job_id).unwrap_or_else(|_| {
+        warn!(
+            "queue_job_update: job id {} truncated to u32::MAX for wire format",
+            job_id
+        );
+        u32::MAX
+    })
+}
+
 fn queue_job_update(job_id: i64, source: &str, status: u32, message: &str) {
     let ws = get_websocket_client();
     let mut result = Message::new(UPDATE_JOB, Priority::Medium, &job_id.to_string());
-    let wire_job_id = u32::try_from(job_id).unwrap_or(u32::MAX);
+    let wire_job_id = cap_job_id_for_wire(job_id);
     result.push_uint(wire_job_id);
     result.push_string(source);
     result.push_uint(status);
@@ -761,8 +771,57 @@ mod tests {
     use flate2::read::GzDecoder;
     use mockall::predicate::{always, eq};
     use serde_json::json;
-    use std::sync::Arc;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
     use tar::Archive;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct VecWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl VecWriter {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn into_string(self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap_or_default()
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for VecWriter {
+        type Writer = VecWriterGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            VecWriterGuard(self.0.clone())
+        }
+    }
+
+    struct VecWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for VecWriterGuard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn capture_logs<F: FnOnce()>(f: F) -> String {
+        let writer = VecWriter::new();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .with_target(true)
+            .with_level(true)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        writer.into_string()
+    }
 
     #[test]
     fn capped_status_from_json_caps_oversized_value() {
@@ -1238,7 +1297,32 @@ mod tests {
             });
         set_websocket_client(Arc::new(mock));
 
-        queue_job_update(4_294_967_298, SYSTEM_SOURCE, ERROR, "Job has failed");
+        let logs = capture_logs(|| {
+            queue_job_update(4_294_967_298, SYSTEM_SOURCE, ERROR, "Job has failed");
+        });
+        assert!(
+            logs.contains("truncated to u32::MAX"),
+            "expected truncation warning, got: {logs}"
+        );
+    }
+
+    #[test]
+    fn queue_job_update_does_not_warn_for_in_range_job_id() {
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_queue_message()
+            .with(always(), always(), eq(Priority::Medium))
+            .times(1)
+            .returning(|_source, _data, _priority| {});
+        set_websocket_client(Arc::new(mock));
+
+        let logs = capture_logs(|| {
+            queue_job_update(42, SYSTEM_SOURCE, ERROR, "Job has failed");
+        });
+        assert!(
+            !logs.contains("truncated to u32::MAX"),
+            "expected no truncation warning, got: {logs}"
+        );
     }
 
     #[test]
