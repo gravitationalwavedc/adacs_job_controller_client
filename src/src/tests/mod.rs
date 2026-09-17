@@ -22,6 +22,27 @@ pub mod main_tests;
 static INIT_PYTHON: std::sync::Once = std::sync::Once::new();
 
 #[cfg(test)]
+fn resolve_test_python_library_path() -> String {
+    const CANDIDATES: &[&str] = &[
+        "/usr/lib/x86_64-linux-gnu/libpython3.12.so",
+        "/usr/lib/x86_64-linux-gnu/libpython3.so",
+        "/usr/lib/libpython3.so",
+    ];
+    if let Ok(path) = std::env::var("PYTHON_LIB_PATH") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    for candidate in CANDIDATES {
+        if std::path::Path::new(candidate).exists() {
+            return (*candidate).to_string();
+        }
+    }
+    "/usr/lib/x86_64-linux-gnu/libpython3.so".to_string()
+}
+
+#[cfg(test)]
 pub fn init_python_global() {
     INIT_PYTHON.call_once(|| {
         // Default TEST_CONFIG for all tests. Individual tests may override
@@ -38,15 +59,14 @@ pub fn init_python_global() {
             "websocketEndpoint": "ws://127.0.0.1:0/ws/",
             "ltk": "test_token",
         }));
-        let python_library = crate::config::get_python_library_path();
+        let python_library = resolve_test_python_library_path();
         *crate::config::TEST_CONFIG.lock().unwrap() = Some(serde_json::json!({
             "cluster": "test_cluster",
             "pythonLibrary": python_library,
             "websocketEndpoint": "ws://127.0.0.1:0/ws/",
             "ltk": "test_token",
         }));
-        let _ =
-            crate::python_interface::load_python_library(&crate::config::get_python_library_path());
+        let _ = crate::python_interface::load_python_library(&resolve_test_python_library_path());
         // SAFETY: PyImport_AppendInittab registers built-in extension modules before
         // Py_Initialize. Module names are valid null-terminated C strings and init_func
         // pointers reference `#[no_mangle]` C-ABI entry points in bundle_db and
