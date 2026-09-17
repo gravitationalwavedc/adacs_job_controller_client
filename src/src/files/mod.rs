@@ -1525,7 +1525,6 @@ where
 fn queue_file_error_on_main_ws(uuid: &str, error_msg: &str, msg_id: u32) {
     warn!("{uuid}: file websocket connect failed, notifying client: {error_msg}");
     let mut error_message = Message::new(msg_id, Priority::Highest, uuid);
-    error_message.push_string(uuid);
     error_message.push_string(error_msg);
     get_websocket_client().queue_message(
         uuid.to_string(),
@@ -2856,7 +2855,6 @@ mod tests {
         let mut resp = Message::from_data(data);
         assert_eq!(resp.id, FILE_UPLOAD_ERROR);
         assert_eq!(resp.source, "uuid-123");
-        assert_eq!(resp.pop_string(), "uuid-123");
         assert_eq!(resp.pop_string(), "boom");
     }
 
