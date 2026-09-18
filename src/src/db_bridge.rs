@@ -454,6 +454,77 @@ mod tests {
     }
 
     #[test]
+    fn test_db_bridge_handles_caller_dropped_receiver_on_response() {
+        reset_websocket_client_for_test();
+        DbBridge::start();
+
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(false);
+        mock.expect_is_server_ready().return_const(true);
+        mock.expect_send_db_request().times(2).returning(|_| {
+            let resp = make_test_response(true, 42);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let bridge = DB_BRIDGE.get().unwrap();
+        bridge.queue_depth.fetch_add(1, Ordering::SeqCst);
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+        drop(resp_rx);
+        let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
+        bridge
+            .request_tx
+            .send(DbRequest {
+                msg,
+                response_tx: resp_tx,
+            })
+            .unwrap();
+
+        let result = DbBridge::global().send(Message::new(
+            DB_BUNDLE_GET_JOB_BY_ID,
+            Priority::Medium,
+            "test",
+        ));
+        assert!(
+            result.is_ok(),
+            "bridge should remain functional after a caller dropped its receiver"
+        );
+    }
+
+    #[test]
+    fn test_db_bridge_handles_caller_dropped_receiver_on_disconnected() {
+        reset_websocket_client_for_test();
+        DbBridge::start();
+
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(true);
+        mock.expect_is_server_ready().return_const(false);
+        mock.expect_send_db_request().times(0);
+        set_websocket_client(Arc::new(mock));
+
+        let bridge = DB_BRIDGE.get().unwrap();
+        bridge.queue_depth.fetch_add(1, Ordering::SeqCst);
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+        drop(resp_rx);
+        let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
+        bridge
+            .request_tx
+            .send(DbRequest {
+                msg,
+                response_tx: resp_tx,
+            })
+            .unwrap();
+
+        let result = DbBridge::global().send(Message::new(
+            DB_BUNDLE_GET_JOB_BY_ID,
+            Priority::Medium,
+            "test",
+        ));
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.contains("WebSocket is disconnected"));
+    }
+
     fn test_db_bridge_send_from_async_context() {
         #[tokio::main(flavor = "current_thread")]
         async fn inner() {
