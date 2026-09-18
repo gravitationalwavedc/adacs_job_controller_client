@@ -3849,3 +3849,67 @@ fn test_handle_job_submit_logs_save_failure_when_resolving_working_directory() {
         "expected working-directory save failure in logs, got:\n{logs}"
     );
 }
+
+#[test_fork::test]
+fn test_handle_job_submit_logs_save_failure_during_submit() {
+    let db_name = Uuid::new_v4().to_string();
+    setup_test(&db_name);
+    crate::websocket::reset_websocket_client_for_test();
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let tx_clone = tx.clone();
+
+    let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
+    mock_ws.expect_is_server_ready().returning(|| true);
+    mock_ws
+        .expect_send_db_request()
+        .times(..)
+        .returning(move |msg| {
+            let mut resp =
+                Message::new(crate::messaging::DB_RESPONSE, Priority::Medium, "database");
+            match msg.id {
+                DB_JOB_GET_BY_JOB_ID => {
+                    // No existing job -> default model, proceeds to "Submitting new job".
+                    resp.push_uint(0);
+                }
+                DB_JOB_SAVE => {
+                    // saved_id = 0 -> db::save_job returns Err during submit.
+                    let _ = tx_clone.send(());
+                    resp.push_ulong(0);
+                }
+                _ => {
+                    resp.push_ulong(0);
+                }
+            }
+            Box::pin(async move { Ok(resp) })
+        });
+    mock_ws.expect_queue_message().times(0);
+    set_websocket_client(Arc::new(mock_ws));
+
+    let mut msg_raw = Message::new(SUBMIT_JOB, Priority::Medium, SYSTEM_SOURCE);
+    msg_raw.push_uint(1234);
+    msg_raw.push_string("bundle-hash");
+    msg_raw.push_string("test params");
+    let msg = Message::from_data(msg_raw.get_data().clone());
+
+    let logs = capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            handle_job_submit(msg);
+            tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("Timed out waiting for DB_JOB_SAVE");
+            // Give the spawned submit task time to emit the error log.
+            sleep(Duration::from_millis(100)).await;
+        });
+    });
+
+    assert!(
+        logs.contains("Failed to save job during submit"),
+        "expected during-submit save failure in logs, got:\n{logs}"
+    );
+}
