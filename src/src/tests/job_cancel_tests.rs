@@ -822,6 +822,119 @@ fn test_cancel_job_status_read_failure_before_cancel() {
     inner();
 }
 
+#[derive(Clone, Default)]
+struct StatusLogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl StatusLogWriter {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn into_string(self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap_or_default()
+    }
+}
+
+impl<'a> MakeWriter<'a> for StatusLogWriter {
+    type Writer = StatusLogWriterGuard;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        StatusLogWriterGuard(self.0.clone())
+    }
+}
+
+struct StatusLogWriterGuard(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Write for StatusLogWriterGuard {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Run `f` with a thread-local tracing subscriber that captures WARN-level
+/// (and above) events into a `String`.
+fn capture_warn_logs<F: FnOnce()>(f: F) -> String {
+    let writer = StatusLogWriter::new();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(writer.clone())
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_max_level(tracing::Level::WARN)
+        .finish();
+    tracing::subscriber::with_default(subscriber, f);
+    writer.into_string()
+}
+
+#[test_fork::test]
+fn test_cancel_logs_failed_archive_on_success() {
+    let db_name = Uuid::new_v4().to_string();
+    let (fixture, bundle_hash, state, working_dir) = setup_cancel_test(&db_name);
+
+    // Write a cancel script that returns true (success)
+    fixture.write_job_cancel(&bundle_hash, "True");
+
+    // Remove the working directory so archiving the job fails.
+    drop(working_dir);
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let tx_clone = tx.clone();
+
+    let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+    mock_ws
+        .expect_queue_message()
+        .times(1)
+        .returning(move |_, data, _| {
+            let _ = tx_clone.send(data);
+        });
+
+    set_websocket_client(Arc::new(mock_ws));
+
+    // Cancel the job
+    let mut msg_raw = Message::new(CANCEL_JOB, Priority::Medium, SYSTEM_SOURCE);
+    msg_raw.push_uint(1234);
+    let msg = Message::from_data(msg_raw.get_data().clone());
+
+    let logs = capture_warn_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            handle_job_cancel(msg);
+
+            // Wait for message
+            let msg_data = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("Timeout waiting for UPDATE_JOB message")
+                .expect("No message received");
+
+            let mut result_msg = Message::from_data(msg_data);
+            assert_eq!(result_msg.id, UPDATE_JOB);
+            // First uint is the job_id
+            assert_eq!(result_msg.pop_uint(), 1234);
+            assert_eq!(result_msg.pop_string(), "_job_completion_");
+            assert_eq!(result_msg.pop_uint(), CANCELLED);
+            assert_eq!(result_msg.pop_string(), "Job has been cancelled");
+        });
+    });
+
+    // Job should no longer be running
+    let job_refreshed = state.lock().unwrap().jobs.get(&1).cloned().unwrap();
+    assert!(!job_refreshed.running);
+
+    // The completion notification is still queued even though archiving failed.
+    assert!(
+        logs.contains("Archive failed for job 1234"),
+        "expected archive-failure warning in logs, got:\n{logs}"
+    );
+}
+
 #[test_fork::test]
 fn test_cancel_job_status_read_failure_after_cancel() {
     #[tokio::main(flavor = "current_thread")]
