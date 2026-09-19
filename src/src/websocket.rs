@@ -800,10 +800,6 @@ impl WebsocketClient for TungsteniteWebsocketClient {
         }
 
         let p = priority as usize;
-        if p >= PRIORITY_LEVELS {
-            error!("WS: Invalid priority {}", p);
-            return;
-        }
 
         {
             let mut map = self.queue[p].lock();
