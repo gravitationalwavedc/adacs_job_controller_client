@@ -304,6 +304,41 @@ pub unsafe fn py_unicode_from_string(s: *const c_char) -> *mut PyObject {
     PyUnicode_FromString(s)
 }
 
+#[cfg(test)]
+pub type PyErrNewExceptionFn =
+    unsafe fn(*const c_char, *mut PyObject, *mut PyObject) -> *mut PyObject;
+
+#[cfg(test)]
+static PY_ERR_NEW_EXCEPTION_OVERRIDE: Mutex<Option<PyErrNewExceptionFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `py_err_new_exception`, returning the
+/// previously-installed override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_py_err_new_exception_override(
+    f: Option<PyErrNewExceptionFn>,
+) -> Option<PyErrNewExceptionFn> {
+    let mut guard = PY_ERR_NEW_EXCEPTION_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
+/// `PyErr_NewException` wrapper that honours the test-only override.
+///
+/// # Safety
+/// Same preconditions as `PyErr_NewException`: caller holds `PYTHON_MUTEX` and
+/// the GIL; `name` is a valid NUL-terminated C string; `base` and `dict` are
+/// NULL or valid objects.
+pub unsafe fn py_err_new_exception(
+    name: *const c_char,
+    base: *mut PyObject,
+    dict: *mut PyObject,
+) -> *mut PyObject {
+    #[cfg(test)]
+    if let Some(f) = *PY_ERR_NEW_EXCEPTION_OVERRIDE.lock() {
+        return f(name, base, dict);
+    }
+    PyErr_NewException(name, base, dict)
+}
+
 /// Looks up a process-wide Python singleton symbol (e.g. `_Py_NoneStruct`) once
 /// and caches the resulting pointer in `cache` for subsequent calls.
 ///
