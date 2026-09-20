@@ -580,7 +580,7 @@ impl BundleInterface {
                 return std::ptr::null_mut();
             }
         };
-        let p_value = PyUnicode_FromString(c_content.as_ptr());
+        let p_value = py_unicode_from_string(c_content.as_ptr());
         if p_value.is_null() {
             error!("json_loads: failed to create python string");
             Py_DecRef(p_args);

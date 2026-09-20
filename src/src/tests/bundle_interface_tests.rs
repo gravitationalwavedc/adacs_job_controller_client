@@ -1052,6 +1052,43 @@ fn test_json_loads_returns_null_for_invalid_json() {
     inner();
 }
 
+/// `PyUnicode_FromString` can return NULL on allocation failure, so `json_loads`
+/// must return NULL (the "failed to create python string" branch) instead of
+/// dereferencing a null pointer. The override seam makes this defensive branch
+/// observable, mirroring `test_run_returns_err_when_unicode_from_string_fails`.
+#[test]
+fn test_json_loads_returns_null_when_unicode_from_string_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        let _override = UnicodeFromStringOverrideGuard::install(fail_unicode_from_string);
+        unsafe {
+            let _scope = bundle
+                .thread_scope()
+                .expect("thread scope should be created");
+            let obj = bundle.json_loads(r#"{"key": "value"}"#);
+            assert!(
+                obj.is_null(),
+                "PyUnicode_FromString failure should make json_loads return NULL"
+            );
+        }
+    }
+    inner();
+}
+
 /// The `json.loads` attribute lookup can fail (e.g. when the `loads`
 /// attribute is removed from the json module), so `json_loads` must return
 /// NULL (the "failed to get json.loads function" branch) instead of
