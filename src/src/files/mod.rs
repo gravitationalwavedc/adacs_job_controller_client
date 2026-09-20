@@ -444,6 +444,18 @@ pub fn handle_file_list(mut msg: Message) {
             }
         };
 
+        let working_directory = match fs::canonicalize(&working_directory).await {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(e) => {
+                warn!(
+                    "handle_file_list: Failed to canonicalize working directory: {}",
+                    e
+                );
+                send_file_list_error(&uuid, "Path to list files does not exist");
+                return;
+            }
+        };
+
         let full_path = Path::new(&working_directory).join(dir_path.trim_start_matches('/'));
         let abs_path = match fs::canonicalize(&full_path).await {
             Ok(path) => path,

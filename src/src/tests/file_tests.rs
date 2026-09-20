@@ -700,6 +700,109 @@ fn test_get_file_list_job_success_not_recursive() {
 }
 
 #[test_fork::test]
+fn test_get_file_list_symlink_working_directory_returns_relative_paths() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test7_symlink_wd");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let list_root = fixture.create_test_directory("list_root");
+        fixture.create_test_directory("list_root/sub");
+        fixture.create_test_file("list_root/file1.txt", "content1");
+        fixture.create_test_file("list_root/sub/file2.txt", "content2");
+
+        // Use a symlink to the real directory as the working directory so the
+        // resolved path is non-canonical (differs from the canonical path that
+        // `read_dir` produces). Regression: file-list paths must still be
+        // relative to the working directory.
+        let symlink_path = fixture.get_temp_path().join("list_root_link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&list_root, &symlink_path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&list_root, &symlink_path).unwrap();
+        let working_dir = symlink_path.to_str().unwrap().to_string();
+
+        let state = create_mock_state();
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "test-uuid-trailing-slash".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let msg = Message::from_data(data);
+                let _ = tx_clone.send(msg);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1239i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let mut msg_raw = Message::new(FILE_LIST, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(".");
+        msg_raw.push_bool(true); // recursive
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_list(msg);
+
+        let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("Timeout")
+            .expect("No response");
+        assert_eq!(response.id, FILE_LIST);
+        let mut response_msg = response;
+        assert_eq!(response_msg.pop_string(), test_uuid);
+        assert_eq!(response_msg.pop_uint(), 3); // file1, sub, sub/file2
+
+        let mut items = vec![];
+        for _ in 0..3 {
+            items.push((
+                response_msg.pop_string(),
+                response_msg.pop_bool(),
+                response_msg.pop_ulong(),
+            ));
+        }
+        items.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(items[0].0, "file1.txt");
+        assert!(!items[0].1);
+        assert_eq!(items[1].0, "sub");
+        assert!(items[1].1);
+        assert_eq!(items[2].0, "sub/file2.txt");
+        assert!(!items[2].1);
+
+        for (path, _, _) in &items {
+            assert!(
+                !Path::new(path).is_absolute(),
+                "expected relative path, got absolute: {path}"
+            );
+        }
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
 fn test_get_file_list_no_job_success() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
