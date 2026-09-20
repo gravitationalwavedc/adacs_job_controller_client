@@ -2060,6 +2060,83 @@ fn test_file_upload_job_based_success() {
     inner();
 }
 
+#[test_fork::test]
+fn test_file_upload_ignores_stray_text_frame() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_upload_ignores_text");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1242i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-upload-text".to_string();
+        let file_content = b"uploaded content";
+        let target_path = "subdir/uploaded.txt";
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(file_content.len() as u64);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_upload(msg);
+
+        let mut server = server;
+        let ready = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for ready")
+            .expect("No ready");
+        assert_eq!(ready.id, SERVER_READY);
+
+        let mut chunk_msg = Message::new(FILE_UPLOAD_CHUNK, Priority::Highest, &test_uuid);
+        chunk_msg.push_bytes(file_content);
+        server.msg_tx.send(chunk_msg.get_data().clone()).unwrap();
+
+        // A stray non-binary (Text) frame between chunks must be ignored and
+        // the upload must still complete.
+        server.send_peer_text().await;
+
+        let complete_msg = Message::new(FILE_UPLOAD_COMPLETE, Priority::Highest, &test_uuid);
+        server.msg_tx.send(complete_msg.get_data().clone()).unwrap();
+
+        let response = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for response")
+            .expect("No response");
+        assert_eq!(response.id, FILE_UPLOAD_COMPLETE);
+
+        let final_path = Path::new(&working_dir).join(target_path);
+        assert!(final_path.exists());
+        assert_eq!(fs::read(final_path).unwrap(), file_content);
+    } // end inner()
+    inner();
+}
+
 // ============================================================================
 // File Upload Error Tests - ported from test_file_upload.cpp
 // ============================================================================
