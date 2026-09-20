@@ -45,10 +45,9 @@ pub fn daemonize_with_log_redirect(
             info!("First parent exiting (pid: {})", pid);
             return Ok(false);
         }
-        0 => {
+        _ => {
             // First child - continue to daemonize
         }
-        _ => unreachable!(),
     }
 
     // Decouple from parent environment
@@ -85,11 +84,10 @@ pub fn daemonize_with_log_redirect(
             info!("Second parent exiting (pid: {})", pid);
             return Ok(false);
         }
-        0 => {
+        _ => {
             // Second child - this is the daemon process
             info!("Daemon process started (pid: {})", process::id());
         }
-        _ => unreachable!(),
     }
 
     // We are now the daemon process
