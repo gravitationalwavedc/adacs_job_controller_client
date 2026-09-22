@@ -9,6 +9,7 @@ use crate::websocket::get_websocket_client;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde_json::{json, Value};
+use std::io::Write;
 use std::path::Path;
 use tar::Builder;
 use tracing::{debug, error, info, trace, warn};
@@ -26,6 +27,32 @@ fn saturating_increment_submit_count(count: i32) -> i32 {
 }
 
 pub const ARCHIVE_FILE_NAME: &str = "archive.tar.gz";
+
+pub const MAX_ARCHIVE_SIZE_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
+
+struct ArchiveSizeLimiter<W> {
+    inner: W,
+    written: u64,
+    max: u64,
+}
+
+impl<W: Write> Write for ArchiveSizeLimiter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.written = self.written.saturating_add(n as u64);
+        if self.written > self.max {
+            return Err(std::io::Error::other(format!(
+                "archive size limit of {} bytes exceeded (wrote {} bytes)",
+                self.max, self.written
+            )));
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
 
 fn status_to_i32(status: u32) -> i32 {
     i32::try_from(status).unwrap_or(i32::MAX)
@@ -483,9 +510,18 @@ pub async fn archive_job(job: &job::Model) -> Result<(), String> {
 }
 
 pub fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String> {
+    archive_dir_with_limit(dir, archive_path, MAX_ARCHIVE_SIZE_BYTES)
+}
+
+fn archive_dir_with_limit(dir: &Path, archive_path: &Path, max_bytes: u64) -> Result<(), String> {
     let file = std::fs::File::create(archive_path)
         .map_err(|e| format!("Failed to create archive file: {e}"))?;
-    let encoder = GzEncoder::new(file, Compression::default());
+    let limiter = ArchiveSizeLimiter {
+        inner: file,
+        written: 0,
+        max: max_bytes,
+    };
+    let encoder = GzEncoder::new(limiter, Compression::default());
     let mut builder = Builder::new(encoder);
 
     for entry in WalkDir::new(dir)
@@ -1194,6 +1230,41 @@ mod tests {
         let archive_path = missing.join(ARCHIVE_FILE_NAME);
 
         assert!(archive_dir(&missing, &archive_path).is_err());
+    }
+
+    #[test]
+    fn archive_dir_returns_err_when_archive_exceeds_size_limit() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let mut big = Vec::with_capacity(256 * 1024);
+        let mut x: u32 = 0x1234_5678;
+        while big.len() < big.capacity() {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            big.push((x >> 24) as u8);
+        }
+        std::fs::write(src.join("big.bin"), &big).unwrap();
+
+        let archive_path = temp_dir.path().join("out.tar.gz");
+        let result = archive_dir_with_limit(&src, &archive_path, 1024);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("size limit"));
+    }
+
+    #[test]
+    fn archive_dir_succeeds_when_below_size_limit() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("small.txt"), b"small").unwrap();
+
+        let archive_path = temp_dir.path().join("out.tar.gz");
+        let result = archive_dir_with_limit(&src, &archive_path, 1024 * 1024);
+
+        assert!(result.is_ok());
+        assert!(archive_path.exists());
     }
 
     #[test]
