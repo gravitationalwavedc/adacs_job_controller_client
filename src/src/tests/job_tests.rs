@@ -1209,6 +1209,77 @@ fn test_submit_already_submitted() {
 }
 
 #[test_fork::test]
+fn test_submit_new_job_with_ui_id_zero() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        setup_test(&db_name);
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        // Write a successful submit script
+        fixture.write_job_submit(&bundle_hash, "/a/test/working/directory/", "4321");
+
+        let (mut mock_ws, state) = setup_mock_ws();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        // We expect 1 message when it finally submits
+        mock_ws
+            .expect_queue_message()
+            .with(always(), always(), eq(Priority::Medium))
+            .times(1)
+            .returning(move |_, _, _| {
+                let _ = tx_clone.send(());
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        // UI job id 0 is treated as a brand-new job: the "already submitted"
+        // branch (guarded by job_id != 0) is skipped and the job is submitted.
+        let job_id = 0i64;
+        let mut msg_raw = Message::new(SUBMIT_JOB, Priority::Medium, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&bundle_hash);
+        msg_raw.push_string("test params");
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+        handle_job_submit(msg);
+
+        // Wait for the message to be queued
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("Timed out waiting for queue_message");
+
+        // The mock stores job_id as None when it is 0, so locate the created
+        // job by its scheduler id instead.
+        let mut retry = 0;
+        let job = loop {
+            if let Some(job) = state
+                .lock()
+                .unwrap()
+                .jobs
+                .values()
+                .find(|j| j.scheduler_id == Some(4321))
+                .cloned()
+            {
+                break job;
+            }
+            sleep(Duration::from_millis(100)).await;
+            retry += 1;
+            assert!(retry < 20, "Job was never created and submitted");
+        };
+
+        assert_eq!(job.working_directory, "/a/test/working/directory/");
+        assert!(!job.submitting);
+        assert_eq!(job.scheduler_id, Some(4321));
+    }
+    inner();
+}
+
+#[test_fork::test]
 fn test_check_all_job_status_stress() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
