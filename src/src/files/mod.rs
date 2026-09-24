@@ -3521,6 +3521,35 @@ mod tests {
         assert_eq!(relative, entry_path.to_string_lossy());
     }
 
+    #[test]
+    fn test_recursive_file_list_handler_pushes_subdirectory() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        std::fs::create_dir(tmp.path().join("subdir")).unwrap();
+
+        let entries = collect_entries(tmp.path());
+        assert_eq!(entries.len(), 1);
+        let entry = entries.into_iter().next().unwrap();
+
+        let mut file_list = Vec::new();
+        let mut stack = Vec::new();
+        let mut handler = RecursiveFileListHandler {
+            file_list: &mut file_list,
+            stack: &mut stack,
+            working_directory: &wd,
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(handler.handle(entry));
+
+        assert_eq!(stack, vec![tmp.path().join("subdir")]);
+        assert_eq!(file_list.len(), 1);
+        assert_eq!(file_list[0].0, "subdir");
+        assert!(
+            file_list[0].1,
+            "subdirectory should be flagged as a directory"
+        );
+    }
+
     // ---------------------------------------------------------------
     // Per-transfer download supervisor smoke tests (task-2).
     // Exercise the supervisor's seam and authoritative-result selection
