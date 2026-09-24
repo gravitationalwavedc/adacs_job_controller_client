@@ -6,14 +6,14 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, py_unicode_from_string,
-    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
-    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
-    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
-    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_new, py_tuple_set_item,
+    py_unicode_from_string, MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString,
+    PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins,
+    PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule, PyIter_Next, PyList_Append,
+    PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject, PyObject_GetAttrString,
+    PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject, PyThreadState,
+    PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF,
+    Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -385,7 +385,7 @@ impl BundleInterface {
         }
 
         // Build a tuple to hold the arguments
-        let p_args = PyTuple_New(2);
+        let p_args = py_tuple_new(2);
         if p_args.is_null() {
             Py_XDECREF(p_func);
             Py_DecRef(json_obj);
@@ -509,7 +509,7 @@ impl BundleInterface {
             return Err("Failed to get json.dumps function".to_string());
         }
 
-        let p_args = PyTuple_New(1);
+        let p_args = py_tuple_new(1);
         if p_args.is_null() {
             Py_XDECREF(p_func);
             PyErr_Clear();
@@ -564,7 +564,7 @@ impl BundleInterface {
             return std::ptr::null_mut();
         }
 
-        let p_args = PyTuple_New(1);
+        let p_args = py_tuple_new(1);
         if p_args.is_null() {
             error!("json_loads: failed to create arguments tuple");
             Py_XDECREF(p_func);
@@ -671,7 +671,7 @@ impl BundleInterface {
                 Py_XDECREF(traceback);
                 swallow_python_error();
             } else {
-                let tb_args = PyTuple_New(1);
+                let tb_args = py_tuple_new(1);
                 if tb_args.is_null() {
                     // The `traceback` ref is still owned here; release it and
                     // the function ref before falling through to the header.
@@ -734,7 +734,7 @@ impl BundleInterface {
                 fallback_value_text(&value_display, &value_str)
             );
         } else {
-            let eo_args = PyTuple_New(2);
+            let eo_args = py_tuple_new(2);
             if eo_args.is_null() {
                 // The `extype` and `value` refs are still owned here; release
                 // them and the function ref before the fallback.
@@ -1363,7 +1363,8 @@ mod bundle_interface_conversion_tests {
 mod set_exception_value_slot_tests {
     use super::*;
     use crate::python_interface::{
-        set_py_tuple_set_item_override, PyTupleSetItemFn, PyTuple_GetItem, PyTuple_Size, Py_ssize_t,
+        set_py_tuple_set_item_override, PyTupleSetItemFn, PyTuple_GetItem, PyTuple_New,
+        PyTuple_Size, Py_ssize_t,
     };
     use std::os::raw::c_int;
 
@@ -1505,6 +1506,7 @@ mod set_exception_value_slot_tests {
 mod append_bundle_path_to_sys_path_tests {
     use super::*;
     use crate::bundle_manager::BundleManager;
+    use crate::python_interface::PyTuple_New;
     use crate::tests::fixtures::bundle_fixture::BundleFixture;
     use uuid::Uuid;
 
