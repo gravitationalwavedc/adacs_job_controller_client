@@ -3456,6 +3456,24 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_dir_entry_metadata_failure_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let file = tmp.path().join("data.txt");
+        std::fs::write(&file, "hello").unwrap();
+
+        let entries = collect_entries(tmp.path());
+        assert_eq!(entries.len(), 1);
+        let entry = entries.into_iter().next().unwrap();
+        std::fs::remove_file(&file).unwrap();
+
+        assert!(
+            run_collect(entry, &wd).is_none(),
+            "entry whose metadata read fails should be skipped"
+        );
+    }
+
+    #[test]
     fn test_collect_dir_entry_directory() {
         let tmp = TempDir::new().unwrap();
         let wd = tmp.path().to_str().unwrap().to_string();
