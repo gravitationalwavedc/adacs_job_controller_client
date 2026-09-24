@@ -1931,7 +1931,7 @@ impl Write for StatusLogWriterGuard {
 
 /// Run `f` with a thread-local tracing subscriber that captures ERROR-level
 /// events into a `String`.
-fn capture_error_logs<F: FnOnce()>(f: F) -> String {
+pub fn capture_error_logs<F: FnOnce()>(f: F) -> String {
     let writer = StatusLogWriter::new();
     let subscriber = tracing_subscriber::fmt()
         .with_writer(writer.clone())
