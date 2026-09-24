@@ -64,11 +64,19 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
 
     let msg = CStr::from_ptr(c_msg).to_string_lossy();
 
-    // Don't write trailing newlines – accumulate line parts
-    if msg == "\n" {
+    // Don't write trailing newlines – accumulate line parts. Any message ending
+    // in '\n' is a complete line: strip the trailing newline, append any
+    // remaining content to the accumulated parts, then flush. This covers both
+    // the exact "\n" case (flushes an empty line) and a single write such as
+    // sys.stdout.write("...\n"), which would otherwise be silently dropped.
+    if msg.ends_with('\n') {
         let mut full_message = format!("Bundle [{bundle_hash}]: ");
         LINE_PARTS.with(|parts| {
             let mut parts = parts.borrow_mut();
+            let content = msg.strip_suffix('\n').unwrap_or_default();
+            if !content.is_empty() {
+                parts.push(content.to_string());
+            }
             for part in parts.iter() {
                 full_message.push_str(part);
             }
