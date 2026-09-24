@@ -1140,10 +1140,14 @@ async fn run_sending_phase(
     // Take the pending chunk bytes out for the duration of this phase; if a
     // peer input branch wins the select, we restore the original bytes so
     // the chunk can be retried on the next Sending iteration.
-    let Some(pending_bytes) = state.pending_chunk_bytes.take() else {
-        // No pending chunk — fall back to reading.
-        return LoopStep::SetState(ChunkState::Reading);
-    };
+    // Invariant: a pending chunk is always present when the Sending phase
+    // runs — it is set only by run_reading_phase immediately before
+    // transitioning to Sending, and cleared only by this phase's send-success
+    // branch which transitions back to Reading.
+    let pending_bytes = state
+        .pending_chunk_bytes
+        .take()
+        .expect("pending chunk present when Sending phase runs");
     let chunk_len = state.pending_chunk_len;
     // Test seam: arrive-and-wait on the pre-chunk-send barrier if installed,
     // so a test can reset the peer transport before the chunk send. The seam
@@ -3931,18 +3935,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sending_phase_with_no_pending_chunk_returns_to_reading() {
+    #[should_panic(expected = "pending chunk present when Sending phase runs")]
+    async fn sending_phase_without_pending_chunk_panics() {
         let server = WebsocketServerFixture::new().await;
         let (mut ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
 
         let is_paused = Arc::new(AtomicBool::new(false));
         let resume_notify = Arc::new(Notify::new());
 
-        // No pending chunk and no pause: the sending phase must fall back to
-        // reading rather than attempting to transmit a chunk.
+        // A pending chunk is always present when the Sending phase runs; calling
+        // run_sending_phase without one is a programming error and must panic.
         let mut state = TransferState::new(64);
 
-        let step = run_sending_phase(
+        run_sending_phase(
             &mut ws_sender,
             &mut ws_receiver,
             &is_paused,
@@ -3950,9 +3955,5 @@ mod tests {
             &mut state,
         )
         .await;
-        assert!(
-            matches!(step, LoopStep::SetState(ChunkState::Reading)),
-            "expected fallback to Reading when no chunk is pending"
-        );
     }
 }
