@@ -1055,9 +1055,6 @@ async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferSt
                                 LoopStep::Finish(AuthoritativeResult::CleanEof)
                             }
                         }
-                    } else if transmitted == expected {
-                        // A primary error already selected — keep it.
-                        LoopStep::Finish(state.authoritative().clone())
                     } else {
                         // Size mismatch (file truncated or modified during the
                         // transfer): report it over the wire as the existing
