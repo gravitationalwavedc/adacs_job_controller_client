@@ -87,8 +87,16 @@ fn replace_binary(
 
     let update_path = get_update_path(executable_path);
 
-    fs::write(&update_path, update_data)?;
-    fs::rename(&update_path, executable_path)?;
+    if let Err(e) = fs::write(&update_path, update_data) {
+        // Best-effort cleanup of a partially-written update file.
+        let _ = fs::remove_file(&update_path);
+        return Err(e.into());
+    }
+    if let Err(e) = fs::rename(&update_path, executable_path) {
+        // Best-effort cleanup of the stale update file left by a failed rename.
+        let _ = fs::remove_file(&update_path);
+        return Err(e.into());
+    }
 
     #[cfg(unix)]
     {
@@ -608,6 +616,24 @@ mod tests {
         assert!(
             !update_path.exists(),
             "no update file should be written for empty data"
+        );
+    }
+
+    #[test]
+    fn test_replace_binary_removes_update_file_on_rename_failure() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_path = dir.path().join("adacs_job_client");
+        // Make the target a directory so fs::rename fails (EISDIR on Linux).
+        fs::create_dir(&exe_path).unwrap();
+
+        let result = replace_binary(&exe_path, b"new data");
+        assert!(result.is_err(), "rename onto a directory should fail");
+
+        // The stale .update file must be removed after the failed rename.
+        let update_path = get_update_path(&exe_path);
+        assert!(
+            !update_path.exists(),
+            "stale update file should be removed after a failed rename"
         );
     }
 
