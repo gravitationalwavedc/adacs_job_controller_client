@@ -21,6 +21,8 @@ use uuid::Uuid;
 struct MockDbState {
     jobs: HashMap<i64, job::Model>,
     next_job_id: i64,
+    /// When true, the next `DB_JOB_SAVE` returns `saved_id` = 0 (treated as an error)
+    fail_save: bool,
 }
 
 impl MockDbState {
@@ -28,6 +30,7 @@ impl MockDbState {
         Self {
             jobs: HashMap::new(),
             next_job_id: 1,
+            fail_save: false,
         }
     }
 }
@@ -61,7 +64,14 @@ fn with_db_support(
                     let deleted = m.pop_bool();
 
                     let mut s = state_clone.lock().unwrap();
-                    let saved_id = if id > 0 { id } else { s.next_job_id };
+                    let saved_id = if s.fail_save {
+                        s.fail_save = false;
+                        0
+                    } else if id > 0 {
+                        id
+                    } else {
+                        s.next_job_id
+                    };
                     if id > 0 {
                         s.next_job_id = std::cmp::max(s.next_job_id, id + 1);
                     } else {
@@ -596,6 +606,46 @@ fn test_delete_job_job_deleting() {
         // Archive should not have been generated
         let archive_path = working_dir.path().join("archive.tar.gz");
         assert!(!archive_path.exists());
+    }
+    inner();
+}
+
+#[test_fork::test]
+fn test_delete_job_first_save_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        let (fixture, bundle_hash, state, working_dir) = setup_delete_test(&db_name);
+
+        // Write a delete script; it must NOT be invoked because the first save fails
+        fixture.write_job_delete(&bundle_hash, "True");
+
+        // Make the first DB_JOB_SAVE (persisting deleting = true) return saved_id = 0 (error)
+        state.lock().unwrap().fail_save = true;
+
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        // No UPDATE_JOB should be queued when the first save fails
+        mock_ws.expect_queue_message().times(0);
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        // Try to delete a job where the first save fails
+        let mut msg_raw = Message::new(DELETE_JOB, Priority::Medium, SYSTEM_SOURCE);
+        msg_raw.push_uint(1234);
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_job_delete(msg);
+
+        // Wait a moment
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Delete bundle should not have been invoked (no archive generated)
+        let archive_path = working_dir.path().join("archive.tar.gz");
+        assert!(!archive_path.exists());
+
+        // Job should not be marked deleted
+        let job_refreshed = state.lock().unwrap().jobs.get(&1).cloned().unwrap();
+        assert!(!job_refreshed.deleted);
     }
     inner();
 }
