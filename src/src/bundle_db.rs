@@ -630,6 +630,10 @@ pub unsafe extern "C" fn PyInit_bundledb() -> *mut PyObject {
 mod tests {
     use super::*;
     use crate::messaging::DB_RESPONSE;
+    use crate::websocket::{
+        reset_websocket_client_for_test, set_websocket_client, MockWebsocketClient,
+    };
+    use std::sync::Arc;
 
     #[test]
     fn err_cstring_preserves_well_formed_message() {
@@ -1400,5 +1404,35 @@ mod tests {
             crate::python_interface::Py_DecRef(value);
             crate::python_interface::Py_DecRef(traceback);
         }
+    }
+
+    /// Cover the production `send_and_wait` request path that routes through
+    /// the persistent `DbBridge` (bundle_db.rs:136-138). Every other
+    /// `bundle_db` test sets up only the mock WebSocket client and never
+    /// starts `DbBridge`, so `try_get()` returns `None` and only the
+    /// thread-per-call fallback is exercised. This test starts `DbBridge`
+    /// and asserts the request is routed through it and the response is
+    /// returned, guarding the `bundle_db` ↔ `DbBridge` integration.
+    #[test]
+    fn send_and_wait_routes_through_db_bridge() {
+        reset_websocket_client_for_test();
+        crate::db_bridge::DbBridge::start();
+
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(false);
+        mock.expect_is_server_ready().return_const(true);
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Medium, "database");
+            resp.push_ulong(4321);
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let msg = build_bundle_get_by_id_message(1234);
+        let result = send_and_wait(msg);
+
+        let response = result.expect("send_and_wait should return Ok via DbBridge");
+        let mut parsed = Message::from_data(response.get_data().clone());
+        assert_eq!(parsed.pop_ulong(), 4321, "response should carry job_id");
     }
 }
