@@ -107,7 +107,7 @@ pub fn handle_job_submit(mut msg: Message) {
         let ws = get_websocket_client();
         if ws.is_connection_closed() || !ws.is_server_ready() {
             debug!(
-                "Delaying job submit for job {} until server is ready (connected={}, ready={})",
+                "Skipping job submit for job {} - server not ready (connected={}, ready={})",
                 job_id,
                 !ws.is_connection_closed(),
                 ws.is_server_ready()
