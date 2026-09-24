@@ -993,18 +993,6 @@ async fn run_transfer_loop(ctx: &mut TransferContext<'_>, file_size: u64) -> Tra
 }
 
 async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferState) -> LoopStep {
-    // If a primary error already exists, only listen for peer terminal events
-    // and resume notifications so we do not waste file work.
-    if state.authoritative.is_primary() {
-        return wait_for_terminal_or_resume(
-            ctx.ws_receiver,
-            ctx.is_paused,
-            ctx.resume_notify,
-            state,
-        )
-        .await;
-    }
-
     // Process any Pause/Resume/terminal messages already buffered before
     // arming a file read, so a Pause that arrived during the previous send is
     // honoured promptly.
@@ -3741,45 +3729,6 @@ mod tests {
         let reader = File::open(&fifo_path).await.unwrap();
         let writer = writer_task.await.unwrap().unwrap();
         (reader, writer)
-    }
-
-    #[tokio::test]
-    async fn reading_phase_with_primary_error_waits_for_terminal_or_resume() {
-        let server = WebsocketServerFixture::new().await;
-        let (mut ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
-
-        let tmp = TempDir::new().unwrap();
-        let file_path = tmp.path().join("data.bin");
-        std::fs::write(&file_path, vec![0u8; 64]).unwrap();
-        let mut file = File::open(&file_path).await.unwrap();
-        let mut buffer = vec![0u8; DOWNLOAD_CHUNK_SIZE];
-        let is_paused = Arc::new(AtomicBool::new(false));
-        let resume_notify = Arc::new(Notify::new());
-        let uuid = "test-uuid-primary-error";
-
-        let mut ctx = TransferContext {
-            ws_sender: &mut ws_sender,
-            ws_receiver: &mut ws_receiver,
-            file: &mut file,
-            buffer: &mut buffer,
-            is_paused: &is_paused,
-            resume_notify: &resume_notify,
-            uuid,
-        };
-
-        let mut state = TransferState::new(64);
-        state.primary("chunk send failed");
-
-        let server = server;
-        let pause_msg = Message::new(PAUSE_FILE_CHUNK_STREAM, Priority::Highest, uuid);
-        server.msg_tx.send(pause_msg.get_data().clone()).unwrap();
-
-        let step = run_reading_phase(&mut ctx, &mut state).await;
-        assert!(matches!(step, LoopStep::Continue));
-        assert!(
-            is_paused.load(Ordering::Acquire),
-            "a Pause arriving while a primary error exists must be honoured by wait_for_terminal_or_resume"
-        );
     }
 
     #[tokio::test]
