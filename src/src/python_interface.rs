@@ -276,32 +276,6 @@ pub unsafe fn py_tuple_set_item(
 }
 
 #[cfg(test)]
-pub type PyTupleNewFn = unsafe fn(Py_ssize_t) -> *mut PyObject;
-
-#[cfg(test)]
-static PY_TUPLE_NEW_OVERRIDE: Mutex<Option<PyTupleNewFn>> = Mutex::new(None);
-
-/// Test-only: install an override for `py_tuple_new`, returning the
-/// previously-installed override (if any). Pass `None` to clear it.
-#[cfg(test)]
-pub fn set_py_tuple_new_override(f: Option<PyTupleNewFn>) -> Option<PyTupleNewFn> {
-    let mut guard = PY_TUPLE_NEW_OVERRIDE.lock();
-    std::mem::replace(&mut *guard, f)
-}
-
-/// `PyTuple_New` wrapper that honours the test-only override.
-///
-/// # Safety
-/// Same preconditions as `PyTuple_New`: caller holds `PYTHON_MUTEX` and the GIL.
-pub unsafe fn py_tuple_new(len: Py_ssize_t) -> *mut PyObject {
-    #[cfg(test)]
-    if let Some(f) = *PY_TUPLE_NEW_OVERRIDE.lock() {
-        return f(len);
-    }
-    PyTuple_New(len)
-}
-
-#[cfg(test)]
 pub type PyUnicodeFromStringFn = unsafe fn(*const c_char) -> *mut PyObject;
 
 #[cfg(test)]
