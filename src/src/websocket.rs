@@ -50,13 +50,6 @@ pub trait WebsocketClient: Send + Sync {
     ) -> BoxFuture<'static, Result<Message, Box<dyn Error + Send + Sync>>>;
     fn is_server_ready(&self) -> bool;
     fn is_connection_closed(&self) -> bool;
-    fn get_ping_timestamp(&self) -> i64;
-    fn get_pong_timestamp(&self) -> i64;
-    fn check_pings(&self) -> Result<(), String>;
-    fn call_check_pings(&self);
-    fn set_pong_timestamp(&self, ts: i64);
-    fn set_ping_timestamp(&self, ts: i64);
-    fn prune_sources(&self);
 }
 
 type PriorityQueue = Vec<Arc<Mutex<HashMap<String, VecDeque<Vec<u8>>>>>>;
@@ -223,6 +216,33 @@ impl TungsteniteWebsocketClient {
         }
 
         Ok(())
+    }
+
+    fn get_ping_timestamp(&self) -> i64 {
+        self.ping_timestamp.load(Ordering::SeqCst)
+    }
+
+    fn get_pong_timestamp(&self) -> i64 {
+        self.pong_timestamp.load(Ordering::SeqCst)
+    }
+
+    fn check_pings(&self) -> Result<(), String> {
+        self.check_pings_internal()
+    }
+
+    fn call_check_pings(&self) {
+        // Test entry point - simulates ping/pong cycle
+        let now = Self::get_epoch_millis();
+        self.ping_timestamp.store(now, Ordering::SeqCst);
+        self.pong_timestamp.store(now, Ordering::SeqCst);
+    }
+
+    fn set_pong_timestamp(&self, ts: i64) {
+        self.pong_timestamp.store(ts, Ordering::SeqCst);
+    }
+
+    fn set_ping_timestamp(&self, ts: i64) {
+        self.ping_timestamp.store(ts, Ordering::SeqCst);
     }
 
     fn handle_disconnect(&self, connection_id: u64, disconnect_notify: &Arc<Notify>) {
@@ -909,37 +929,6 @@ impl WebsocketClient for TungsteniteWebsocketClient {
 
     fn is_connection_closed(&self) -> bool {
         self.connection_closed.load(Ordering::SeqCst)
-    }
-
-    fn get_ping_timestamp(&self) -> i64 {
-        self.ping_timestamp.load(Ordering::SeqCst)
-    }
-
-    fn get_pong_timestamp(&self) -> i64 {
-        self.pong_timestamp.load(Ordering::SeqCst)
-    }
-
-    fn check_pings(&self) -> Result<(), String> {
-        self.check_pings_internal()
-    }
-
-    fn call_check_pings(&self) {
-        // Test entry point - simulates ping/pong cycle
-        let now = Self::get_epoch_millis();
-        self.ping_timestamp.store(now, Ordering::SeqCst);
-        self.pong_timestamp.store(now, Ordering::SeqCst);
-    }
-
-    fn set_pong_timestamp(&self, ts: i64) {
-        self.pong_timestamp.store(ts, Ordering::SeqCst);
-    }
-
-    fn set_ping_timestamp(&self, ts: i64) {
-        self.ping_timestamp.store(ts, Ordering::SeqCst);
-    }
-
-    fn prune_sources(&self) {
-        self.prune_sources();
     }
 }
 
