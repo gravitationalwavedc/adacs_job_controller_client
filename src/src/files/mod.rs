@@ -928,16 +928,7 @@ async fn run_download_supervisor(
 /// `SERVER_READY` message on success, or the reason string on any readiness
 /// failure shape (invalid ID, non-binary, receive error, peer EOF, timeout).
 async fn validate_server_ready(ws_receiver: &mut WsReceiver) -> Result<Message, String> {
-    let timeout = {
-        #[cfg(test)]
-        {
-            server_ready_timeout()
-        }
-        #[cfg(not(test))]
-        {
-            Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
-        }
-    };
+    let timeout = server_ready_timeout();
     let handshake = tokio::time::timeout(timeout, ws_receiver.next()).await;
     match handshake {
         Ok(Some(Ok(WsMessage::Binary(data)))) => {
