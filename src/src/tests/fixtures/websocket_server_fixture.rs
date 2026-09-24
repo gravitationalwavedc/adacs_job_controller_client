@@ -221,6 +221,7 @@ pub struct WebsocketServerFixture {
     close_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
     reset_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
     ping_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
+    text_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
     pub final_send_barrier: Arc<LifecycleBarrier>,
     pub zero_byte_eof_barrier: Arc<LifecycleBarrier>,
 }
@@ -232,6 +233,7 @@ struct SpawnArgs {
     close_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
     reset_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
     ping_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
+    text_rx: Arc<Mutex<mpsc::UnboundedReceiver<oneshot::Sender<()>>>>,
     stop_signal: Arc<Notify>,
     config: WebsocketServerConfig,
     lifecycle: Arc<LifecycleState>,
@@ -308,6 +310,7 @@ impl WebsocketServerFixture {
             close_rx,
             reset_rx,
             ping_rx,
+            text_rx,
             stop_signal,
             config,
             lifecycle,
@@ -464,6 +467,22 @@ impl WebsocketServerFixture {
                             }
                         }
                     }
+                    text = async {
+                        let mut rx = text_rx.lock().await;
+                        rx.recv().await
+                    } => {
+                        if let Some(ack_tx) = text {
+                            let result = ws_sender.send(WsMessage::Text("stray".into())).await;
+                            let _ = ack_tx.send(());
+                            if result.is_err() {
+                                Self::record_termination(
+                                    &lifecycle,
+                                    ConnectionTermination::OtherError,
+                                );
+                                break;
+                            }
+                        }
+                    }
                     reset = async {
                         let mut rx = reset_rx.lock().await;
                         rx.recv().await
@@ -507,6 +526,7 @@ impl WebsocketServerFixture {
         let (close_tx, close_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let (reset_tx, reset_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let (ping_tx, ping_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
+        let (text_tx, text_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -515,6 +535,7 @@ impl WebsocketServerFixture {
         let close_rx = Arc::new(Mutex::new(close_rx_from_test));
         let reset_rx = Arc::new(Mutex::new(reset_rx_from_test));
         let ping_rx = Arc::new(Mutex::new(ping_rx_from_test));
+        let text_rx = Arc::new(Mutex::new(text_rx_from_test));
         let stop_tx = Arc::new(Notify::new());
         let lifecycle = Arc::new(LifecycleState::default());
         let handle = Self::spawn_server(SpawnArgs {
@@ -524,6 +545,7 @@ impl WebsocketServerFixture {
             close_rx: close_rx.clone(),
             reset_rx: reset_rx.clone(),
             ping_rx: ping_rx.clone(),
+            text_rx: text_rx.clone(),
             stop_signal: stop_tx.clone(),
             config: config.clone(),
             lifecycle: lifecycle.clone(),
@@ -543,6 +565,7 @@ impl WebsocketServerFixture {
             close_tx,
             reset_tx,
             ping_tx,
+            text_tx,
             final_send_barrier: LifecycleBarrier::new(),
             zero_byte_eof_barrier: LifecycleBarrier::new(),
         }
@@ -588,6 +611,16 @@ impl WebsocketServerFixture {
         let _ = tokio::time::timeout(Duration::from_secs(2), ack_rx).await;
     }
 
+    /// Inject a stray non-binary WebSocket Text frame from the fixture peer.
+    /// Awaits until the fixture has written the Text frame to the transport so
+    /// a test can deterministically place a non-binary, non-Close frame in
+    /// the middle of an upload data stream.
+    pub async fn send_peer_text(&self) {
+        let (ack_tx, ack_rx) = oneshot::channel();
+        let _ = self.text_tx.send(ack_tx);
+        let _ = tokio::time::timeout(Duration::from_secs(2), ack_rx).await;
+    }
+
     pub async fn stop(&mut self) {
         self.stop_tx.notify_waiters();
         if let Some(handle) = self.handle.take() {
@@ -604,12 +637,15 @@ impl WebsocketServerFixture {
         let (close_tx, close_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let (reset_tx, reset_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let (ping_tx, ping_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
+        let (text_tx, text_rx_from_test) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         self.close_tx = close_tx;
         self.reset_tx = reset_tx;
         self.ping_tx = ping_tx;
+        self.text_tx = text_tx;
         let close_rx = Arc::new(Mutex::new(close_rx_from_test));
         let reset_rx = Arc::new(Mutex::new(reset_rx_from_test));
         let ping_rx = Arc::new(Mutex::new(ping_rx_from_test));
+        let text_rx = Arc::new(Mutex::new(text_rx_from_test));
         self.handle = Some(
             Self::spawn_server(SpawnArgs {
                 port: self.port,
@@ -618,6 +654,7 @@ impl WebsocketServerFixture {
                 close_rx,
                 reset_rx,
                 ping_rx,
+                text_rx,
                 stop_signal: self.stop_tx.clone(),
                 config: self.config.clone(),
                 lifecycle: self.lifecycle.clone(),
