@@ -822,40 +822,6 @@ fn test_cancel_job_status_read_failure_before_cancel() {
     inner();
 }
 
-#[derive(Clone, Default)]
-struct StatusLogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl StatusLogWriter {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn into_string(self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap_or_default()
-    }
-}
-
-impl<'a> MakeWriter<'a> for StatusLogWriter {
-    type Writer = StatusLogWriterGuard;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        StatusLogWriterGuard(self.0.clone())
-    }
-}
-
-struct StatusLogWriterGuard(Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl Write for StatusLogWriterGuard {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 /// Run `f` with a thread-local tracing subscriber that captures WARN-level
 /// (and above) events into a `String`.
 fn capture_warn_logs<F: FnOnce()>(f: F) -> String {
