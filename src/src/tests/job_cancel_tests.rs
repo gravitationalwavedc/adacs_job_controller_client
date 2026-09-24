@@ -12,9 +12,11 @@ use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use mockall::predicate::*;
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
+use tracing_subscriber::fmt::MakeWriter;
 use uuid::Uuid;
 
 use crate::db::jobstatus;
@@ -43,7 +45,7 @@ fn with_db_support(
     mock_ws: MockWebsocketClient,
     state: &Arc<std::sync::Mutex<MockDbState>>,
 ) -> MockWebsocketClient {
-    with_db_support_inner(mock_ws, state, &[])
+    with_db_support_inner(mock_ws, state, &[], false)
 }
 
 /// Like `with_db_support`, but the Nth (1-based) `DB_JOBSTATUS_GET_BY_JOB_ID`
@@ -54,13 +56,23 @@ fn with_db_support_failing_status_reads(
     state: &Arc<std::sync::Mutex<MockDbState>>,
     fail_status_reads: &[usize],
 ) -> MockWebsocketClient {
-    with_db_support_inner(mock_ws, state, fail_status_reads)
+    with_db_support_inner(mock_ws, state, fail_status_reads, false)
+}
+
+/// Like `with_db_support`, but every `DB_JOB_SAVE` returns `saved_id=0`,
+/// exercising the save-failure branch of `db::save_job`.
+fn with_db_support_failing_job_save(
+    mock_ws: MockWebsocketClient,
+    state: &Arc<std::sync::Mutex<MockDbState>>,
+) -> MockWebsocketClient {
+    with_db_support_inner(mock_ws, state, &[], true)
 }
 
 fn with_db_support_inner(
     mut mock_ws: MockWebsocketClient,
     state: &Arc<std::sync::Mutex<MockDbState>>,
     fail_status_reads: &[usize],
+    fail_job_save: bool,
 ) -> MockWebsocketClient {
     let state_clone = state.clone();
     let fail_status_reads = fail_status_reads.to_vec();
@@ -97,30 +109,34 @@ fn with_db_support_inner(
                     let deleted = m.pop_bool();
 
                     let mut s = state_clone.lock().unwrap();
-                    let saved_id = if id > 0 { id } else { s.next_job_id };
-                    if id > 0 {
-                        s.next_job_id = std::cmp::max(s.next_job_id, id + 1);
+                    if fail_job_save {
+                        resp.push_ulong(0);
                     } else {
-                        s.next_job_id += 1;
-                    }
-                    let saved = job::Model {
-                        id: saved_id,
-                        job_id: if job_id > 0 { Some(job_id) } else { None },
-                        scheduler_id: if scheduler_id > 0 {
-                            Some(scheduler_id)
+                        let saved_id = if id > 0 { id } else { s.next_job_id };
+                        if id > 0 {
+                            s.next_job_id = std::cmp::max(s.next_job_id, id + 1);
                         } else {
-                            None
-                        },
-                        submitting,
-                        submitting_count,
-                        bundle_hash,
-                        working_directory,
-                        running,
-                        deleting,
-                        deleted,
-                    };
-                    s.jobs.insert(saved_id, saved.clone());
-                    resp.push_ulong(saved_id as u64);
+                            s.next_job_id += 1;
+                        }
+                        let saved = job::Model {
+                            id: saved_id,
+                            job_id: if job_id > 0 { Some(job_id) } else { None },
+                            scheduler_id: if scheduler_id > 0 {
+                                Some(scheduler_id)
+                            } else {
+                                None
+                            },
+                            submitting,
+                            submitting_count,
+                            bundle_hash,
+                            working_directory,
+                            running,
+                            deleting,
+                            deleted,
+                        };
+                        s.jobs.insert(saved_id, saved.clone());
+                        resp.push_ulong(saved_id as u64);
+                    }
                 }
                 id if id == DB_JOB_GET_BY_JOB_ID => {
                     let mut m = Message::from_data(msg.get_data().clone());
@@ -261,6 +277,55 @@ fn setup_cancel_test(
     state.lock().unwrap().jobs.insert(1, job.clone());
 
     (fixture, bundle_hash, state, working_dir)
+}
+
+#[derive(Clone, Default)]
+struct StatusLogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl StatusLogWriter {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn into_string(self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap_or_default()
+    }
+}
+
+impl<'a> MakeWriter<'a> for StatusLogWriter {
+    type Writer = StatusLogWriterGuard;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        StatusLogWriterGuard(self.0.clone())
+    }
+}
+
+struct StatusLogWriterGuard(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Write for StatusLogWriterGuard {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Run `f` with a thread-local tracing subscriber that captures ERROR-level
+/// events into a `String`.
+fn capture_error_logs<F: FnOnce()>(f: F) -> String {
+    let writer = StatusLogWriter::new();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(writer.clone())
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_max_level(tracing::Level::ERROR)
+        .finish();
+    tracing::subscriber::with_default(subscriber, f);
+    writer.into_string()
 }
 
 #[test_fork::test]
@@ -821,4 +886,58 @@ fn test_cancel_job_status_read_failure_after_cancel() {
         assert!(archive_path.exists());
     }
     inner();
+}
+
+#[test_fork::test]
+fn test_cancel_job_save_failure_after_cancel() {
+    let db_name = Uuid::new_v4().to_string();
+    let (fixture, bundle_hash, state, _working_dir) = setup_cancel_test(&db_name);
+
+    // Write cancel+status scripts: status returns complete=false, cancel returns True
+    let status_json = r#"{"status": [], "complete": false}"#;
+    fixture.write_job_cancel_check_status(
+        &bundle_hash,
+        4321,
+        1234,
+        "test_cluster",
+        status_json,
+        "True",
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let tx_clone = tx.clone();
+
+    // Make the post-cancel DB_JOB_SAVE return saved_id=0 so db::save_job
+    // fails, exercising the "Failed to save job after cancel" branch.
+    let mut mock_ws = with_db_support_failing_job_save(MockWebsocketClient::new(), &state);
+    mock_ws
+        .expect_queue_message()
+        .times(1)
+        .returning(move |_, data, _| {
+            let _ = tx_clone.send(data);
+        });
+
+    set_websocket_client(Arc::new(mock_ws));
+
+    let mut msg_raw = Message::new(CANCEL_JOB, Priority::Medium, SYSTEM_SOURCE);
+    msg_raw.push_uint(1234);
+    let msg = Message::from_data(msg_raw.get_data().clone());
+
+    let logs = capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            handle_job_cancel(msg);
+            // Wait for the queued completion message so the spawned cancel
+            // task (and its error log) has run to completion.
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        });
+    });
+
+    assert!(
+        logs.contains("Failed to save job 1234 after cancel"),
+        "expected post-cancel save-failure log, got: {logs}"
+    );
 }
