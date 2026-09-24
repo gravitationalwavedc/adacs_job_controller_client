@@ -139,7 +139,8 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
 fn download_with_retry(
     mut attempt: impl FnMut(u32) -> Result<Vec<u8>, Box<dyn std::error::Error>>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    for attempt_num in 1..=MAX_DOWNLOAD_RETRIES {
+    let mut attempt_num = 1;
+    loop {
         match attempt(attempt_num) {
             Ok(data) => {
                 debug!("Download complete: {} bytes", data.len());
@@ -152,6 +153,7 @@ fn download_with_retry(
                      Retrying in {delay}s..."
                 );
                 std::thread::sleep(Duration::from_secs(delay));
+                attempt_num += 1;
             }
             Err(e) => {
                 error!("Download failed after {MAX_DOWNLOAD_RETRIES} attempts: {e}");
@@ -161,7 +163,6 @@ fn download_with_retry(
             }
         }
     }
-    unreachable!()
 }
 
 /// Download file from URL with retry and exponential backoff.
