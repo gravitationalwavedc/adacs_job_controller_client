@@ -688,4 +688,21 @@ mod tests {
             &html[..html.len().min(200)]
         );
     }
+
+    #[test]
+    fn test_download_file_returns_error_when_connection_refused() {
+        // Bind a local listener to reserve a free port, then drop it so
+        // nothing accepts — connecting must fail immediately with
+        // ECONNREFUSED, exercising the network-error branch of download_file.
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+
+        let result = download_file(&format!("http://127.0.0.1:{port}/"));
+        assert!(
+            result.is_err(),
+            "download from a closed local port should error"
+        );
+    }
 }
