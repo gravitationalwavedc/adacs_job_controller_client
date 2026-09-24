@@ -5735,6 +5735,114 @@ fn test_task4_zero_byte_eof_race_peer_ping_clean_eof_wins() {
     } // end inner()
     inner();
 }
+
+/// A non-Close WebSocket control frame (Ping) arriving mid-transfer must be
+/// routed through `classify_incoming`'s `IncomingEvent::Ignored` arm and
+/// `handle_incoming_event`'s `LoopStep::Continue` arm — it must not be treated
+/// as a peer terminal event and must not abort the download. We park the
+/// supervisor before the first chunk send via the pre-chunk-send barrier,
+/// inject a Ping from the fixture peer, release the barrier, and assert the
+/// download still completes with `CleanEof`.
+#[test_fork::test]
+fn test_task4_peer_ping_mid_transfer_ignored_clean_eof() {
+    const CHUNK: u64 = 64 * 1024;
+    const TOTAL: u64 = 4 * CHUNK;
+
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_peer_ping_mid_transfer");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("ping_mid_transfer.bin");
+        let content = vec![0xAB; TOTAL as usize];
+        fs::write(&path, &content).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8016i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_pre_chunk_send_barrier_for_test(Some(barrier.clone()));
+
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let mut server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-task4-ping-mid".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("ping_mid_transfer.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        // Park the supervisor before the first chunk send (mid-transfer).
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the pre-chunk-send barrier");
+
+        // Inject a non-Close WebSocket control frame (Ping) mid-transfer.
+        server.send_peer_ping().await;
+
+        // Release the barrier; the transfer loop resumes and must route the
+        // Ping through handle_incoming_event's Ignored arm (Continue) rather
+        // than treating it as a peer terminal event.
+        barrier.release();
+
+        // Consume the FILE_DOWNLOAD_DETAILS message sent before the transfer.
+        let details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS")
+            .expect("No details");
+        assert_eq!(details.id, FILE_DOWNLOAD_DETAILS);
+
+        // The transfer must still complete with CleanEof.
+        let outcome = tokio::time::timeout(Duration::from_secs(5), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::CleanEof),
+            "a mid-transfer Ping must be ignored and the download must commit CleanEof, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the clean-EOF transfer"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
 /// drop the connection after receiving both chunks so the supervisor's
 /// biased select observes the dead connection instead of a clean EOF.
 #[test_fork::test]
