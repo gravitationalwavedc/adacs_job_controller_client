@@ -7,7 +7,7 @@ use crate::messaging::{
     DB_JOB_GET_BY_JOB_ID, DB_JOB_GET_RUNNING_JOBS, DB_JOB_SAVE,
 };
 use crate::websocket::get_websocket_client;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 fn parse_response(resp: &Message) -> Message {
     resp.clone_for_payload_reading()
@@ -20,6 +20,16 @@ fn pop_optional_id(resp: &mut Message) -> Option<i64> {
 
 fn pop_count(resp: &mut Message) -> usize {
     (resp.pop_uint() as usize).min(resp.remaining_len())
+}
+
+fn cap_status_count(len: usize) -> u32 {
+    u32::try_from(len).unwrap_or_else(|_| {
+        warn!(
+            "DB: delete_status_by_id_list - truncating {} ids to u32::MAX",
+            len
+        );
+        u32::MAX
+    })
 }
 
 fn parse_job(resp: &mut Message) -> job::Model {
@@ -178,7 +188,7 @@ pub async fn get_job_status_by_job_id(job_id: i64) -> Result<Vec<jobstatus::Mode
 
 pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     let mut msg = Message::new(DB_JOBSTATUS_DELETE_BY_ID_LIST, Priority::Medium, "database");
-    let count = u32::try_from(ids.len()).unwrap_or(u32::MAX);
+    let count = cap_status_count(ids.len());
     msg.push_uint(count);
     for id in ids.into_iter().take(count as usize) {
         msg.push_ulong(u64::try_from(id).unwrap_or(0));
@@ -742,6 +752,14 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(async { delete_status_by_id_list(vec![11]).await });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn cap_status_count_caps_overflow_to_u32_max() {
+        assert_eq!(cap_status_count(0), 0);
+        assert_eq!(cap_status_count(42), 42);
+        assert_eq!(cap_status_count(u32::MAX as usize), u32::MAX);
+        assert_eq!(cap_status_count(usize::MAX), u32::MAX);
     }
 
     #[test]
