@@ -15,6 +15,39 @@ use std::os::unix::io::{AsRawFd, IntoRawFd};
 use std::process;
 use tracing::{error, info, warn};
 
+#[cfg(test)]
+use parking_lot::Mutex;
+
+/// `fork` wrapper that honours the test-only override.
+fn fork_wrapper() -> libc::pid_t {
+    #[cfg(test)]
+    if let Some(f) = FORK_OVERRIDE.lock().as_ref() {
+        return f();
+    }
+    // SAFETY: libc::fork() is a raw syscall; returns -1 on error, 0 in child, PID in parent.
+    unsafe { libc::fork() }
+}
+
+// ─── Test-only fork override seam ───────────────────────────────────────────
+// `daemonize_with_log_redirect`'s two fork-failure branches (`fork #1 failed`
+// and `fork #2 failed`) are unreachable through normal operation. This seam lets
+// tests force `fork()` to return `-1`. Tests run serially (`--test-threads=1`),
+// so the global override cannot race across tests.
+
+#[cfg(test)]
+type ForkFn = Box<dyn Fn() -> libc::pid_t + Send>;
+
+#[cfg(test)]
+static FORK_OVERRIDE: Mutex<Option<ForkFn>> = Mutex::new(None);
+
+/// Test-only: install an override for `fork`, returning the previously-installed
+/// override (if any). Pass `None` to clear it.
+#[cfg(test)]
+pub fn set_fork_override(f: Option<ForkFn>) -> Option<ForkFn> {
+    let mut guard = FORK_OVERRIDE.lock();
+    std::mem::replace(&mut *guard, f)
+}
+
 /// Perform UNIX double-fork daemonization with stdout/stderr redirection to log files
 ///
 /// This is the full daemonization that matches C++ exactly, including:
@@ -34,8 +67,7 @@ pub fn daemonize_with_log_redirect(
     log_dir: &std::path::Path,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // First fork
-    // SAFETY: libc::fork() is a raw syscall; returns -1 on error, 0 in child, PID in parent.
-    match unsafe { libc::fork() } {
+    match fork_wrapper() {
         -1 => {
             error!("fork #1 failed");
             return Err("fork #1 failed".into());
@@ -74,8 +106,7 @@ pub fn daemonize_with_log_redirect(
     }
 
     // Second fork
-    // SAFETY: libc::fork() is a raw syscall; returns -1 on error, 0 in child, PID in parent.
-    match unsafe { libc::fork() } {
+    match fork_wrapper() {
         -1 => {
             error!("fork #2 failed");
             return Err("fork #2 failed".into());
@@ -176,8 +207,65 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::Arc;
     use tempfile::TempDir;
     use test_fork::test;
+
+    /// RAII guard that installs a `fork` override for the duration of a test and
+    /// restores the previous override on drop.
+    struct ForkOverrideGuard {
+        prev: Option<ForkFn>,
+    }
+
+    impl ForkOverrideGuard {
+        fn install(f: Option<ForkFn>) -> Self {
+            let prev = set_fork_override(f);
+            Self { prev }
+        }
+    }
+
+    impl Drop for ForkOverrideGuard {
+        fn drop(&mut self) {
+            set_fork_override(self.prev.take());
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_daemonize_with_log_redirect_fork1_failure() {
+        let _guard = ForkOverrideGuard::install(Some(Box::new(|| -1)));
+        let result = daemonize_with_log_redirect(std::path::Path::new("/tmp"));
+        assert_eq!(result.unwrap_err().to_string(), "fork #1 failed");
+    }
+
+    #[test]
+    #[serial]
+    fn test_daemonize_with_log_redirect_fork2_failure() {
+        // First fork returns 0 (first child continues), second fork returns -1.
+        let calls = Arc::new(AtomicI32::new(0));
+        let calls2 = Arc::clone(&calls);
+        let _guard = ForkOverrideGuard::install(Some(Box::new(move || {
+            if calls2.fetch_add(1, Ordering::SeqCst) == 0 {
+                0
+            } else {
+                -1
+            }
+        })));
+
+        // The first child path calls chdir("/") and umask(); save and restore
+        // them so this non-forking test does not perturb the shared process.
+        let orig_dir = std::env::current_dir().unwrap();
+        let orig_umask = unsafe { libc::umask(0) };
+        unsafe { libc::umask(orig_umask) };
+
+        let result = daemonize_with_log_redirect(std::path::Path::new("/tmp"));
+        assert_eq!(result.unwrap_err().to_string(), "fork #2 failed");
+
+        std::env::set_current_dir(&orig_dir).unwrap();
+        unsafe { libc::umask(orig_umask) };
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
 
     #[test]
     #[serial]
