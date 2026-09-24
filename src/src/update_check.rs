@@ -419,6 +419,23 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_release_non_array_assets_errors() {
+        for assets in [json!({}), json!(null)] {
+            let resp = json!({
+                "tag_name": "v2.0.0",
+                "assets": assets
+            });
+            let result = parse_release_response(&resp, "1.0.0");
+            assert!(result.is_err(), "non-array assets should fail: {result:?}");
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("No download URL"),
+                "unexpected error message: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_release_missing_download_url() {
         let resp = json!({
             "tag_name": "v2.0.0",
