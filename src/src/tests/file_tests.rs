@@ -477,6 +477,79 @@ fn test_get_file_list_job_directory_not_exist() {
 }
 
 #[test_fork::test]
+fn test_get_file_list_working_directory_not_exist() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test4b");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture
+            .get_temp_path()
+            .join("missing_working_dir")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let state = create_mock_state();
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let test_uuid = "test-uuid-4b".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let msg = Message::from_data(data);
+                let _ = tx_clone.send(msg);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1236i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let mut msg_raw = Message::new(FILE_LIST, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(".");
+        msg_raw.push_bool(false);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_list(msg);
+
+        let response = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("Timeout")
+            .expect("No response");
+        assert_eq!(response.id, FILE_LIST_ERROR);
+        let mut response_msg = response;
+        assert_eq!(response_msg.pop_string(), test_uuid);
+        assert_eq!(
+            response_msg.pop_string(),
+            "Path to list files does not exist"
+        );
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
 fn test_get_file_list_job_directory_is_a_file() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
