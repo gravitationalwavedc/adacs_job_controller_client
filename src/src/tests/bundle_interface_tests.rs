@@ -1145,6 +1145,54 @@ fn test_json_loads_returns_null_when_set_item_fails() {
     inner();
 }
 
+/// DIRECT UNIT TEST — covers the `PyTuple_SetItem` failure branch in
+/// `BundleInterface::json_dumps`. Forces the size-1 args tuple's
+/// `PyTuple_SetItem` to fail via the test-only `py_tuple_set_item` override
+/// seam; `json_dumps` must log and return an error after releasing its
+/// references.
+#[test]
+fn test_json_dumps_returns_err_when_set_item_fails() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _override = TupleSetItemOverrideGuard::install(fail_size_one_tuple);
+        let logs = capture_logs(|| {
+            let _guard = PYTHON_MUTEX.lock();
+            unsafe {
+                let _scope = bundle
+                    .thread_scope()
+                    .expect("thread scope should be created");
+                let obj = PyUnicode_FromString(c"{}".as_ptr());
+                assert!(!obj.is_null(), "should create a python string");
+                let result = bundle.json_dumps(obj);
+                Py_DecRef(obj);
+                assert!(
+                    result.is_err(),
+                    "json_dumps should return Err when PyTuple_SetItem fails"
+                );
+            }
+        });
+
+        assert!(
+            logs.contains("Error setting object in args tuple"),
+            "expected 'Error setting object in args tuple' marker in logs, got:\n{logs}"
+        );
+    }
+    inner();
+}
+
 /// A non-string `PyObject` (e.g. an int) makes `PyUnicode_AsUTF8` fail and set
 /// a `TypeError`. `to_string_py` must clear that stale error so it can't poison
 /// later `PyErr_Occurred` checks on the same sub-interpreter (e.g. in
