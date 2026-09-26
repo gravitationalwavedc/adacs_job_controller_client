@@ -1864,6 +1864,89 @@ fn test_get_file_download_job_success() {
     inner();
 }
 
+/// Downloading a zero-byte file must complete with `FILE_DOWNLOAD_DETAILS`
+/// (`file_size == 0`), emit no `FILE_CHUNK`, and release the connection
+/// cleanly.
+#[test_fork::test]
+fn test_get_file_download_empty_file_success() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_empty_download");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        fs::write(fixture.get_temp_path().join("empty_download.txt"), b"").unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1241i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let server = WebsocketServerFixture::new().await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-empty-download".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("empty_download.txt");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        let mut server = server;
+        // Server should receive FILE_DOWNLOAD_DETAILS with file_size == 0.
+        let details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for details")
+            .expect("No details");
+        assert_eq!(details.id, FILE_DOWNLOAD_DETAILS);
+        let mut details_msg = details;
+        assert_eq!(details_msg.pop_ulong(), 0);
+
+        // No FILE_CHUNK should be produced for an empty file: the short
+        // timeout must elapse with no message arriving.
+        let chunk = tokio::time::timeout(Duration::from_millis(500), server.msg_rx.recv()).await;
+        assert!(
+            chunk.is_err(),
+            "empty file must not emit a FILE_CHUNK (timeout should elapse with no message)"
+        );
+
+        // Connection must be released cleanly with a client Close.
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after an empty-file download"
+        );
+        assert_eq!(
+            observer.live_connections(),
+            0,
+            "live connection count must return to baseline after empty-file download"
+        );
+        assert!(
+            observer.termination() == ConnectionTermination::ClientClose,
+            "empty-file download must record a ClientClose termination, got {:?}",
+            observer.termination()
+        );
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+
 #[test_fork::test]
 fn test_get_file_download_no_job_success() {
     #[tokio::main(flavor = "current_thread")]
