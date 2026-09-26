@@ -396,6 +396,114 @@ fn test_delete_job_save_as_deleted_failure_logs_error() {
 }
 
 #[test_fork::test]
+fn test_delete_job_save_after_failed_delete_failure_logs_error() {
+    let db_name = Uuid::new_v4().to_string();
+    let (fixture, bundle_hash, state, _working_dir) = setup_delete_test(&db_name);
+
+    // Write a delete script that returns False (failure)
+    fixture.write_job_delete(&bundle_hash, "False");
+
+    // Custom mock: the first DB_JOB_SAVE (persisting deleting = true) succeeds,
+    // while the follow-up DB_JOB_SAVE (after the failed bundle delete) returns
+    // saved_id = 0 to trigger the error-logging branch in handle_job_delete.
+    let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
+    mock_ws.expect_is_server_ready().returning(|| true);
+    let state_clone = state.clone();
+    let mut save_count = 0;
+    mock_ws
+        .expect_send_db_request()
+        .times(..)
+        .returning(move |msg| {
+            let mut resp = Message::new(DB_RESPONSE, Priority::Medium, "database");
+            match msg.id {
+                DB_JOB_SAVE => {
+                    let mut m = Message::from_data(msg.get_data().clone());
+                    let id = m.pop_ulong() as i64;
+                    let job_id = m.pop_ulong() as i64;
+                    let scheduler_id = m.pop_ulong() as i64;
+                    let submitting = m.pop_bool();
+                    let submitting_count = m.pop_uint() as i32;
+                    let bundle_hash = m.pop_string();
+                    let working_directory = m.pop_string();
+                    let running = m.pop_bool();
+                    let deleting = m.pop_bool();
+                    let deleted = m.pop_bool();
+
+                    let mut s = state_clone.lock().unwrap();
+                    let saved_id = if save_count == 0 { id } else { 0 };
+                    save_count += 1;
+                    let saved = job::Model {
+                        id: saved_id,
+                        job_id: if job_id > 0 { Some(job_id) } else { None },
+                        scheduler_id: if scheduler_id > 0 {
+                            Some(scheduler_id)
+                        } else {
+                            None
+                        },
+                        submitting,
+                        submitting_count,
+                        bundle_hash,
+                        working_directory,
+                        running,
+                        deleting,
+                        deleted,
+                    };
+                    s.jobs.insert(saved_id, saved.clone());
+                    resp.push_ulong(saved_id as u64);
+                }
+                id if id == DB_JOB_GET_BY_JOB_ID => {
+                    let mut m = Message::from_data(msg.get_data().clone());
+                    let job_id = m.pop_ulong() as i64;
+                    let s = state_clone.lock().unwrap();
+                    let found = s.jobs.values().find(|j| j.job_id == Some(job_id));
+                    if let Some(job) = found {
+                        resp.push_uint(1);
+                        resp.push_ulong(job.id as u64);
+                        resp.push_ulong(job.job_id.unwrap_or(0) as u64);
+                        resp.push_ulong(job.scheduler_id.unwrap_or(0) as u64);
+                        resp.push_bool(job.submitting);
+                        resp.push_uint(job.submitting_count as u32);
+                        resp.push_string(&job.bundle_hash);
+                        resp.push_string(&job.working_directory);
+                        resp.push_bool(job.running);
+                        resp.push_bool(job.deleting);
+                        resp.push_bool(job.deleted);
+                    } else {
+                        resp.push_uint(0);
+                    }
+                }
+                _ => {
+                    resp.push_uint(0);
+                }
+            }
+            Box::pin(async move { Ok(resp) })
+        });
+    mock_ws.expect_queue_message().times(0);
+    set_websocket_client(Arc::new(mock_ws));
+
+    let mut msg_raw = Message::new(DELETE_JOB, Priority::Medium, SYSTEM_SOURCE);
+    msg_raw.push_uint(1234);
+    let msg = Message::from_data(msg_raw.get_data().clone());
+
+    let logs = crate::tests::job_tests::capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            handle_job_delete(msg);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+    });
+
+    assert!(
+        logs.contains("Failed to save job 1234 after failed delete"),
+        "expected after-failed-delete save failure in logs, got:\n{logs}"
+    );
+}
+
+#[test_fork::test]
 fn test_delete_job_job_running() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
