@@ -186,6 +186,21 @@ pub(crate) fn set_pre_chunk_send_barrier_for_test(barrier: Option<Arc<LifecycleB
     set_barrier_for_test(&TEST_PRE_CHUNK_SEND_BARRIER, barrier);
 }
 
+/// Test-only seam that parks the supervisor immediately before the
+/// `SERVER_READY` acknowledgement send in [`handle_file_upload_internal`].
+/// Lets a test reset the peer transport so the ack send deterministically
+/// fails, exercising the upload branch that queues a `FILE_UPLOAD_ERROR` on
+/// the primary WebSocket and returns without creating a partial file. The seam
+/// is a no-op when no barrier is installed.
+#[cfg(test)]
+static TEST_PRE_SERVER_READY_ACK_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_pre_server_ready_ack_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    set_barrier_for_test(&TEST_PRE_SERVER_READY_ACK_BARRIER, barrier);
+}
+
 /// Test-only seam that exposes the supervisor's authoritative transfer result
 /// to integration tests. The supervisor sends the selected `TransferOutcome`
 /// at the start of unified cleanup — covering both transfer-loop results and
@@ -1599,6 +1614,11 @@ fn handle_file_upload_internal(
             return;
         };
 
+        // Test seam: park before the SERVER_READY ack send so a test can reset
+        // the peer transport and make the ack send deterministically fail.
+        // No-op when no barrier is installed.
+        #[cfg(test)]
+        arrive_barrier(&TEST_PRE_SERVER_READY_ACK_BARRIER).await;
         if !send_server_ready_ack(&mut ws_sender, &uuid).await {
             return;
         }

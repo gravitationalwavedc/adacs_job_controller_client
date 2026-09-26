@@ -6,8 +6,9 @@ use crate::files::{
     set_cleanup_failure_observer_for_test, set_final_send_barrier_for_test,
     set_force_upload_write_failure_for_test, set_graceful_close_timeout_for_test,
     set_pre_chunk_send_barrier_for_test, set_pre_close_send_barrier_for_test,
-    set_pre_details_send_barrier_for_test, set_server_ready_timeout_for_test,
-    set_transfer_outcome_observer_for_test, set_zero_byte_eof_barrier_for_test, TransferOutcome,
+    set_pre_details_send_barrier_for_test, set_pre_server_ready_ack_barrier_for_test,
+    set_server_ready_timeout_for_test, set_transfer_outcome_observer_for_test,
+    set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
     Message, Priority, DB_JOBSTATUS_SAVE, DB_JOB_GET_BY_ID, DB_JOB_GET_BY_JOB_ID, DB_JOB_SAVE,
@@ -2159,6 +2160,110 @@ fn test_file_upload_job_based_success() {
         let final_path = Path::new(&working_dir).join(target_path);
         assert!(final_path.exists());
         assert_eq!(fs::read(final_path).unwrap(), file_content);
+    } // end inner()
+    inner();
+}
+
+/// A `SERVER_READY` ack-send failure must queue a `FILE_UPLOAD_ERROR` on the
+/// primary WebSocket and leave no partial file behind. We park the upload
+/// supervisor just before the ack send via the pre-server-ready-ack barrier,
+/// reset the fixture peer transport (`SO_LINGER=0` RST) so the ack send
+/// deterministically fails, release the barrier, and assert the client is
+/// notified and no file is created.
+#[test_fork::test]
+fn test_file_upload_server_ready_ack_send_failure_queues_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_upload_ack_send_failure");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+
+        let state = create_mock_state();
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+        let test_uuid = "test-uuid-upload-ack-fail".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let _ = tx_clone.send(data);
+            });
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1243i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_pre_server_ready_ack_barrier_for_test(Some(barrier.clone()));
+
+        let server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let file_content = b"uploaded content";
+        let target_path = "subdir/uploaded.txt";
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(file_content.len() as u64);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        handle_file_upload(msg);
+
+        // Park the supervisor before the SERVER_READY ack send, then reset the
+        // peer transport so the ack send deterministically fails.
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the pre-server-ready-ack barrier");
+        server.reset_connection().await;
+        // Give the client's reactor time to observe the transport reset so the
+        // ack send fails rather than being buffered.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        barrier.release();
+
+        // The client must be notified via a queued FILE_UPLOAD_ERROR on the
+        // primary WebSocket.
+        let data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("expected a queued FILE_UPLOAD_ERROR")
+            .expect("queue channel closed");
+        let mut resp = Message::from_data(data);
+        assert_eq!(resp.id, FILE_UPLOAD_ERROR);
+        assert_eq!(resp.source, test_uuid);
+        assert_eq!(resp.pop_string(), test_uuid);
+        let error = resp.pop_string();
+        assert!(
+            error.starts_with("Failed to send SERVER_READY ack:"),
+            "unexpected error payload: {error}"
+        );
+
+        // No partial file may be created.
+        let final_path = Path::new(&working_dir).join(target_path);
+        assert!(
+            !final_path.exists(),
+            "no partial file should be created when the ack send fails"
+        );
+
+        set_pre_server_ready_ack_barrier_for_test(None);
     } // end inner()
     inner();
 }
@@ -4329,6 +4434,7 @@ fn reset_download_test_seams() {
     set_pre_close_send_barrier_for_test(None);
     set_pre_details_send_barrier_for_test(None);
     set_pre_chunk_send_barrier_for_test(None);
+    set_pre_server_ready_ack_barrier_for_test(None);
     set_transfer_outcome_observer_for_test(None);
     set_cleanup_failure_observer_for_test(None);
 }
