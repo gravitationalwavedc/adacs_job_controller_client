@@ -975,3 +975,59 @@ fn test_get_job_by_id_returns_null_when_error_object_missing_for_non_integer_job
     }
     inner();
 }
+
+/// DIRECT UNIT TEST for the `set_job_id_in_dict` failure branch in
+/// `create_or_update_job` (bundle_db.rs:376-385). Passing a non-dict first
+/// argument (a Python int) makes `PyDict_SetItemString` fail after a
+/// successful DB round-trip, so the callback must return NULL. Every other
+/// `create_or_update_job` test passes a real dict, so this branch was
+/// previously uncovered.
+#[test]
+fn test_create_or_update_job_returns_null_when_first_arg_is_not_a_dict() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        BundleManager::initialize(path_root.clone());
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(1).returning(|_msg| {
+            let mut resp = make_db_response();
+            resp.push_ulong(4321); // returned job_id
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock_ws));
+
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and the ThreadScope acquires the GIL for
+        // the bundle's sub-interpreter, so the Python C-API calls below are valid.
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _bundle_guard = ThreadBundleGuard::new(bundle_hash.clone());
+            let not_a_dict = PyLong_FromUnsignedLongLong(1234);
+            assert!(!not_a_dict.is_null(), "int object should be created");
+            let args = PyTuple_New(1);
+            assert_eq!(
+                PyTuple_SetItem(args, 0, not_a_dict),
+                0,
+                "tuple set should succeed"
+            );
+            let result = create_or_update_job(ptr::null_mut(), args);
+            Py_DecRef(args);
+            assert!(
+                result.is_null(),
+                "non-dict first arg should hit the set_job_id_in_dict failure branch"
+            );
+        }
+    }
+    inner();
+}
