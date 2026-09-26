@@ -71,6 +71,7 @@ pub struct TungsteniteWebsocketClient {
     server_ready: AtomicBool,
     db_request_counter: AtomicU32,
     db_request_promises: Arc<RwLock<HashMap<u32, oneshot::Sender<Message>>>>,
+    db_request_timeout_ms: AtomicU64,
     pub(crate) queue: PriorityQueue,
     data_ready: Arc<Notify>,
     ping_timestamp: AtomicI64,
@@ -94,6 +95,7 @@ impl TungsteniteWebsocketClient {
             server_ready: AtomicBool::new(false),
             db_request_counter: AtomicU32::new(0),
             db_request_promises: Arc::new(RwLock::new(HashMap::new())),
+            db_request_timeout_ms: AtomicU64::new(30_000),
             queue,
             data_ready: Arc::new(Notify::new()),
             ping_timestamp: AtomicI64::new(0),
@@ -879,21 +881,43 @@ impl WebsocketClient for TungsteniteWebsocketClient {
         }
         debug!("send_db_request: message queued, waiting for response...");
 
+        let promises = self.db_request_promises.clone();
+        let timeout_duration =
+            Duration::from_millis(self.db_request_timeout_ms.load(Ordering::SeqCst));
+
         Box::pin(async move {
             trace!(
                 "send_db_request: awaiting response for request_id={}",
                 request_id
             );
             let wait_start = std::time::Instant::now();
-            let response = rx.await.map_err(|e| {
-                error!(
-                    "send_db_request: oneshot channel error after {:?} for request_id={}: {}",
-                    wait_start.elapsed(),
-                    request_id,
-                    e
-                );
-                Box::new(e) as Box<dyn Error + Send + Sync>
-            })?;
+            let response = timeout(timeout_duration, rx)
+                .await
+                .map_err(|_| {
+                    // The server never responded. Remove the just-inserted
+                    // promise so timed-out requests cannot accumulate in
+                    // db_request_promises until the next disconnect.
+                    let removed = promises.write().remove(&request_id);
+                    error!(
+                        "send_db_request: request #{} timed out after {}s (promise removed: {})",
+                        request_id,
+                        timeout_duration.as_secs(),
+                        removed.is_some()
+                    );
+                    let err: Box<dyn Error + Send + Sync> =
+                        format!("DB request timed out after {}s", timeout_duration.as_secs())
+                            .into();
+                    err
+                })?
+                .map_err(|e| {
+                    error!(
+                        "send_db_request: oneshot channel error after {:?} for request_id={}: {}",
+                        wait_start.elapsed(),
+                        request_id,
+                        e
+                    );
+                    Box::new(e) as Box<dyn Error + Send + Sync>
+                })?;
             debug!(
                 "send_db_request: received response after {:?} for request_id={}",
                 wait_start.elapsed(),
@@ -1347,6 +1371,41 @@ mod tests {
             result.err().unwrap().to_string(),
             "channel closed",
             "dropped oneshot sender should surface as a channel error"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_send_db_request_removes_promise_on_timeout() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+        client.db_request_timeout_ms.store(50, Ordering::SeqCst);
+
+        let mut msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Highest, "database");
+        msg.push_ulong(42);
+
+        let response_fut = client.send_db_request(msg);
+
+        assert_eq!(
+            client.db_request_promises.read().len(),
+            1,
+            "send_db_request should register a pending promise"
+        );
+
+        let result = tokio::time::timeout(Duration::from_secs(2), response_fut)
+            .await
+            .expect("timed-out DB request must resolve rather than hang");
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "DB request timed out after 0s",
+            "timed-out request should surface a timeout error"
+        );
+        assert!(
+            client.db_request_promises.read().is_empty(),
+            "timed-out request's promise must be removed from the map"
         );
     }
 
