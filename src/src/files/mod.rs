@@ -274,6 +274,35 @@ fn force_upload_write_failure() -> bool {
     false
 }
 
+/// Test-only seam that forces the file read in [`run_reading_phase`] to
+/// fail, exercising the `"file read failed"` primary-error branch and its
+/// `FILE_DOWNLOAD_ERROR` with `"Exception reading file"`. The seam is a
+/// no-op in production.
+#[cfg(test)]
+static TEST_FORCE_DOWNLOAD_READ_FAILURE: LazyLock<Mutex<bool>> =
+    LazyLock::new(|| Mutex::new(false));
+
+#[cfg(test)]
+pub(crate) fn set_force_download_read_failure_for_test(force: bool) {
+    let mut guard = TEST_FORCE_DOWNLOAD_READ_FAILURE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = force;
+}
+
+#[cfg(test)]
+fn force_download_read_failure() -> bool {
+    let guard = TEST_FORCE_DOWNLOAD_READ_FAILURE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard
+}
+
+#[cfg(not(test))]
+fn force_download_read_failure() -> bool {
+    false
+}
+
 type WsSender = futures_util::stream::SplitSink<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     WsMessage,
@@ -1015,6 +1044,18 @@ async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferSt
             state,
         )
         .await;
+    }
+
+    if force_download_read_failure() {
+        warn!("Error reading file: forced read failure for test");
+        send_file_error(
+            ctx.ws_sender,
+            ctx.uuid,
+            "Exception reading file",
+            FILE_DOWNLOAD_ERROR,
+        )
+        .await;
+        return LoopStep::Finish(state.primary("file read failed"));
     }
 
     let mut read_fut = Box::pin(ctx.file.read(ctx.buffer));

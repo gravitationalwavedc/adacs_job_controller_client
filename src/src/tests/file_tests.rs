@@ -4,10 +4,11 @@ use crate::db::job;
 use crate::files::{
     handle_file_download, handle_file_list, handle_file_upload,
     set_cleanup_failure_observer_for_test, set_final_send_barrier_for_test,
-    set_force_upload_write_failure_for_test, set_graceful_close_timeout_for_test,
-    set_pre_chunk_send_barrier_for_test, set_pre_close_send_barrier_for_test,
-    set_pre_details_send_barrier_for_test, set_server_ready_timeout_for_test,
-    set_transfer_outcome_observer_for_test, set_zero_byte_eof_barrier_for_test, TransferOutcome,
+    set_force_download_read_failure_for_test, set_force_upload_write_failure_for_test,
+    set_graceful_close_timeout_for_test, set_pre_chunk_send_barrier_for_test,
+    set_pre_close_send_barrier_for_test, set_pre_details_send_barrier_for_test,
+    set_server_ready_timeout_for_test, set_transfer_outcome_observer_for_test,
+    set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
     Message, Priority, DB_JOBSTATUS_SAVE, DB_JOB_GET_BY_ID, DB_JOB_GET_BY_JOB_ID, DB_JOB_SAVE,
@@ -4331,6 +4332,7 @@ fn reset_download_test_seams() {
     set_pre_chunk_send_barrier_for_test(None);
     set_transfer_outcome_observer_for_test(None);
     set_cleanup_failure_observer_for_test(None);
+    set_force_download_read_failure_for_test(false);
 }
 
 /// Wait for the lifecycle observer to reach `target` released connections or
@@ -5237,6 +5239,107 @@ fn test_task4_truncated_download_selects_size_mismatch_error() {
         assert!(
             wait_for_released(&observer, 1, Duration::from_secs(2)).await,
             "supervisor must release the connection after the size-mismatch error"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+
+/// A file-read error during download must select the `"file read failed"`
+/// primary error and report `"Exception reading file"` over the wire. We arm
+/// the `force_download_read_failure` test seam so the first file read in
+/// `run_reading_phase` fails, and assert the authoritative result is
+/// `PrimaryError("file read failed")` and the server receives a
+/// `FILE_DOWNLOAD_ERROR` with `"Exception reading file"`.
+#[test_fork::test]
+fn test_task4_download_read_failure_selects_primary_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_download_read_failure");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("read_fail.bin");
+        fs::write(&path, vec![0xAA; 64 * 1024]).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8040i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let mut server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        // Force the file read in run_reading_phase to fail.
+        set_force_download_read_failure_for_test(true);
+
+        let test_uuid = "test-uuid-task4-read-fail".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("read_fail.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        // Consume the FILE_DOWNLOAD_DETAILS message sent before the transfer.
+        let details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS")
+            .expect("No details");
+        assert_eq!(details.id, FILE_DOWNLOAD_DETAILS);
+
+        // The server must receive the read-failure FILE_DOWNLOAD_ERROR.
+        let error_msg = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_ERROR")
+            .expect("No error message");
+        assert_eq!(error_msg.id, FILE_DOWNLOAD_ERROR);
+        let mut error_msg = error_msg;
+        let error_text = error_msg.pop_string();
+        assert_eq!(error_text, "Exception reading file");
+        assert_eq!(error_msg.source, test_uuid);
+
+        // The authoritative result must be the read-failure primary error.
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::PrimaryError(ref m) if m == "file read failed"),
+            "file-read failure must select the primary error, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the file-read error"
         );
         assert_eq!(observer.live_connections(), 0);
         set_transfer_outcome_observer_for_test(None);
