@@ -229,6 +229,20 @@ pub(crate) fn set_file_ws_sndbuf_for_test(bytes: Option<usize>) {
         .unwrap_or_else(PoisonError::into_inner) = bytes;
 }
 
+/// Test-only seam that parks the supervisor immediately before arming a file
+/// read in [`run_reading_phase`]. Lets a test inject a peer terminal event
+/// while the supervisor is parked, so the `incoming` arm of the read-phase
+/// `select!` deterministically wins over the file read. The seam is a no-op
+/// when no barrier is installed.
+#[cfg(test)]
+static TEST_PRE_READ_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_pre_read_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    set_barrier_for_test(&TEST_PRE_READ_BARRIER, barrier);
+}
+
 /// Test-only seam that exposes the supervisor's authoritative transfer result
 /// to integration tests. The supervisor sends the selected `TransferOutcome`
 /// at the start of unified cleanup — covering both transfer-loop results and
@@ -1059,6 +1073,13 @@ async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferSt
         )
         .await;
     }
+
+    // Test seam: arrive-and-wait on the pre-read barrier if installed, so a
+    // test can inject a peer terminal event before the file read is armed and
+    // the `incoming` arm of the select deterministically wins. The seam is a
+    // no-op when no barrier is set.
+    #[cfg(test)]
+    arrive_barrier(&TEST_PRE_READ_BARRIER).await;
 
     let mut read_fut = Box::pin(ctx.file.read(ctx.buffer));
     tokio::select! {

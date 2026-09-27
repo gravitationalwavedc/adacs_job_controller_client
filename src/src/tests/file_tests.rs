@@ -7,8 +7,8 @@ use crate::files::{
     set_final_send_barrier_for_test, set_force_upload_write_failure_for_test,
     set_graceful_close_timeout_for_test, set_pre_chunk_send_barrier_for_test,
     set_pre_close_send_barrier_for_test, set_pre_details_send_barrier_for_test,
-    set_server_ready_timeout_for_test, set_transfer_outcome_observer_for_test,
-    set_zero_byte_eof_barrier_for_test, TransferOutcome,
+    set_pre_read_barrier_for_test, set_server_ready_timeout_for_test,
+    set_transfer_outcome_observer_for_test, set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
     Message, Priority, DB_JOBSTATUS_SAVE, DB_JOB_GET_BY_ID, DB_JOB_GET_BY_JOB_ID, DB_JOB_SAVE,
@@ -4536,6 +4536,7 @@ fn reset_download_test_seams() {
     set_pre_close_send_barrier_for_test(None);
     set_pre_details_send_barrier_for_test(None);
     set_pre_chunk_send_barrier_for_test(None);
+    set_pre_read_barrier_for_test(None);
     set_transfer_outcome_observer_for_test(None);
     set_cleanup_failure_observer_for_test(None);
     set_file_ws_sndbuf_for_test(None);
@@ -6483,6 +6484,113 @@ fn test_task4_peer_ping_mid_transfer_ignored_clean_eof() {
         assert!(
             wait_for_released(&observer, 1, Duration::from_secs(2)).await,
             "supervisor must release the connection after the clean-EOF transfer"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+/// A peer terminal event arriving during the file-read phase must win over the
+/// file read and terminate the download as `PeerTerminal`, not `CleanEof`.
+/// We install the pre-read barrier, inject a genuine WebSocket Close while the
+/// supervisor is parked before arming the file read, then release the barrier
+/// and assert the authoritative result was a peer terminal event and the
+/// connection still releases.
+#[test_fork::test]
+fn test_task4_pre_read_race_peer_close_wins() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_pre_read_race");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("pre_read_race.bin");
+        // Single 32 KB chunk — a file read is armed immediately after the
+        // details send, so the pre-read barrier parks the supervisor before
+        // that read and the injected Close wins the biased select.
+        let content = vec![0xAB; 32 * 1024];
+        fs::write(&path, &content).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8014i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_pre_read_barrier_for_test(Some(barrier.clone()));
+
+        // Test-only authoritative-result observer: the race assertion must
+        // verify the supervisor selected the peer terminal event, not CleanEof.
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-task4-pre-read-race".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("pre_read_race.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        let mut server = server;
+        let _details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS");
+
+        // Wait for the supervisor to reach the pre-read barrier.
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the pre-read barrier");
+
+        // Inject a genuine WebSocket Close frame while the supervisor is
+        // parked before arming the file read.
+        server.send_peer_close().await;
+
+        // Release the barrier so the supervisor arms the read and the biased
+        // select observes the queued peer Close.
+        barrier.release();
+
+        // The authoritative result must be the peer terminal event, not
+        // CleanEof.
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::PeerTerminal(_)),
+            "peer Close during the read phase must win over CleanEof, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the pre-read race resolves to peer Close"
         );
         assert_eq!(observer.live_connections(), 0);
         set_transfer_outcome_observer_for_test(None);
