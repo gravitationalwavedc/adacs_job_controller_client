@@ -148,50 +148,6 @@ impl Message {
         value
     }
 
-    pub fn push_byte(&mut self, value: i8) {
-        self.data.write_i8(value).unwrap();
-    }
-
-    pub fn pop_byte(&mut self) -> i8 {
-        if self.index + 1 > self.data.len() {
-            warn!("pop_byte: buffer underflow at index {}", self.index);
-            return 0;
-        }
-        let value = self.data[self.index].cast_signed();
-        self.index += 1;
-        value
-    }
-
-    pub fn push_ushort(&mut self, value: u16) {
-        self.data.write_u16::<LittleEndian>(value).unwrap();
-    }
-
-    pub fn pop_ushort(&mut self) -> u16 {
-        if self.index + 2 > self.data.len() {
-            warn!("pop_ushort: buffer underflow at index {}", self.index);
-            return 0;
-        }
-        let mut rdr = Cursor::new(&self.data[self.index..]);
-        let value = rdr.read_u16::<LittleEndian>().unwrap();
-        self.index += 2;
-        value
-    }
-
-    pub fn push_short(&mut self, value: i16) {
-        self.data.write_i16::<LittleEndian>(value).unwrap();
-    }
-
-    pub fn pop_short(&mut self) -> i16 {
-        if self.index + 2 > self.data.len() {
-            warn!("pop_short: buffer underflow at index {}", self.index);
-            return 0;
-        }
-        let mut rdr = Cursor::new(&self.data[self.index..]);
-        let value = rdr.read_i16::<LittleEndian>().unwrap();
-        self.index += 2;
-        value
-    }
-
     pub fn push_uint(&mut self, value: u32) {
         trace!("Message: pushing uint value={}", value);
         self.data.write_u32::<LittleEndian>(value).unwrap();
@@ -246,36 +202,6 @@ impl Message {
             value,
             self.index - 8
         );
-        value
-    }
-
-    pub fn push_long(&mut self, value: i64) {
-        self.data.write_i64::<LittleEndian>(value).unwrap();
-    }
-
-    pub fn pop_long(&mut self) -> i64 {
-        if self.index + 8 > self.data.len() {
-            warn!("pop_long: buffer underflow at index {}", self.index);
-            return 0;
-        }
-        let mut rdr = Cursor::new(&self.data[self.index..]);
-        let value = rdr.read_i64::<LittleEndian>().unwrap();
-        self.index += 8;
-        value
-    }
-
-    pub fn push_float(&mut self, value: f32) {
-        self.data.write_f32::<LittleEndian>(value).unwrap();
-    }
-
-    pub fn pop_float(&mut self) -> f32 {
-        if self.index + 4 > self.data.len() {
-            warn!("pop_float: buffer underflow at index {}", self.index);
-            return 0.0;
-        }
-        let mut rdr = Cursor::new(&self.data[self.index..]);
-        let value = rdr.read_f32::<LittleEndian>().unwrap();
-        self.index += 4;
         value
     }
 
@@ -592,63 +518,6 @@ mod tests {
     }
 
     #[test]
-    fn test_primitive_byte() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_byte(-128);
-        msg.push_byte(0);
-        msg.push_byte(127);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert_eq!(read_msg.pop_byte(), -128);
-        assert_eq!(read_msg.pop_byte(), 0);
-        assert_eq!(read_msg.pop_byte(), 127);
-    }
-
-    #[test]
-    fn pop_byte_interprets_wire_octet_via_cast_signed() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-        // C++ wire format stores i8 as a single octet; pop_byte uses cast_signed.
-        msg.push_ubyte(255);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert_eq!(read_msg.pop_byte(), -1);
-    }
-
-    #[test]
-    fn test_primitive_ushort() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_ushort(0);
-        msg.push_ushort(255);
-        msg.push_ushort(65535);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert_eq!(read_msg.pop_ushort(), 0);
-        assert_eq!(read_msg.pop_ushort(), 255);
-        assert_eq!(read_msg.pop_ushort(), 65535);
-    }
-
-    #[test]
-    fn test_primitive_short() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_short(-32768);
-        msg.push_short(0);
-        msg.push_short(32767);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert_eq!(read_msg.pop_short(), -32768);
-        assert_eq!(read_msg.pop_short(), 0);
-        assert_eq!(read_msg.pop_short(), 32767);
-    }
-
-    #[test]
     fn test_primitive_uint() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         msg.push_uint(0);
@@ -680,26 +549,6 @@ mod tests {
         assert_eq!(read_msg.pop_int(), -1);
         assert_eq!(read_msg.pop_int(), 0);
         assert_eq!(read_msg.pop_int(), 2_147_483_647);
-    }
-
-    #[test]
-    fn test_primitive_float() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-
-        let f1: f32 = 0.0;
-        let f2: f32 = -1.5;
-        let f3: f32 = std::f32::consts::PI;
-
-        msg.push_float(f1);
-        msg.push_float(f2);
-        msg.push_float(f3);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert!((read_msg.pop_float() - f1).abs() < 0.0001);
-        assert!((read_msg.pop_float() - f2).abs() < 0.0001);
-        assert!((read_msg.pop_float() - f3).abs() < 0.0001);
     }
 
     #[test]
@@ -786,22 +635,6 @@ mod tests {
     }
 
     #[test]
-    fn test_primitive_long() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-
-        msg.push_long(0x1);
-        msg.push_long(-0x1234_5678_1234_5678);
-        msg.push_long(0x1234_5678_1234_5678);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert_eq!(read_msg.pop_long(), 0x1);
-        assert_eq!(read_msg.pop_long(), -0x1234_5678_1234_5678);
-        assert_eq!(read_msg.pop_long(), 0x1234_5678_1234_5678);
-    }
-
-    #[test]
     fn from_data_empty_buffer_leaves_defaults() {
         let mut msg = Message::from_data(Vec::new());
 
@@ -817,7 +650,6 @@ mod tests {
 
         msg.push_bool(true);
         msg.push_ubyte(42);
-        msg.push_short(-1000);
         msg.push_uint(12345);
         msg.push_string("test");
         msg.push_bool(false);
@@ -827,7 +659,6 @@ mod tests {
 
         assert!(read_msg.pop_bool());
         assert_eq!(read_msg.pop_ubyte(), 42);
-        assert_eq!(read_msg.pop_short(), -1000);
         assert_eq!(read_msg.pop_uint(), 12345);
         assert_eq!(read_msg.pop_string(), "test");
         assert!(!read_msg.pop_bool());
@@ -885,39 +716,6 @@ mod tests {
     }
 
     #[test]
-    fn pop_byte_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_byte(), 0);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01], 1);
-        assert_eq!(partial.pop_byte(), 0);
-        assert_eq!(partial.index, 1);
-    }
-
-    #[test]
-    fn pop_ushort_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_ushort(), 0);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01], 0);
-        assert_eq!(partial.pop_ushort(), 0);
-        assert_eq!(partial.index, 0);
-    }
-
-    #[test]
-    fn pop_short_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_short(), 0);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01], 0);
-        assert_eq!(partial.pop_short(), 0);
-        assert_eq!(partial.index, 0);
-    }
-
-    #[test]
     fn pop_int_returns_zero_on_buffer_underflow() {
         let mut empty = truncated_message(vec![], 0);
         assert_eq!(empty.pop_int(), 0);
@@ -936,28 +734,6 @@ mod tests {
 
         let mut partial = truncated_message(vec![0x01, 0x02, 0x03, 0x04], 0);
         assert_eq!(partial.pop_ulong(), 0);
-        assert_eq!(partial.index, 0);
-    }
-
-    #[test]
-    fn pop_long_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_long(), 0);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01, 0x02, 0x03, 0x04], 0);
-        assert_eq!(partial.pop_long(), 0);
-        assert_eq!(partial.index, 0);
-    }
-
-    #[test]
-    fn pop_float_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert!((empty.pop_float() - 0.0).abs() < f32::EPSILON);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01, 0x02, 0x03], 0);
-        assert!((partial.pop_float() - 0.0).abs() < f32::EPSILON);
         assert_eq!(partial.index, 0);
     }
 
