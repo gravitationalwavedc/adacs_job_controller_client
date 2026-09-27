@@ -200,6 +200,20 @@ pub(crate) fn set_pre_details_send_barrier_for_test(barrier: Option<Arc<Lifecycl
     set_barrier_for_test(&TEST_PRE_DETAILS_SEND_BARRIER, barrier);
 }
 
+/// Test-only seam that parks the supervisor immediately before the
+/// `fs::metadata` read in [`handle_file_download`]. Lets a test remove the
+/// file after `fs::canonicalize` succeeds so the metadata read
+/// deterministically fails, exercising the `"metadata read failed"`
+/// primary-error branch. The seam is a no-op when no barrier is installed.
+#[cfg(test)]
+static TEST_PRE_METADATA_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_pre_metadata_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    set_barrier_for_test(&TEST_PRE_METADATA_BARRIER, barrier);
+}
+
 /// Test-only seam that parks the supervisor immediately before a file chunk
 /// send in [`run_sending_phase`]. Lets a test reset the peer transport so the
 /// chunk send deterministically fails, exercising the mid-transfer
@@ -840,6 +854,11 @@ async fn run_download_supervisor(
         .await;
     }
 
+    // Test seam: park before the metadata read so a test can remove the file
+    // after canonicalize succeeds and make the metadata read deterministically
+    // fail. No-op when no barrier is installed.
+    #[cfg(test)]
+    arrive_barrier(&TEST_PRE_METADATA_BARRIER).await;
     debug!("handle_file_download: Getting file metadata");
     let file_meta = match fs::metadata(&abs_path).await {
         Ok(m) if m.is_file() => {

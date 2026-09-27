@@ -7,7 +7,8 @@ use crate::files::{
     set_final_send_barrier_for_test, set_force_upload_write_failure_for_test,
     set_graceful_close_timeout_for_test, set_pre_chunk_send_barrier_for_test,
     set_pre_close_send_barrier_for_test, set_pre_details_send_barrier_for_test,
-    set_server_ready_timeout_for_test, set_transfer_outcome_observer_for_test,
+    set_pre_metadata_barrier_for_test, set_server_ready_timeout_for_test,
+    set_transfer_outcome_observer_for_test,
     set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
@@ -1914,6 +1915,104 @@ fn test_get_file_download_job_file_open_failed() {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).unwrap();
         }
+    } // end inner()
+    inner();
+}
+
+/// The metadata-read-failure branch of `handle_file_download` must send a
+/// `FILE_DOWNLOAD_ERROR` whose message starts with "Failed to get file
+/// metadata", select the `"metadata read failed"` primary error, and release
+/// the connection. We park the supervisor between `fs::canonicalize` and
+/// `fs::metadata` via the pre-metadata barrier, remove the file so the
+/// metadata read fails with `NotFound`, then release the barrier.
+#[test_fork::test]
+fn test_get_file_download_job_metadata_read_failed() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_dl_metadata_failed");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let file_path = fixture.get_temp_path().join("metadata_fail.bin");
+        fs::write(&file_path, b"content").unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1242i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_pre_metadata_barrier_for_test(Some(barrier.clone()));
+
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let mut server = WebsocketServerFixture::new().await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-dl-metadata-failed".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("metadata_fail.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        // Park the supervisor after canonicalize, then remove the file so the
+        // metadata read deterministically fails with NotFound.
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the pre-metadata barrier");
+        fs::remove_file(&file_path).unwrap();
+        barrier.release();
+
+        let response = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_ERROR")
+            .expect("No response");
+        assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
+        let mut response_msg = response;
+        let error_msg = response_msg.pop_string();
+        assert!(
+            error_msg.starts_with("Failed to get file metadata"),
+            "unexpected error message: {error_msg}"
+        );
+        assert_eq!(response_msg.source, test_uuid);
+
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::PrimaryError(ref m) if m == "metadata read failed"),
+            "metadata-read failure must select the primary error, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the metadata-read failure"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
+        reset_download_test_seams();
     } // end inner()
     inner();
 }
@@ -4535,6 +4634,7 @@ fn reset_download_test_seams() {
     set_server_ready_timeout_for_test(None);
     set_pre_close_send_barrier_for_test(None);
     set_pre_details_send_barrier_for_test(None);
+    set_pre_metadata_barrier_for_test(None);
     set_pre_chunk_send_barrier_for_test(None);
     set_transfer_outcome_observer_for_test(None);
     set_cleanup_failure_observer_for_test(None);
