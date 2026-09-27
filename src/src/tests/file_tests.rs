@@ -3,11 +3,12 @@ use crate::config::TEST_CONFIG;
 use crate::db::job;
 use crate::files::{
     handle_file_download, handle_file_list, handle_file_upload,
-    set_cleanup_failure_observer_for_test, set_final_send_barrier_for_test,
-    set_force_upload_write_failure_for_test, set_graceful_close_timeout_for_test,
-    set_pre_chunk_send_barrier_for_test, set_pre_close_send_barrier_for_test,
-    set_pre_details_send_barrier_for_test, set_server_ready_timeout_for_test,
-    set_transfer_outcome_observer_for_test, set_zero_byte_eof_barrier_for_test, TransferOutcome,
+    set_cleanup_failure_observer_for_test, set_file_ws_sndbuf_for_test,
+    set_final_send_barrier_for_test, set_force_upload_write_failure_for_test,
+    set_graceful_close_timeout_for_test, set_pre_chunk_send_barrier_for_test,
+    set_pre_close_send_barrier_for_test, set_pre_details_send_barrier_for_test,
+    set_server_ready_timeout_for_test, set_transfer_outcome_observer_for_test,
+    set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
     Message, Priority, DB_JOBSTATUS_SAVE, DB_JOB_GET_BY_ID, DB_JOB_GET_BY_JOB_ID, DB_JOB_SAVE,
@@ -4331,6 +4332,7 @@ fn reset_download_test_seams() {
     set_pre_chunk_send_barrier_for_test(None);
     set_transfer_outcome_observer_for_test(None);
     set_cleanup_failure_observer_for_test(None);
+    set_file_ws_sndbuf_for_test(None);
 }
 
 /// Wait for the lifecycle observer to reach `target` released connections or
@@ -5114,6 +5116,113 @@ fn test_task4_chunk_send_failure_selects_primary_error() {
         assert!(
             wait_for_released(&observer, 1, Duration::from_secs(2)).await,
             "supervisor must release the connection after the chunk-send failure"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+
+/// A peer Close arriving while a chunk send is in flight must be routed
+/// through the flow-control branch of `run_sending_phase` (the
+/// `ws_receiver.next()` arm of the send select) and become the authoritative
+/// peer-terminal result, not `CleanEof`. We park the supervisor before a
+/// chunk send via the pre-chunk-send barrier, have the peer send a genuine
+/// Close frame while the send is parked, release the barrier, and assert the
+/// authoritative result is the peer-terminal outcome and the connection is
+/// released.
+#[test_fork::test]
+fn test_task4_peer_close_during_chunk_send_wins() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_peer_close_during_send");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("peer_close.bin");
+        // A 2-chunk file so the transfer reaches the Sending phase; the
+        // shrunken send buffer makes the first chunk send block so the queued
+        // peer Close wins the send select's incoming arm.
+        let content = vec![0xDD; 128 * 1024];
+        fs::write(&path, &content).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8040i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_pre_chunk_send_barrier_for_test(Some(barrier.clone()));
+
+        // Shrink the file-transfer socket's send buffer so the first chunk
+        // send blocks (its write fills the socket), letting the queued peer
+        // Close win the send select's incoming arm deterministically.
+        set_file_ws_sndbuf_for_test(Some(4096));
+
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let mut server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-task4-peer-close-send".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("peer_close.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        let _details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS");
+
+        // Park the supervisor before the first chunk send, then inject a
+        // genuine peer Close so it is queued while the send is in flight.
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the pre-chunk-send barrier");
+        server.send_peer_close().await;
+        barrier.release();
+
+        // The authoritative result must be the peer terminal event, not
+        // CleanEof.
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::PeerTerminal(_)),
+            "peer Close during a chunk send must select the peer terminal result, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the peer Close"
         );
         assert_eq!(observer.live_connections(), 0);
         set_transfer_outcome_observer_for_test(None);
