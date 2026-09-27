@@ -27,7 +27,6 @@ dependencies = [
  "tempfile",
  "test-fork",
  "tokio",
- "tokio-rustls",
  "tokio-tungstenite",
  "tracing",
  "tracing-appender",
