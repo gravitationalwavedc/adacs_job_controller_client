@@ -1849,6 +1849,43 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn test_receive_error_runs_disconnect_path_and_notifies_shutdown() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        let server = WebsocketServerFixture::new().await;
+        let shutdown_notify = get_shutdown_notify();
+        let shutdown_wait = shutdown_notify.notified();
+
+        client
+            .start_with_token(server.get_url(), "test-token".to_string(), false)
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.is_server_ready() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        server.reset_connection().await;
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.is_connection_closed() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), shutdown_wait)
+            .await
+            .unwrap();
+    }
+
     #[test]
     fn test_queue_message_is_dropped_while_disconnected() {
         let client = TungsteniteWebsocketClient::new();
