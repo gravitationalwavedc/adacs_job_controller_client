@@ -52,6 +52,7 @@ pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
     validate_string_field(config, "pythonLibrary", &mut errors, true);
     validate_string_field(config, "websocketEndpoint", &mut errors, true);
     validate_string_field(config, "logLevel", &mut errors, false);
+    validate_string_field(config, "ltk", &mut errors, false);
 
     if errors.is_empty() {
         Ok(())
@@ -448,6 +449,28 @@ mod tests {
         });
         let err = validate_config(&config).unwrap_err();
         assert!(err.iter().any(|e| e.contains("logLevel must be a string")));
+    }
+
+    #[test]
+    fn validate_config_rejects_non_string_ltk() {
+        let config = json!({
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://example.com/ws/",
+            "ltk": 42
+        });
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.iter().any(|e| e.contains("ltk must be a string")));
+    }
+
+    #[test]
+    fn validate_config_rejects_empty_ltk() {
+        let config = json!({
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://example.com/ws/",
+            "ltk": ""
+        });
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.iter().any(|e| e.contains("ltk is empty")));
     }
 
     #[test]
