@@ -186,6 +186,20 @@ pub(crate) fn set_pre_close_send_barrier_for_test(barrier: Option<Arc<LifecycleB
     set_barrier_for_test(&TEST_PRE_CLOSE_SEND_BARRIER, barrier);
 }
 
+/// Test-only seam that parks the supervisor immediately after the graceful
+/// Close frame send in [`cleanup_download`], before it waits for the peer's
+/// acknowledgement. Lets a test terminate the peer transport after the Close
+/// send succeeds, exercising the peer-terminal arm of the graceful-close
+/// loop. The seam is a no-op when no barrier is installed.
+#[cfg(test)]
+static TEST_POST_CLOSE_SEND_BARRIER: LazyLock<Mutex<Option<Arc<LifecycleBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_post_close_send_barrier_for_test(barrier: Option<Arc<LifecycleBarrier>>) {
+    set_barrier_for_test(&TEST_POST_CLOSE_SEND_BARRIER, barrier);
+}
+
 /// Test-only seam that parks the supervisor immediately before the
 /// `FILE_DOWNLOAD_DETAILS` send. Lets a test reset the peer transport so the
 /// details send deterministically fails, exercising the pre-transfer
@@ -1370,6 +1384,13 @@ async fn cleanup_download(
             .send(WsMessage::Close(None))
             .await
             .map_err(|e| format!("failed to send Close frame: {e}"))?;
+
+        // Test seam: park after the Close send so a test can terminate the
+        // peer transport deterministically after the Close send succeeds,
+        // exercising the peer-terminal arm of the graceful-close loop.
+        // No-op when no barrier is installed.
+        #[cfg(test)]
+        arrive_barrier(&TEST_POST_CLOSE_SEND_BARRIER).await;
 
         loop {
             match ws_receiver.next().await {

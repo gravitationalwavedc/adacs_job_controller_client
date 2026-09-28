@@ -5,10 +5,10 @@ use crate::files::{
     handle_file_download, handle_file_list, handle_file_upload,
     set_cleanup_failure_observer_for_test, set_file_ws_sndbuf_for_test,
     set_final_send_barrier_for_test, set_force_upload_write_failure_for_test,
-    set_graceful_close_timeout_for_test, set_pre_chunk_send_barrier_for_test,
-    set_pre_close_send_barrier_for_test, set_pre_details_send_barrier_for_test,
-    set_server_ready_timeout_for_test, set_transfer_outcome_observer_for_test,
-    set_zero_byte_eof_barrier_for_test, TransferOutcome,
+    set_graceful_close_timeout_for_test, set_post_close_send_barrier_for_test,
+    set_pre_chunk_send_barrier_for_test, set_pre_close_send_barrier_for_test,
+    set_pre_details_send_barrier_for_test, set_server_ready_timeout_for_test,
+    set_transfer_outcome_observer_for_test, set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
     Message, Priority, DB_JOBSTATUS_SAVE, DB_JOB_GET_BY_ID, DB_JOB_GET_BY_JOB_ID, DB_JOB_SAVE,
@@ -4534,6 +4534,7 @@ fn reset_download_test_seams() {
     set_zero_byte_eof_barrier_for_test(None);
     set_server_ready_timeout_for_test(None);
     set_pre_close_send_barrier_for_test(None);
+    set_post_close_send_barrier_for_test(None);
     set_pre_details_send_barrier_for_test(None);
     set_pre_chunk_send_barrier_for_test(None);
     set_transfer_outcome_observer_for_test(None);
@@ -5677,6 +5678,136 @@ fn test_task4_close_send_failure_after_success_preserves_result() {
             !observer.client_close_received(),
             "the fixture must not observe a client Close frame when the Close send failed"
         );
+        set_transfer_outcome_observer_for_test(None);
+        set_cleanup_failure_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+
+/// Peer termination during graceful close (after the supervisor's Close send
+/// succeeds) must break the graceful-close loop and complete cleanup without
+/// a spurious `FILE_DOWNLOAD_ERROR` or hang. We park the supervisor after
+/// its Close send via the post-Close-send barrier, terminate the peer
+/// transport (`WithholdAcknowledgement` so the fixture never acks, then
+/// `stop()` to drop the stream), release the barrier, and assert the
+/// supervisor's receive half sees the stream end, the connection is
+/// released, no cleanup failure is recorded, and no `FILE_DOWNLOAD_ERROR`
+/// reaches the peer.
+#[test_fork::test]
+fn test_task4_peer_terminates_during_graceful_close() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_peer_terminates_during_graceful_close");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("peer_term.bin");
+        let content = vec![0xEE; 32 * 1024];
+        fs::write(&path, &content).unwrap();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8031i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let post_close_barrier =
+            crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_post_close_send_barrier_for_test(Some(post_close_barrier.clone()));
+
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+        let (cleanup_tx, mut cleanup_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_cleanup_failure_observer_for_test(Some(cleanup_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::WithholdAcknowledgement,
+            drop_after_n_incoming: None,
+        };
+        let server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-task4-peer-term".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("peer_term.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        let mut server = server;
+        let _details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS");
+        let _chunk = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_CHUNK");
+
+        // The transfer must have completed successfully (CleanEof) before the
+        // supervisor reaches the post-Close-send barrier.
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::CleanEof),
+            "successful transfer must reach CleanEof, got {outcome:?}"
+        );
+
+        // Park the supervisor after its Close send, then terminate the peer
+        // transport so the supervisor's receive half sees the stream end
+        // instead of a Close acknowledgement.
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            post_close_barrier.wait_until_reached(),
+        )
+        .await
+        .expect("supervisor must reach the post-Close-send barrier");
+        server.stop().await;
+        post_close_barrier.release();
+
+        // No cleanup failure may be recorded: peer termination during
+        // graceful close is a normal break, not a failure.
+        let cleanup_failure =
+            tokio::time::timeout(Duration::from_millis(200), cleanup_rx.recv()).await;
+        assert!(
+            cleanup_failure.is_err(),
+            "peer termination during graceful close must not record a cleanup failure"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after peer termination during graceful close"
+        );
+        assert_eq!(observer.live_connections(), 0);
+
+        // No FILE_DOWNLOAD_ERROR may reach the peer for a successful transfer.
+        let error_msg =
+            tokio::time::timeout(Duration::from_millis(200), server.msg_rx.recv()).await;
+        assert!(
+            error_msg.is_err(),
+            "supervisor must not emit a FILE_DOWNLOAD_ERROR after a successful transfer"
+        );
+
         set_transfer_outcome_observer_for_test(None);
         set_cleanup_failure_observer_for_test(None);
         reset_download_test_seams();
