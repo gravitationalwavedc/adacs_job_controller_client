@@ -138,6 +138,52 @@ impl TungsteniteWebsocketClient {
         debug!("WS: Received pong at {} (latency: {}ms)", now, latency);
     }
 
+    /// Dispatch a single message read from the reader loop. Returns `true` to
+    /// keep the reader loop running, or `false` to terminate it (Close, error).
+    /// Extracted from the reader loop so every `WsMessage` arm is unit-testable,
+    /// including the catch-all `Frame` arm which `tungstenite` never yields on
+    /// read but must remain non-terminal.
+    fn handle_ws_message(
+        self: &Arc<Self>,
+        conn_id: u64,
+        recv_count: u64,
+        msg: Result<WsMessage, tokio_tungstenite::tungstenite::Error>,
+        disconnect_for_read: &Arc<Notify>,
+    ) -> bool {
+        match msg {
+            Ok(WsMessage::Binary(data)) => {
+                self.handle_incoming_message(conn_id, recv_count, "binary", &data);
+                true
+            }
+            Ok(WsMessage::Text(text)) => {
+                self.handle_incoming_message(conn_id, recv_count, "text", text.as_bytes());
+                true
+            }
+            Ok(WsMessage::Ping(_)) => {
+                trace!("WS: Received ping from server");
+                true
+            }
+            Ok(WsMessage::Pong(_)) => {
+                self.handle_pong(conn_id);
+                true
+            }
+            Ok(WsMessage::Close(_)) => {
+                debug!("WS: Connection closed (id={})", conn_id);
+                self.handle_disconnect(conn_id, disconnect_for_read);
+                false
+            }
+            Err(e) => {
+                error!("WS: Error receiving (id={}): {}", conn_id, e);
+                self.handle_disconnect(conn_id, disconnect_for_read);
+                false
+            }
+            _ => {
+                trace!("WS: Received other message type");
+                true
+            }
+        }
+    }
+
     /// Returns true if any priority queue below `max_priority` holds data, or if
     /// any such priority lock is currently held by another thread. Uses
     /// `try_lock` so the async scheduler never blocks on a `parking_lot` mutex:
@@ -335,37 +381,8 @@ impl TungsteniteWebsocketClient {
                 }
                 let client = self_arc_reader.clone();
                 recv_count += 1;
-                match msg {
-                    Ok(WsMessage::Binary(data)) => {
-                        client.handle_incoming_message(conn_id, recv_count, "binary", &data);
-                    }
-                    Ok(WsMessage::Text(text)) => {
-                        client.handle_incoming_message(
-                            conn_id,
-                            recv_count,
-                            "text",
-                            text.as_bytes(),
-                        );
-                    }
-                    Ok(WsMessage::Ping(_)) => {
-                        trace!("WS: Received ping from server");
-                    }
-                    Ok(WsMessage::Pong(_)) => {
-                        client.handle_pong(conn_id);
-                    }
-                    Ok(WsMessage::Close(_)) => {
-                        debug!("WS: Connection closed (id={})", conn_id);
-                        client.handle_disconnect(conn_id, &disconnect_for_read);
-                        break;
-                    }
-                    Err(e) => {
-                        error!("WS: Error receiving (id={}): {}", conn_id, e);
-                        client.handle_disconnect(conn_id, &disconnect_for_read);
-                        break;
-                    }
-                    _ => {
-                        trace!("WS: Received other message type");
-                    }
+                if !client.handle_ws_message(conn_id, recv_count, msg, &disconnect_for_read) {
+                    break;
                 }
             }
             self_arc_reader.handle_disconnect(conn_id, &disconnect_for_read);
@@ -1011,6 +1028,10 @@ mod tests {
         UPLOAD_FILE,
     };
     use crate::tests::fixtures::websocket_server_fixture::WebsocketServerFixture;
+    use tokio_tungstenite::tungstenite::protocol::frame::{
+        coding::{Data as OpData, OpCode},
+        Frame,
+    };
 
     // ============================================================================
     // WebSocket Authentication Tests - ported from websocket_auth_tests.rs
@@ -1038,6 +1059,33 @@ mod tests {
     fn test_websocket_client_creation() {
         let client = TungsteniteWebsocketClient::new();
         assert!(!client.is_server_ready());
+    }
+
+    /// A `WsMessage::Frame` (raw frame) must be treated as non-terminal by the
+    /// reader loop: it must not disconnect the client. `tungstenite` never
+    /// yields a `Frame` on read today, but the catch-all arm must keep the loop
+    /// running if one ever appears.
+    #[test]
+    fn test_frame_message_keeps_reader_loop_running() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+
+        let frame = Frame::message(
+            Bytes::from_static(b"continuation"),
+            OpCode::Data(OpData::Text),
+            true,
+        );
+        let keep_running =
+            client.handle_ws_message(1, 1, Ok(WsMessage::Frame(frame)), &Arc::new(Notify::new()));
+
+        assert!(
+            keep_running,
+            "a Frame must not terminate the WebSocket reader loop"
+        );
+        assert!(
+            !client.is_connection_closed(),
+            "client must stay connected after receiving a Frame"
+        );
     }
 
     /// Direct unit test for `get_epoch_millis`: the pure function that backs
