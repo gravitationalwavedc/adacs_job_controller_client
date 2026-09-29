@@ -46,12 +46,23 @@ pub fn read_client_config() -> Value {
         .clone()
 }
 
+const VALID_LOG_LEVELS: [&str; 6] = ["trace", "debug", "info", "warn", "error", "off"];
+
 pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
 
     validate_string_field(config, "pythonLibrary", &mut errors, true);
     validate_string_field(config, "websocketEndpoint", &mut errors, true);
     validate_string_field(config, "logLevel", &mut errors, false);
+
+    if let Some(level) = get_non_empty_str(config, "logLevel") {
+        if !VALID_LOG_LEVELS.contains(&level) {
+            errors.push(format!(
+                "logLevel must be one of: {}",
+                VALID_LOG_LEVELS.join(", ")
+            ));
+        }
+    }
 
     if errors.is_empty() {
         Ok(())
@@ -488,5 +499,28 @@ mod tests {
         });
         let err = validate_config(&config).unwrap_err();
         assert!(err.iter().any(|e| e.contains("logLevel is empty")));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_log_level() {
+        let config = json!({
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://example.com/ws/",
+            "logLevel": "deubg"
+        });
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.iter().any(|e| e.contains("logLevel must be one of")));
+    }
+
+    #[test]
+    fn validate_config_accepts_all_valid_log_levels() {
+        for level in ["trace", "debug", "info", "warn", "error", "off"] {
+            let config = json!({
+                "pythonLibrary": "/usr/lib/libpython3.so",
+                "websocketEndpoint": "ws://example.com/ws/",
+                "logLevel": level
+            });
+            assert!(validate_config(&config).is_ok(), "level {level} rejected");
+        }
     }
 }
