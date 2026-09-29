@@ -4,11 +4,11 @@ use crate::db::job;
 use crate::files::{
     handle_file_download, handle_file_list, handle_file_upload,
     set_cleanup_failure_observer_for_test, set_file_ws_sndbuf_for_test,
-    set_final_send_barrier_for_test, set_force_upload_write_failure_for_test,
-    set_graceful_close_timeout_for_test, set_pre_chunk_send_barrier_for_test,
-    set_pre_close_send_barrier_for_test, set_pre_details_send_barrier_for_test,
-    set_server_ready_timeout_for_test, set_transfer_outcome_observer_for_test,
-    set_zero_byte_eof_barrier_for_test, TransferOutcome,
+    set_final_send_barrier_for_test, set_force_upload_finalize_failure_for_test,
+    set_force_upload_write_failure_for_test, set_graceful_close_timeout_for_test,
+    set_pre_chunk_send_barrier_for_test, set_pre_close_send_barrier_for_test,
+    set_pre_details_send_barrier_for_test, set_server_ready_timeout_for_test,
+    set_transfer_outcome_observer_for_test, set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
     Message, Priority, DB_JOBSTATUS_SAVE, DB_JOB_GET_BY_ID, DB_JOB_GET_BY_JOB_ID, DB_JOB_SAVE,
@@ -3098,6 +3098,98 @@ fn test_file_upload_chunk_write_failure() {
         );
 
         set_force_upload_write_failure_for_test(false);
+    } // end inner()
+    inner();
+}
+
+#[test_fork::test]
+fn test_file_upload_finalize_failure() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test_finalize_failure");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1248i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-upload-finalize-fail".to_string();
+        let target_path = "partial_file.txt";
+        let file_content = b"uploaded content";
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(file_content.len() as u64);
+
+        let msg = Message::from_data(msg_raw.get_data().clone());
+
+        set_force_upload_finalize_failure_for_test(true);
+        handle_file_upload(msg);
+
+        let mut server = server;
+        let ready = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for SERVER_READY")
+            .expect("No ready");
+        assert_eq!(ready.id, SERVER_READY);
+
+        // Send the full content then FILE_UPLOAD_COMPLETE; the forced
+        // finalize failure should trigger the error path.
+        let mut chunk_msg = Message::new(FILE_UPLOAD_CHUNK, Priority::Highest, &test_uuid);
+        chunk_msg.push_bytes(file_content);
+        server.msg_tx.send(chunk_msg.get_data().clone()).unwrap();
+
+        let complete_msg = Message::new(FILE_UPLOAD_COMPLETE, Priority::Highest, &test_uuid);
+        server.msg_tx.send(complete_msg.get_data().clone()).unwrap();
+
+        let response = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for response")
+            .expect("No response");
+        assert_eq!(response.id, FILE_UPLOAD_ERROR);
+        let mut response_msg = response;
+        let error_msg = response_msg.pop_string();
+        assert_eq!(error_msg, "Failed to finalize uploaded file");
+        assert_eq!(response_msg.source, test_uuid);
+
+        // No FILE_UPLOAD_COMPLETE must be sent after the finalize failure.
+        let complete = tokio::time::timeout(Duration::from_millis(200), server.msg_rx.recv()).await;
+        assert!(
+            complete.is_err(),
+            "No FILE_UPLOAD_COMPLETE should be sent after finalize failure"
+        );
+
+        // Verify the partial file was cleaned up after the finalize failure.
+        let full_path = fixture.get_temp_path().join(target_path);
+        assert!(
+            !full_path.exists(),
+            "Partial file should have been cleaned up after finalize failure"
+        );
+
+        set_force_upload_finalize_failure_for_test(false);
     } // end inner()
     inner();
 }

@@ -317,6 +317,35 @@ fn force_upload_write_failure() -> bool {
     false
 }
 
+/// Test-only seam that forces [`finalize_upload_file`] to report failure,
+/// exercising the post-receive finalize-failure branch of
+/// [`handle_file_upload_internal`] and its partial-file cleanup. The seam is
+/// a no-op in production.
+#[cfg(test)]
+static TEST_FORCE_UPLOAD_FINALIZE_FAILURE: LazyLock<Mutex<bool>> =
+    LazyLock::new(|| Mutex::new(false));
+
+#[cfg(test)]
+pub(crate) fn set_force_upload_finalize_failure_for_test(force: bool) {
+    let mut guard = TEST_FORCE_UPLOAD_FINALIZE_FAILURE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = force;
+}
+
+#[cfg(test)]
+fn force_upload_finalize_failure() -> bool {
+    let guard = TEST_FORCE_UPLOAD_FINALIZE_FAILURE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard
+}
+
+#[cfg(not(test))]
+fn force_upload_finalize_failure() -> bool {
+    false
+}
+
 type WsSender = futures_util::stream::SplitSink<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     WsMessage,
@@ -2021,6 +2050,16 @@ where
     S: Sink<WsMessage, Error = E> + Unpin,
     E: std::fmt::Display,
 {
+    if force_upload_finalize_failure() {
+        fail_upload(
+            ws_sender,
+            uuid,
+            "Failed to finalize uploaded file",
+            Some(full_path),
+        )
+        .await;
+        return false;
+    }
     if let Err(e) = file.flush().await {
         warn!("Failed to flush uploaded file: {}", e);
         fail_upload(
