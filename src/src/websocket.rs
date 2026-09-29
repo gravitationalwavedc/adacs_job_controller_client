@@ -1822,6 +1822,42 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     #[serial_test::serial]
+    async fn test_stays_connected_after_server_ping() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        let mut server = WebsocketServerFixture::new().await;
+
+        client
+            .start_with_token(server.get_url(), "test-token".to_string(), true)
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.is_server_ready() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        server.send_peer_ping().await;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(
+            !client.is_connection_closed(),
+            "client must stay connected after receiving a server Ping"
+        );
+        assert!(
+            client.is_server_ready(),
+            "client must remain server-ready after receiving a server Ping"
+        );
+
+        server.stop().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
     async fn test_notifies_shutdown_when_disconnected_without_ltk() {
         reset_websocket_client_for_test();
         let client = get_tungstenite_client();
