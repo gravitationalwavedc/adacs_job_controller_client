@@ -525,6 +525,7 @@ mod tests {
         assert!(err.contains("WebSocket is disconnected"));
     }
 
+    #[test]
     fn test_db_bridge_send_from_async_context() {
         #[tokio::main(flavor = "current_thread")]
         async fn inner() {
