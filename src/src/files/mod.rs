@@ -62,6 +62,34 @@ fn server_ready_timeout() -> Duration {
     Duration::from_secs(SERVER_READY_TIMEOUT_SECS)
 }
 
+/// Test-only override for the file-WebSocket connect timeout. When `None`
+/// the production 10-second deadline applies. Tests may shrink it to
+/// milliseconds to exercise the connect-timeout path deterministically.
+#[cfg(test)]
+static FILE_WS_CONNECT_TIMEOUT_OVERRIDE: LazyLock<Mutex<Option<Duration>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_file_ws_connect_timeout_for_test(timeout: Option<Duration>) {
+    let mut guard = FILE_WS_CONNECT_TIMEOUT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = timeout;
+}
+
+#[cfg(test)]
+fn file_ws_connect_timeout() -> Duration {
+    let guard = FILE_WS_CONNECT_TIMEOUT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    guard.unwrap_or(Duration::from_secs(FILE_WS_CONNECT_TIMEOUT_SECS))
+}
+
+#[cfg(not(test))]
+fn file_ws_connect_timeout() -> Duration {
+    Duration::from_secs(FILE_WS_CONNECT_TIMEOUT_SECS)
+}
+
 const GRACEFUL_CLOSE_TIMEOUT_SECS: u64 = 5;
 
 /// Test-only override for [`graceful_close_timeout`]. When `None` the
@@ -1834,22 +1862,18 @@ async fn connect_file_ws_raw(
         }
     };
 
-    let (ws_stream, _) = match tokio::time::timeout(
-        Duration::from_secs(FILE_WS_CONNECT_TIMEOUT_SECS),
-        connect_async(request),
-    )
-    .await
-    {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => {
-            warn!("{prefix}Failed to connect for {operation}: {e}");
-            return None;
-        }
-        Err(_) => {
-            warn!("{prefix}Timed out connecting for {operation}");
-            return None;
-        }
-    };
+    let (ws_stream, _) =
+        match tokio::time::timeout(file_ws_connect_timeout(), connect_async(request)).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                warn!("{prefix}Failed to connect for {operation}: {e}");
+                return None;
+            }
+            Err(_) => {
+                warn!("{prefix}Timed out connecting for {operation}");
+                return None;
+            }
+        };
 
     Some(ws_stream.split())
 }
@@ -3426,6 +3450,30 @@ mod tests {
             server.stop().await;
         }
         set_server_ready_timeout_for_test(None);
+    }
+
+    #[tokio::test]
+    async fn connect_file_ws_raw_returns_none_when_connect_times_out() {
+        set_file_ws_connect_timeout_for_test(Some(Duration::from_millis(50)));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_handle = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            // Accept the TCP connection but stall the WebSocket handshake so
+            // connect_async never completes, forcing the connect timeout.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+
+        let url = format!("ws://127.0.0.1:{port}/ws/");
+        let result = connect_file_ws_raw(&url, "test-uuid", "", "file upload").await;
+        assert!(
+            result.is_none(),
+            "connect_file_ws_raw should return None when the connect times out"
+        );
+
+        server_handle.await.unwrap();
+        set_file_ws_connect_timeout_for_test(None);
     }
 
     #[tokio::test]
