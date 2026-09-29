@@ -1292,6 +1292,92 @@ mod tests {
         }
     }
 
+    #[test]
+    fn delete_job_returns_null_and_sets_error_when_db_request_fails() {
+        crate::tests::init_python_global();
+        let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
+        let bundle_hash = "test_delete_job_db_error";
+        fixture.write_bundle_db_create_or_update_job(bundle_hash, r#"{"test": 1}"#);
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+        let bundle = BundleManager::singleton()
+            .load_bundle(bundle_hash)
+            .expect("bundle should load");
+
+        // Mock the WebSocket client so `send_db_request` fails, driving
+        // `delete_job`'s DB-error branch (bundle_db.rs:531-540).
+        reset_websocket_client_for_test();
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(false);
+        mock.expect_is_server_ready().return_const(true);
+        mock.expect_send_db_request().times(1).returning(|_| {
+            Box::pin(async move {
+                Err::<Message, Box<dyn std::error::Error + Send + Sync>>(
+                    "mock db send failure".into(),
+                )
+            })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+            let _bundle_guard =
+                crate::thread_bundle_map::ThreadBundleGuard::new(bundle_hash.to_string());
+            let error_obj = get_bundle_db_error(bundle_hash);
+            // A dict with a non-zero "job_id" passes the missing-job-id
+            // guard and reaches the `send_and_wait` call.
+            let job_dict = crate::python_interface::PyDict_New();
+            assert!(!job_dict.is_null(), "dict should be created");
+            let job_id = crate::python_interface::PyLong_FromUnsignedLongLong(42);
+            assert!(!job_id.is_null(), "job_id should be created");
+            assert_eq!(
+                crate::python_interface::PyDict_SetItemString(job_dict, c"job_id".as_ptr(), job_id,),
+                0,
+                "job_id should be set"
+            );
+            crate::python_interface::Py_DecRef(job_id);
+            let args = crate::python_interface::PyTuple_New(1);
+            assert_eq!(
+                crate::python_interface::PyTuple_SetItem(args, 0, job_dict),
+                0,
+                "tuple set should succeed"
+            );
+            let result = delete_job(ptr::null_mut(), args);
+            crate::python_interface::Py_DecRef(args);
+            assert!(result.is_null(), "DB failure should return NULL");
+            assert!(
+                !crate::python_interface::PyErr_Occurred().is_null(),
+                "bundle error should be set"
+            );
+
+            let mut extype: *mut PyObject = ptr::null_mut();
+            let mut value: *mut PyObject = ptr::null_mut();
+            let mut traceback: *mut PyObject = ptr::null_mut();
+            crate::python_interface::PyErr_Fetch(
+                &raw mut extype,
+                &raw mut value,
+                &raw mut traceback,
+            );
+            assert_eq!(
+                extype, error_obj,
+                "bundle error should be set on the stored exception"
+            );
+            let str_obj = crate::python_interface::PyObject_Str(value);
+            assert!(!str_obj.is_null(), "error value should stringify");
+            let c_str = crate::python_interface::PyUnicode_AsUTF8(str_obj);
+            assert!(!c_str.is_null(), "error string should be UTF-8");
+            let msg = std::ffi::CStr::from_ptr(c_str).to_str().unwrap();
+            assert!(
+                msg.contains("DB error:"),
+                "error message should contain 'DB error:', got: {msg}"
+            );
+            crate::python_interface::Py_DecRef(str_obj);
+            crate::python_interface::Py_DecRef(extype);
+            crate::python_interface::Py_DecRef(value);
+            crate::python_interface::Py_DecRef(traceback);
+        }
+    }
+
     /// Cover the production `send_and_wait` request path that routes through
     /// the persistent `DbBridge` (bundle_db.rs:136-138). Every other
     /// `bundle_db` test sets up only the mock WebSocket client and never
