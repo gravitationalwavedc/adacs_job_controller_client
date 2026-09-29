@@ -123,9 +123,7 @@ pub fn ensure_websocket_endpoint_trailing_slash(endpoint: &str) -> String {
 pub fn get_websocket_endpoint() -> String {
     let config = read_client_config();
     ensure_websocket_endpoint_trailing_slash(
-        config["websocketEndpoint"]
-            .as_str()
-            .unwrap_or("ws://127.0.0.1:8001/ws/"),
+        get_non_empty_str(&config, "websocketEndpoint").unwrap_or("ws://127.0.0.1:8001/ws/"),
     )
 }
 
@@ -331,6 +329,24 @@ mod tests {
     #[serial_test::serial]
     fn get_websocket_endpoint_defaults_when_null() {
         set_test_config(json!({"websocketEndpoint": null}));
+        let result = get_websocket_endpoint();
+        reset_test_config();
+        assert_eq!(result, "ws://127.0.0.1:8001/ws/");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_websocket_endpoint_trims_whitespace() {
+        set_test_config(json!({"websocketEndpoint": "  ws://example.com/ws  "}));
+        let result = get_websocket_endpoint();
+        reset_test_config();
+        assert_eq!(result, "ws://example.com/ws/");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_websocket_endpoint_defaults_when_whitespace_only() {
+        set_test_config(json!({"websocketEndpoint": "   "}));
         let result = get_websocket_endpoint();
         reset_test_config();
         assert_eq!(result, "ws://127.0.0.1:8001/ws/");
