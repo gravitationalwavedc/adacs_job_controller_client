@@ -299,6 +299,50 @@ fn test_get_job_by_id_malformed_json() {
     inner();
 }
 
+/// INTEGRATION TEST for the `get_job_by_id` set-job-id failure branch in
+/// `bundle_db.rs:468`. When the server returns job data that parses to a
+/// non-dict (here a JSON list), `bundle.json_loads` returns a list,
+/// `set_job_id_in_dict` fails deterministically (`PyDict_SetItemString` on a
+/// list returns -1), and `get_job_by_id` returns null with the `_bundledb`
+/// error set. Previously this branch was only covered by a direct unit test of
+/// the helper, not through `get_job_by_id`.
+#[test]
+fn test_get_job_by_id_non_dict_job_data_returns_null_with_error() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        fixture.write_bundle_db_get_job_by_id(&bundle_hash, 1234);
+
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws.expect_send_db_request().times(1).returning(|_msg| {
+            let mut resp = make_db_response();
+            resp.push_uint(1); // count
+            resp.push_ulong(1234); // job_id (echoed back, ignored by code)
+            resp.push_string(r"[1, 2, 3]"); // job data JSON parses to a list, not a dict
+            Box::pin(async move { Ok(resp) })
+        });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to set job_id in dict"));
+    }
+    inner();
+}
+
 #[test]
 fn test_get_job_by_id_non_integer_job_id() {
     #[tokio::main(flavor = "current_thread")]
