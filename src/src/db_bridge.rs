@@ -5,9 +5,40 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tracing::{debug, error, info, trace, warn};
 
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex, PoisonError};
+
 const CHANNEL_CAPACITY: usize = 128;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const QUEUE_DEPTH_WARNING_THRESHOLD: usize = 50;
+
+/// Test-only override for the DB request timeout. When `None` the production
+/// 30-second deadline applies. Tests may shrink it to milliseconds to
+/// exercise the request-timeout path deterministically.
+#[cfg(test)]
+static DB_REQUEST_TIMEOUT_OVERRIDE: LazyLock<Mutex<Option<Duration>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_db_request_timeout_for_test(timeout: Option<Duration>) {
+    let mut guard = DB_REQUEST_TIMEOUT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *guard = timeout;
+}
+
+#[cfg(test)]
+fn db_request_timeout() -> Duration {
+    let guard = DB_REQUEST_TIMEOUT_OVERRIDE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    guard.unwrap_or(REQUEST_TIMEOUT)
+}
+
+#[cfg(not(test))]
+fn db_request_timeout() -> Duration {
+    REQUEST_TIMEOUT
+}
 
 struct DbRequest {
     msg: Message,
@@ -60,7 +91,7 @@ impl DbBridge {
                         debug!("DbBridge: sending request #{} via WebSocket", request_count);
                         let send_start = std::time::Instant::now();
                         let result = tokio::time::timeout(
-                            REQUEST_TIMEOUT,
+                            db_request_timeout(),
                             ws_client.send_db_request(req.msg),
                         )
                         .await;
@@ -365,6 +396,33 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(err.contains("DB request error: mock send failure"));
+    }
+
+    #[test]
+    fn test_db_bridge_surfaces_request_timeout() {
+        reset_websocket_client_for_test();
+        DbBridge::start();
+        set_db_request_timeout_for_test(Some(Duration::from_millis(50)));
+
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_is_connection_closed().return_const(false);
+        mock.expect_is_server_ready().return_const(true);
+        mock.expect_send_db_request()
+            .times(1)
+            .returning(|_| Box::pin(async move { std::future::pending().await }));
+        set_websocket_client(Arc::new(mock));
+
+        let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
+        let result = DbBridge::global().send(msg);
+
+        set_db_request_timeout_for_test(None);
+
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.contains("DB request timed out after"),
+            "expected timeout error, got: {err}"
+        );
     }
 
     #[test]
