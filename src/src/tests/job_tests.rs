@@ -972,6 +972,57 @@ fn test_submit_spawn_blocking_failure_cleans_up_job() {
 }
 
 #[test_fork::test]
+fn test_check_job_status_spawn_blocking_failure_returns_null_without_completion() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        setup_test(&db_name);
+        // Uninitialized BundleManager makes singleton() panic inside the
+        // spawn_blocking closure, surfacing as a JoinError.
+        BundleManager::reset_singleton_for_test();
+
+        let (mut mock_ws, state) = setup_mock_ws();
+
+        // No UPDATE_JOB completion message should be queued on spawn_blocking failure.
+        mock_ws.expect_queue_message().times(0);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job = job::Model {
+            id: 1,
+            job_id: Some(1234),
+            scheduler_id: Some(4321),
+            bundle_hash: "uninitialized_bundle_hash".to_string(),
+            working_directory: "/tmp".to_string(),
+            running: true,
+            submitting: false,
+            submitting_count: 0,
+            deleting: false,
+            deleted: false,
+        };
+        {
+            let mut s = state.lock().unwrap();
+            s.jobs.insert(1, job.clone());
+        }
+
+        // Should return gracefully without panicking and without marking the job complete.
+        check_job_status(job.clone(), false).await;
+
+        let saved = state
+            .lock()
+            .unwrap()
+            .jobs
+            .get(&job.id)
+            .cloned()
+            .expect("job should still exist");
+        assert!(
+            saved.running,
+            "job should not be marked complete on spawn_blocking failure"
+        );
+    }
+    inner();
+}
+
+#[test_fork::test]
 fn test_check_status_job_running_same_status() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
