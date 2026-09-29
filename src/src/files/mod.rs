@@ -186,6 +186,21 @@ pub(crate) fn set_pre_chunk_send_barrier_for_test(barrier: Option<Arc<LifecycleB
     set_barrier_for_test(&TEST_PRE_CHUNK_SEND_BARRIER, barrier);
 }
 
+/// Test-only seam that shrinks the file-transfer socket's send buffer to the
+/// given byte count after connect. A small send buffer makes a file-chunk
+/// send block (its write fills the socket) so a peer terminal event can
+/// deterministically win the send select's incoming arm in
+/// `run_sending_phase`. The seam is a no-op when `None`.
+#[cfg(test)]
+static TEST_FILE_WS_SNDBUF: Mutex<Option<usize>> = Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn set_file_ws_sndbuf_for_test(bytes: Option<usize>) {
+    *TEST_FILE_WS_SNDBUF
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = bytes;
+}
+
 /// Test-only seam that exposes the supervisor's authoritative transfer result
 /// to integration tests. The supervisor sends the selected `TransferOutcome`
 /// at the start of unified cleanup — covering both transfer-loop results and
@@ -1850,6 +1865,31 @@ async fn connect_file_ws_raw(
             return None;
         }
     };
+
+    // Test seam: shrink the socket send buffer so a file-chunk send blocks,
+    // letting a peer terminal event win the send select's incoming arm
+    // deterministically. No-op when no size is set.
+    #[cfg(test)]
+    if let Some(buf) = *TEST_FILE_WS_SNDBUF
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+    {
+        use std::os::fd::AsRawFd;
+        let tcp = ws_stream.get_ref().get_ref();
+        let sndbuf = buf as libc::c_int;
+        // SAFETY: `tcp` owns a valid socket descriptor and `sndbuf` remains
+        // alive for the duration of this setsockopt call.
+        let result = unsafe {
+            libc::setsockopt(
+                tcp.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&raw const sndbuf).cast::<libc::c_void>(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+        let _ = result;
+    }
 
     Some(ws_stream.split())
 }
