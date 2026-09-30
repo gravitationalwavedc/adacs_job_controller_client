@@ -1589,7 +1589,6 @@ fn test_get_file_download_connect_failure() {
             .expect("No response");
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Failed to connect to file websocket"
@@ -1639,7 +1638,6 @@ fn test_get_file_upload_connect_failure() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Failed to connect to file websocket"
