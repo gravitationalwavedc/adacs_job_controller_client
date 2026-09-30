@@ -1528,6 +1528,7 @@ where
     E: std::fmt::Display,
 {
     let mut result = Message::new(msg_id, Priority::Highest, uuid);
+    result.push_string(uuid);
     result.push_string(error_msg);
     if let Err(e) = ws_sender
         .send(WsMessage::Binary(result.get_data().clone().into()))
@@ -2970,6 +2971,7 @@ mod tests {
             let mut resp = Message::from_data(data.to_vec());
             assert_eq!(resp.id, FILE_DOWNLOAD_ERROR);
             assert_eq!(resp.source, "uuid-123");
+            assert_eq!(resp.pop_string(), "uuid-123");
             assert_eq!(resp.pop_string(), "boom");
         });
     }
@@ -3131,6 +3133,7 @@ mod tests {
             let mut resp = Message::from_data(data.to_vec());
             assert_eq!(resp.id, FILE_UPLOAD_ERROR);
             assert_eq!(resp.source, "uuid-123");
+            assert_eq!(resp.pop_string(), "uuid-123");
             assert_eq!(resp.pop_string(), "Failed to finalize uploaded file");
         });
     }
@@ -3163,6 +3166,7 @@ mod tests {
             let mut resp = Message::from_data(data.to_vec());
             assert_eq!(resp.id, FILE_UPLOAD_ERROR);
             assert_eq!(resp.source, "uuid-123");
+            assert_eq!(resp.pop_string(), "uuid-123");
             assert_eq!(resp.pop_string(), "Failed to finalize uploaded file");
         });
     }
@@ -3377,6 +3381,7 @@ mod tests {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
+        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(response_msg.pop_string(), "Exception reading file");
         assert_eq!(response_msg.source, test_uuid);
     }
@@ -3955,6 +3960,7 @@ mod tests {
                     .expect("no FILE_DOWNLOAD_ERROR");
                 assert_eq!(err.id, FILE_DOWNLOAD_ERROR);
                 let mut err_msg = err;
+                assert_eq!(err_msg.pop_string(), uuid);
                 assert_eq!(
                     err_msg.pop_string(),
                     "File size mismatch: expected 8, got 4"
@@ -4009,6 +4015,7 @@ mod tests {
             .expect("no FILE_DOWNLOAD_ERROR");
         assert_eq!(err.id, FILE_DOWNLOAD_ERROR);
         let mut err_msg = err;
+        assert_eq!(err_msg.pop_string(), uuid);
         assert_eq!(err_msg.pop_string(), "Exception reading file");
         assert_eq!(err_msg.source, uuid);
     }
