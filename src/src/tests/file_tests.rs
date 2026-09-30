@@ -8,8 +8,7 @@ use crate::files::{
     set_graceful_close_timeout_for_test, set_pre_chunk_send_barrier_for_test,
     set_pre_close_send_barrier_for_test, set_pre_details_send_barrier_for_test,
     set_pre_metadata_barrier_for_test, set_server_ready_timeout_for_test,
-    set_transfer_outcome_observer_for_test,
-    set_zero_byte_eof_barrier_for_test, TransferOutcome,
+    set_transfer_outcome_observer_for_test, set_zero_byte_eof_barrier_for_test, TransferOutcome,
 };
 use crate::messaging::{
     Message, Priority, DB_JOBSTATUS_SAVE, DB_JOB_GET_BY_ID, DB_JOB_GET_BY_JOB_ID, DB_JOB_SAVE,
