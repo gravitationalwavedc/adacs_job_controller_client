@@ -1488,7 +1488,6 @@ fn test_get_file_download_job_not_exist() {
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
         // from_data already extracted source and id, so just pop the error message
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Job does not exist");
         assert_eq!(response_msg.source, test_uuid);
@@ -1543,7 +1542,6 @@ fn test_get_file_download_job_submitting() {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Job is not submitted");
         assert_eq!(response_msg.source, test_uuid);
@@ -1591,7 +1589,6 @@ fn test_get_file_download_connect_failure() {
             .expect("No response");
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Failed to connect to file websocket"
@@ -1641,7 +1638,6 @@ fn test_get_file_upload_connect_failure() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Failed to connect to file websocket"
@@ -1710,7 +1706,6 @@ fn test_get_file_download_job_outside_working_directory() {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(
             error_msg,
@@ -1775,7 +1770,6 @@ fn test_get_file_download_job_file_not_exist() {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Path to file download does not exist");
         assert_eq!(response_msg.source, test_uuid);
@@ -1835,7 +1829,6 @@ fn test_get_file_download_job_file_is_a_directory() {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Path to file download is not a file");
         assert_eq!(response_msg.source, test_uuid);
@@ -1909,7 +1902,6 @@ fn test_get_file_download_job_file_open_failed() {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Failed to open file for download");
         assert_eq!(response_msg.source, test_uuid);
@@ -2195,7 +2187,6 @@ fn test_get_file_download_no_job_outside_working_directory() {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(
             error_msg,
@@ -2249,7 +2240,6 @@ fn test_get_file_download_no_job_directory_not_exist() {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Path to file download does not exist");
         assert_eq!(response_msg.source, test_uuid);
@@ -2298,7 +2288,6 @@ fn test_get_file_download_no_job_file_is_a_directory() {
 
         assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Path to file download is not a file");
         assert_eq!(response_msg.source, test_uuid);
@@ -2675,7 +2664,6 @@ fn test_file_upload_invalid_path_outside_working_directory() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(
             error_msg,
@@ -2727,7 +2715,6 @@ fn test_file_upload_invalid_job_id() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Job does not exist");
         assert_eq!(response_msg.source, test_uuid);
@@ -2781,7 +2768,6 @@ fn test_file_upload_database_error() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Database error: db connection failed");
         assert_eq!(response_msg.source, test_uuid);
@@ -2845,7 +2831,6 @@ fn test_file_upload_job_submitting() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Job is not submitted");
         assert_eq!(response_msg.source, test_uuid);
@@ -2935,7 +2920,6 @@ fn test_file_upload_symlink_outside_working_directory() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(
             error_msg,
@@ -3020,7 +3004,6 @@ fn test_file_upload_partial_file_cleanup_on_error() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "File size mismatch: expected 1000, got 500");
         assert_eq!(response_msg.source, test_uuid);
@@ -3101,7 +3084,6 @@ fn test_file_upload_chunk_write_failure() {
             .expect("No response");
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Failed to write chunk to file");
         assert_eq!(response_msg.source, test_uuid);
@@ -3683,7 +3665,6 @@ fn test_file_upload_write_permission_error() {
 
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Failed to open target file for writing");
 
@@ -3774,7 +3755,6 @@ fn test_file_upload_open_write_error() {
 
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert_eq!(error_msg, "Failed to open target file for writing");
 
@@ -3854,7 +3834,6 @@ fn test_file_upload_create_dir_all_error() {
 
         assert_eq!(response.id, FILE_UPLOAD_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         let error_msg = response_msg.pop_string();
         assert!(
             error_msg.contains("Failed to create parent directory"),
@@ -5551,7 +5530,6 @@ fn test_task4_truncated_download_selects_size_mismatch_error() {
             .expect("No error message");
         assert_eq!(error_msg.id, FILE_DOWNLOAD_ERROR);
         let mut error_msg = error_msg;
-        assert_eq!(error_msg.pop_string(), test_uuid);
         let error_text = error_msg.pop_string();
         assert_eq!(
             error_text,
