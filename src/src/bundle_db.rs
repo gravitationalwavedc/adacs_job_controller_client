@@ -234,7 +234,7 @@ unsafe fn load_bundle_and_job_id(dict: *mut PyObject) -> Option<(String, u64, se
     let bundle = match BundleManager::singleton().load_bundle(&bundle_hash) {
         Ok(b) => b,
         Err(e) => {
-            load_bundle_failure(&bundle_hash, &e)?;
+            load_bundle_failure(&bundle_hash, &e);
             return None;
         }
     };
