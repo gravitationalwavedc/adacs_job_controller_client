@@ -29,6 +29,9 @@ const HTTP_READ_TIMEOUT_SECS: u64 = 10;
 const DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
 const MAX_REDIRECTS: u32 = 3;
 
+// Upper bound on the self-update download, comfortably above a release binary.
+const MAX_DOWNLOAD_SIZE_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
+
 fn get_current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
@@ -173,6 +176,25 @@ fn download_with_retry(
     }
 }
 
+/// Read `reader` to the end but cap the result at `max_bytes`. Returns an error
+/// if the source contains more than `max_bytes` bytes, so an oversized or
+/// runaway response can't exhaust memory.
+fn read_bounded(
+    mut reader: impl Read,
+    max_bytes: u64,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut data = Vec::new();
+    reader
+        .by_ref()
+        .take(max_bytes + 1)
+        .read_to_end(&mut data)
+        .map_err(ureq::Error::from)?;
+    if data.len() as u64 > max_bytes {
+        return Err(format!("Downloaded data exceeds maximum size of {max_bytes} bytes").into());
+    }
+    Ok(data)
+}
+
 /// Download file from URL with retry and exponential backoff.
 fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     info!("Downloading update from: {}", url);
@@ -186,16 +208,9 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             .build();
 
         match agent.get(url).call() {
-            Ok(resp) => {
-                let mut data = Vec::new();
-                resp.into_reader()
-                    .read_to_end(&mut data)
-                    .map_err(ureq::Error::from)
-                    .map(|_| data)
-            }
-            Err(e) => Err(e),
+            Ok(resp) => read_bounded(resp.into_reader(), MAX_DOWNLOAD_SIZE_BYTES),
+            Err(e) => Err(Box::new(e)),
         }
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     })
 }
 
@@ -730,6 +745,31 @@ mod tests {
             html.to_lowercase().contains("<html"),
             "expected HTML content, got: {}",
             &html[..html.len().min(200)]
+        );
+    }
+
+    // ─── read_bounded tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_read_bounded_accepts_body_at_or_below_limit() {
+        let body = b"small payload";
+        let result = read_bounded(std::io::Cursor::new(body), body.len() as u64).unwrap();
+        assert_eq!(result, body);
+
+        let result = read_bounded(std::io::Cursor::new(body), body.len() as u64 + 100).unwrap();
+        assert_eq!(result, body);
+    }
+
+    #[test]
+    fn test_read_bounded_rejects_body_over_limit() {
+        let body = b"this body is larger than the cap";
+        let cap = 8;
+        let result = read_bounded(std::io::Cursor::new(body), cap);
+        assert!(result.is_err(), "body over the cap should error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("exceeds maximum size"),
+            "unexpected error message: {err}"
         );
     }
 
