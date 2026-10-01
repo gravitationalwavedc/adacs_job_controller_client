@@ -90,11 +90,19 @@ fn parse_release_response(
 /// Compute the SHA-256 of `data` and compare it (case-insensitively) against
 /// `expected`. Returns an error on mismatch so the caller can abort the update
 /// before touching the running binary.
+///
+/// The GitHub releases API returns the asset digest in `sha256:<hex>` form, so a
+/// leading `sha256:` prefix (case-insensitive) is stripped before comparison.
 fn verify_sha256(data: &[u8], expected: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let trimmed = expected.trim();
+    let expected_hex = trimmed
+        .strip_prefix("sha256:")
+        .or_else(|| trimmed.strip_prefix("SHA256:"))
+        .unwrap_or(trimmed);
     let mut hasher = Sha256::new();
     hasher.update(data);
     let computed = format!("{:x}", hasher.finalize());
-    if computed.eq_ignore_ascii_case(expected.trim()) {
+    if computed.eq_ignore_ascii_case(expected_hex) {
         Ok(())
     } else {
         Err(format!("sha256 mismatch: expected {expected}, computed {computed}").into())
@@ -655,6 +663,29 @@ mod tests {
         assert!(
             err.contains("sha256 mismatch"),
             "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn test_verify_sha256_strips_sha256_prefix() {
+        // The GitHub releases API returns the asset digest as "sha256:<hex>".
+        let data = b"hello world";
+        let hex = format!("{:x}", Sha256::digest(data));
+        let prefixed = format!("sha256:{hex}");
+        assert!(
+            verify_sha256(data, &prefixed).is_ok(),
+            "a 'sha256:'-prefixed digest should verify after stripping the prefix"
+        );
+    }
+
+    #[test]
+    fn test_verify_sha256_strips_sha256_prefix_uppercase() {
+        let data = b"hello world";
+        let hex = format!("{:x}", Sha256::digest(data));
+        let prefixed = format!("SHA256:{hex}");
+        assert!(
+            verify_sha256(data, &prefixed).is_ok(),
+            "an uppercase 'SHA256:'-prefixed digest should verify after stripping"
         );
     }
 
