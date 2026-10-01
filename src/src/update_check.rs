@@ -92,16 +92,24 @@ fn replace_binary(
         let _ = fs::remove_file(&update_path);
         return Err(e.into());
     }
+
+    // Set permissions on the `.update` file BEFORE the rename so that a chmod
+    // failure leaves the running binary untouched (rename preserves the source
+    // file's permissions, so the replaced executable still ends up 0o755).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = fs::set_permissions(&update_path, fs::Permissions::from_mode(0o755)) {
+            // Best-effort cleanup of the update file left by a failed chmod.
+            let _ = fs::remove_file(&update_path);
+            return Err(e.into());
+        }
+    }
+
     if let Err(e) = fs::rename(&update_path, executable_path) {
         // Best-effort cleanup of the stale update file left by a failed rename.
         let _ = fs::remove_file(&update_path);
         return Err(e.into());
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(executable_path, fs::Permissions::from_mode(0o755))?;
     }
 
     Ok(())
