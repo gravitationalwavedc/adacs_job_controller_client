@@ -276,10 +276,6 @@ impl TungsteniteWebsocketClient {
         self.pong_timestamp.load(Ordering::SeqCst)
     }
 
-    fn check_pings(&self) -> Result<(), String> {
-        self.check_pings_internal()
-    }
-
     #[cfg(test)]
     fn call_check_pings(&self) {
         // Test entry point - simulates ping/pong cycle
@@ -2069,7 +2065,7 @@ mod tests {
         client.set_pong_timestamp(0);
 
         // Running check_pings should now return an error (in C++ this throws/aborts)
-        let result = client.check_pings();
+        let result = client.check_pings_internal();
         assert!(
             result.is_err(),
             "check_pings should return error when pong_timestamp is zero"
@@ -2085,7 +2081,7 @@ mod tests {
         client.set_ping_timestamp(1000);
 
         // Keep pong at zero (simulating no response)
-        let result = client.check_pings();
+        let result = client.check_pings_internal();
         assert!(
             result.is_err(),
             "check_pings should return error when ping sent but no pong received"
@@ -2101,7 +2097,7 @@ mod tests {
         client.set_pong_timestamp(1000);
 
         // check_pings should succeed
-        let result = client.check_pings();
+        let result = client.check_pings_internal();
         assert!(
             result.is_ok(),
             "check_pings should succeed when both timestamps are set"
@@ -2115,7 +2111,7 @@ mod tests {
         assert_eq!(client.get_ping_timestamp(), 0);
         assert_eq!(client.get_pong_timestamp(), 0);
         assert!(
-            client.check_pings().is_ok(),
+            client.check_pings_internal().is_ok(),
             "check_pings should succeed before any ping has been sent"
         );
     }
