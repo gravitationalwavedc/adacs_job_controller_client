@@ -749,4 +749,37 @@ mod tests {
             "download from a closed local port should error"
         );
     }
+
+    #[test]
+    fn test_download_file_returns_error_on_http_error_status() {
+        use std::io::Write;
+
+        // Serve a 404 Not Found from a local listener so the test is
+        // deterministic and does not depend on external network access.
+        // download_file retries up to MAX_DOWNLOAD_RETRIES times on error,
+        // so accept that many connections, each returning 404.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            for _ in 0..MAX_DOWNLOAD_RETRIES {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).unwrap();
+                let body = b"Not Found";
+                let header = format!(
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(header.as_bytes()).unwrap();
+                stream.write_all(body).unwrap();
+            }
+        });
+
+        let result = download_file(&format!("http://127.0.0.1:{port}/"));
+        server.join().unwrap();
+        assert!(
+            result.is_err(),
+            "download from a server returning 404 should error"
+        );
+    }
 }
