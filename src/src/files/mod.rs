@@ -986,7 +986,8 @@ async fn validate_server_ready(ws_receiver: &mut WsReceiver) -> Result<Message, 
         Ok(Some(Err(e))) => Err(format!("handshake error: {e}")),
         Ok(None) => Err("server closed connection before sending SERVER_READY".to_string()),
         Err(_) => Err(format!(
-            "timeout waiting for SERVER_READY after {SERVER_READY_TIMEOUT_SECS}s"
+            "timeout waiting for SERVER_READY after {}s",
+            server_ready_timeout().as_secs()
         )),
     }
 }
@@ -1401,7 +1402,7 @@ async fn cleanup_download(
         Err(_) => {
             warn!(
                 "handle_file_download: graceful shutdown exceeded {}s; forced release follows",
-                GRACEFUL_CLOSE_TIMEOUT_SECS
+                graceful_close_timeout().as_secs()
             );
             #[cfg(test)]
             notify_cleanup_failure("graceful shutdown timeout; forced release follows".to_string());
