@@ -266,10 +266,12 @@ impl TungsteniteWebsocketClient {
         Ok(())
     }
 
+    #[cfg(test)]
     fn get_ping_timestamp(&self) -> i64 {
         self.ping_timestamp.load(Ordering::SeqCst)
     }
 
+    #[cfg(test)]
     fn get_pong_timestamp(&self) -> i64 {
         self.pong_timestamp.load(Ordering::SeqCst)
     }
@@ -278,6 +280,7 @@ impl TungsteniteWebsocketClient {
         self.check_pings_internal()
     }
 
+    #[cfg(test)]
     fn call_check_pings(&self) {
         // Test entry point - simulates ping/pong cycle
         let now = Self::get_epoch_millis();
@@ -285,10 +288,12 @@ impl TungsteniteWebsocketClient {
         self.pong_timestamp.store(now, Ordering::SeqCst);
     }
 
+    #[cfg(test)]
     fn set_pong_timestamp(&self, ts: i64) {
         self.pong_timestamp.store(ts, Ordering::SeqCst);
     }
 
+    #[cfg(test)]
     fn set_ping_timestamp(&self, ts: i64) {
         self.ping_timestamp.store(ts, Ordering::SeqCst);
     }
