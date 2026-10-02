@@ -554,7 +554,6 @@ pub fn handle_file_list(mut msg: Message) {
         }
 
         let mut result = Message::new(FILE_LIST, Priority::Highest, &uuid);
-        result.push_string(&uuid);
         let file_count = cap_file_count(file_list.len());
         result.push_uint(file_count);
         debug!(

@@ -681,7 +681,6 @@ fn test_get_file_list_job_success_recursive() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(response_msg.pop_uint(), 3); // file1, sub, sub/file2
 
         let mut items = vec![];
@@ -767,7 +766,6 @@ fn test_get_file_list_job_success_not_recursive() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(response_msg.pop_uint(), 2); // file1, sub
     } // end inner()
     inner();
@@ -846,7 +844,6 @@ fn test_get_file_list_symlink_working_directory_returns_relative_paths() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(response_msg.pop_uint(), 3); // file1, sub, sub/file2
 
         let mut items = vec![];
@@ -926,7 +923,6 @@ fn test_get_file_list_no_job_success() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(response_msg.pop_uint(), 2); // file1.txt + subdir (symlinks are excluded)
     } // end inner()
     inner();
@@ -983,7 +979,6 @@ fn test_get_file_list_no_job_leading_slash() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(response_msg.pop_uint(), 2); // file1.txt + subdir (symlinks are excluded)
     } // end inner()
     inner();
@@ -1235,7 +1230,6 @@ fn test_get_file_list_multiple_concurrent_calls_release_semaphore() {
                 .unwrap_or_else(|| panic!("No response for call {i}"));
             assert_eq!(response.id, FILE_LIST, "call {i} should return FILE_LIST");
             let mut response_msg = response;
-            assert_eq!(response_msg.pop_string(), test_uuid);
             let count = response_msg.pop_uint();
             assert_eq!(count, 1, "call {i} should list 1 file");
         }
@@ -1352,7 +1346,6 @@ fn test_get_file_list_unreadable_directory_non_recursive() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_uint(),
             0,
@@ -1434,7 +1427,6 @@ fn test_get_file_list_unreadable_directory_recursive() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_uint(),
             0,
