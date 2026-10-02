@@ -8,6 +8,7 @@
 
 use semver::Version;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -49,12 +50,20 @@ fn retry_delay_secs(attempt: u32) -> u64 {
             .unwrap_or(u64::MAX)
 }
 
+/// A release asset selected for download: its URL plus an optional SHA-256
+/// digest used to verify the downloaded bytes before installation.
+#[derive(Debug, PartialEq)]
+struct ReleaseInfo {
+    download_url: String,
+    digest: Option<String>,
+}
+
 /// Parse a GitHub releases API JSON response and return the download URL
 /// if a newer version is available, or None if already up-to-date.
 fn parse_release_response(
     response: &Value,
     current_version: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<ReleaseInfo>, String> {
     let latest_tag = response["tag_name"].as_str().unwrap_or("");
     let latest_version_str = latest_tag.trim_start_matches('v');
 
@@ -70,8 +79,46 @@ fn parse_release_response(
     let download_url = response["assets"][0]["browser_download_url"]
         .as_str()
         .ok_or("No download URL found in GitHub response")?;
+    let digest = response["assets"][0]["digest"].as_str().map(str::to_string);
 
-    Ok(Some(download_url.to_string()))
+    Ok(Some(ReleaseInfo {
+        download_url: download_url.to_string(),
+        digest,
+    }))
+}
+
+/// Compute the SHA-256 of `data` and compare it (case-insensitively) against
+/// `expected`. Returns an error on mismatch so the caller can abort the update
+/// before touching the running binary.
+///
+/// The GitHub releases API returns the asset digest in `sha256:<hex>` form, so a
+/// leading `sha256:` prefix (case-insensitive) is stripped before comparison.
+fn verify_sha256(data: &[u8], expected: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let trimmed = expected.trim();
+    let expected_hex = trimmed
+        .strip_prefix("sha256:")
+        .or_else(|| trimmed.strip_prefix("SHA256:"))
+        .unwrap_or(trimmed);
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let computed = format!("{:x}", hasher.finalize());
+    if computed.eq_ignore_ascii_case(expected_hex) {
+        Ok(())
+    } else {
+        Err(format!("sha256 mismatch: expected {expected}, computed {computed}").into())
+    }
+}
+
+/// Verify `data` against `digest` when one is present; skip verification when
+/// `digest` is absent. Returns an error on mismatch so the caller aborts the
+/// update before replacing the running binary.
+fn verify_download(data: &[u8], digest: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(expected) = digest {
+        verify_sha256(data, expected)
+    } else {
+        debug!("Update check: no digest present, skipping integrity verification");
+        Ok(())
+    }
 }
 
 /// Replace the running binary with downloaded update data.
@@ -108,7 +155,7 @@ fn replace_binary(
 }
 
 /// Check GitHub for latest release and return download URL if update is available.
-fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
+fn check_for_update() -> Result<Option<ReleaseInfo>, Box<dyn std::error::Error>> {
     let current_version = get_current_version();
     info!("Checking for updates. Current version: {current_version}");
     debug!("Update check: GitHub endpoint={}", GITHUB_ENDPOINT);
@@ -125,14 +172,17 @@ fn check_for_update() -> Result<Option<String>, Box<dyn std::error::Error>> {
         Ok(resp) => {
             let result: Value = resp.into_json()?;
             trace!("Update check: received response: {:?}", result);
-            let download_url = parse_release_response(&result, current_version)
+            let release = parse_release_response(&result, current_version)
                 .map_err(|e| format!("Failed to parse release response: {e}"))?;
-            if let Some(ref url) = download_url {
-                info!("Update check: update available, download URL={}", url);
+            if let Some(ref info) = release {
+                info!(
+                    "Update check: update available, download URL={}",
+                    info.download_url
+                );
             } else {
                 debug!("Update check: already up to date");
             }
-            Ok(download_url)
+            Ok(release)
         }
         Err(e) => {
             error!("Unable to check for update: {e}");
@@ -199,11 +249,13 @@ fn download_file(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     })
 }
 
-/// Perform the update: download, replace binary, and restart.
-fn perform_update(download_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// Perform the update: download, verify, replace binary, and restart.
+fn perform_update(release: &ReleaseInfo) -> Result<(), Box<dyn std::error::Error>> {
     let executable_path = std::env::current_exe()?;
     debug!("Performing update: executable_path={:?}", executable_path);
-    let update_data = download_file(download_url)?;
+    let update_data = download_file(&release.download_url)?;
+
+    verify_download(&update_data, release.digest.as_deref())?;
 
     debug!("Replacing binary...");
     replace_binary(&executable_path, &update_data)?;
@@ -225,8 +277,8 @@ pub fn check_for_updates() {
     #[cfg(not(test))]
     {
         match check_for_update() {
-            Ok(Some(download_url)) => {
-                if let Err(e) = perform_update(&download_url) {
+            Ok(Some(release)) => {
+                if let Err(e) = perform_update(&release) {
                     error!("Failed to perform update: {e}");
                 }
             }
@@ -373,8 +425,8 @@ mod tests {
         });
         let result = parse_release_response(&resp, "1.1.0").unwrap();
         assert_eq!(
-            result,
-            Some("https://example.com/adacs_job_client".to_string())
+            result.unwrap().download_url,
+            "https://example.com/adacs_job_client"
         );
     }
 
@@ -482,8 +534,8 @@ mod tests {
         });
         let result2 = parse_release_response(&resp2, "1.9.0").unwrap();
         assert_eq!(
-            result2,
-            Some("https://example.com/adacs_job_client".to_string())
+            result2.unwrap().download_url,
+            "https://example.com/adacs_job_client"
         );
     }
 
@@ -495,8 +547,8 @@ mod tests {
         });
         let result = parse_release_response(&resp, "1.1.0").unwrap();
         assert_eq!(
-            result,
-            Some("https://example.com/adacs_job_client".to_string())
+            result.unwrap().download_url,
+            "https://example.com/adacs_job_client"
         );
     }
 
@@ -511,8 +563,8 @@ mod tests {
         });
         let result = parse_release_response(&resp, "1.0.0").unwrap();
         assert_eq!(
-            result,
-            Some("https://example.com/first".to_string()),
+            result.unwrap().download_url,
+            "https://example.com/first",
             "should use the first asset entry only"
         );
     }
@@ -535,6 +587,134 @@ mod tests {
         });
         let result = parse_release_response(&resp, "1.0.0");
         assert!(result.is_err(), "invalid latest version should error");
+    }
+
+    #[test]
+    fn test_parse_release_reads_digest() {
+        let resp = json!({
+            "tag_name": "v2.0.0",
+            "assets": [{
+                "browser_download_url": "https://example.com/adacs_job_client",
+                "digest": "a".repeat(64)
+            }]
+        });
+        let result = parse_release_response(&resp, "1.0.0").unwrap();
+        let info = result.unwrap();
+        assert_eq!(info.digest.as_deref(), Some("a".repeat(64).as_str()));
+    }
+
+    #[test]
+    fn test_parse_release_null_digest() {
+        let resp = json!({
+            "tag_name": "v2.0.0",
+            "assets": [{
+                "browser_download_url": "https://example.com/adacs_job_client",
+                "digest": null
+            }]
+        });
+        let result = parse_release_response(&resp, "1.0.0").unwrap();
+        let info = result.unwrap();
+        assert_eq!(info.digest, None, "null digest should be treated as absent");
+    }
+
+    #[test]
+    fn test_parse_release_missing_digest() {
+        let resp = json!({
+            "tag_name": "v2.0.0",
+            "assets": [{"browser_download_url": "https://example.com/adacs_job_client"}]
+        });
+        let result = parse_release_response(&resp, "1.0.0").unwrap();
+        let info = result.unwrap();
+        assert_eq!(
+            info.digest, None,
+            "missing digest should be treated as absent"
+        );
+    }
+
+    // ─── verify_sha256 tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_verify_sha256_matches() {
+        let data = b"hello world";
+        let expected = format!("{:x}", Sha256::digest(data));
+        assert!(verify_sha256(data, &expected).is_ok());
+    }
+
+    #[test]
+    fn test_verify_sha256_case_insensitive() {
+        let data = b"hello world";
+        let expected = format!("{:X}", Sha256::digest(data));
+        assert!(
+            verify_sha256(data, &expected).is_ok(),
+            "uppercase hex digest should still verify"
+        );
+    }
+
+    #[test]
+    fn test_verify_sha256_mismatch() {
+        let data = b"hello world";
+        let wrong = format!("{:x}", Sha256::digest(b"hello worlD"));
+        let result = verify_sha256(data, &wrong);
+        assert!(
+            result.is_err(),
+            "a differing digest should fail verification"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("sha256 mismatch"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn test_verify_sha256_strips_sha256_prefix() {
+        // The GitHub releases API returns the asset digest as "sha256:<hex>".
+        let data = b"hello world";
+        let hex = format!("{:x}", Sha256::digest(data));
+        let prefixed = format!("sha256:{hex}");
+        assert!(
+            verify_sha256(data, &prefixed).is_ok(),
+            "a 'sha256:'-prefixed digest should verify after stripping the prefix"
+        );
+    }
+
+    #[test]
+    fn test_verify_sha256_strips_sha256_prefix_uppercase() {
+        let data = b"hello world";
+        let hex = format!("{:x}", Sha256::digest(data));
+        let prefixed = format!("SHA256:{hex}");
+        assert!(
+            verify_sha256(data, &prefixed).is_ok(),
+            "an uppercase 'SHA256:'-prefixed digest should verify after stripping"
+        );
+    }
+
+    // ─── verify_download tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_verify_download_matches() {
+        let data = b"hello world";
+        let expected = format!("{:x}", Sha256::digest(data));
+        assert!(verify_download(data, Some(&expected)).is_ok());
+    }
+
+    #[test]
+    fn test_verify_download_aborts_on_mismatch() {
+        let data = b"hello world";
+        let wrong = format!("{:x}", Sha256::digest(b"corrupted"));
+        assert!(
+            verify_download(data, Some(&wrong)).is_err(),
+            "a digest mismatch must abort the update before replacing the binary"
+        );
+    }
+
+    #[test]
+    fn test_verify_download_skips_when_no_digest() {
+        let data = b"hello world";
+        assert!(
+            verify_download(data, None).is_ok(),
+            "absent digest should skip verification and proceed"
+        );
     }
 
     // ─── replace_binary tests ─────────────────────────────────────────────
