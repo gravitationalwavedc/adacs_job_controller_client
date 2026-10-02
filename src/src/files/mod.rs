@@ -706,7 +706,6 @@ impl DirEntryHandler for FileListHandler<'_> {
 
 fn send_file_list_error(uuid: &str, error_msg: &str) {
     let mut result = Message::new(FILE_LIST_ERROR, Priority::Highest, uuid);
-    result.push_string(uuid);
     result.push_string(error_msg);
     get_websocket_client().queue_message(
         uuid.to_string(),
@@ -2996,7 +2995,6 @@ mod tests {
         let mut resp = Message::from_data(data);
         assert_eq!(resp.id, FILE_LIST_ERROR);
         assert_eq!(resp.source, "uuid-123");
-        assert_eq!(resp.pop_string(), "uuid-123");
         assert_eq!(resp.pop_string(), "boom");
     }
 
