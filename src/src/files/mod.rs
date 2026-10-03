@@ -1592,7 +1592,7 @@ struct UploadFields {
 
 fn parse_upload_fields(msg: &mut Message) -> UploadFields {
     UploadFields {
-        uuid: msg.pop_string(),
+        uuid: msg.source.clone(),
         job_id: i64::from(msg.pop_uint()),
         bundle_hash: msg.pop_string(),
         target_path: msg.pop_string(),
@@ -2493,8 +2493,7 @@ mod tests {
 
     #[test]
     fn parse_upload_fields_reads_wire_order() {
-        let mut msg = Message::new(UPLOAD_FILE, Priority::Highest, "client");
-        msg.push_string("uuid-123");
+        let mut msg = Message::new(UPLOAD_FILE, Priority::Highest, "uuid-123");
         msg.push_uint(42);
         msg.push_string("bundle-hash");
         msg.push_string("/data/out.txt");

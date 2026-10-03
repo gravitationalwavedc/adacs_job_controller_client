@@ -1622,8 +1622,7 @@ fn test_get_file_upload_connect_failure() {
         // Point the file WebSocket endpoint at an invalid port so connect fails.
         set_test_config(1);
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(2234);
         msg_raw.push_string("some_hash");
         msg_raw.push_string("test.txt");
@@ -2330,8 +2329,7 @@ fn test_file_upload_job_based_success() {
         let file_content = b"uploaded content";
         let target_path = "subdir/uploaded.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -2403,8 +2401,7 @@ fn test_file_upload_ignores_stray_text_frame() {
         let file_content = b"uploaded content";
         let target_path = "subdir/uploaded.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -2480,8 +2477,7 @@ fn test_file_upload_ignores_stray_binary_frame() {
         let file_content = b"uploaded content";
         let target_path = "subdir/uploaded.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -2550,8 +2546,7 @@ fn test_file_upload_bundle_based_success() {
         let file_content = b"bundle uploaded content";
         let target_path = "bundle_file.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(0); // No job
         msg_raw.push_string(bundle_hash);
         msg_raw.push_string(target_path);
@@ -2632,8 +2627,7 @@ fn test_file_upload_invalid_path_outside_working_directory() {
         let outside_filename = outside_file.file_name().unwrap().to_str().unwrap();
         let target_path = format!("../{outside_filename}");
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(&target_path);
@@ -2690,8 +2684,7 @@ fn test_file_upload_invalid_job_id() {
         let test_uuid = "test-uuid-upload-invalid-job".to_string();
         let target_path = "test.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(99999); // Non-existent job ID
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -2743,8 +2736,7 @@ fn test_file_upload_database_error() {
         let test_uuid = "test-uuid-upload-db-err".to_string();
         let target_path = "test.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(1243); // Job ID
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -2806,8 +2798,7 @@ fn test_file_upload_job_submitting() {
         let test_uuid = "test-uuid-upload-submitting".to_string();
         let target_path = "test.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -2888,8 +2879,7 @@ fn test_file_upload_symlink_outside_working_directory() {
         // Target path goes through symlink to escape working directory
         let target_path = "symlink_to_outside/escaped_file.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -2970,8 +2960,7 @@ fn test_file_upload_partial_file_cleanup_on_error() {
         let declared_size = 1000u64;
         let actual_size = 500u64; // Send less than declared
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3053,8 +3042,7 @@ fn test_file_upload_chunk_write_failure() {
         let target_path = "partial_file.txt";
         let declared_size = 1000u64;
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3136,8 +3124,7 @@ fn test_file_upload_partial_file_cleanup_on_connection_drop() {
         let declared_size = 1000u64;
         let actual_size = 500u64; // Send less than declared
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3225,8 +3212,7 @@ fn test_file_upload_partial_file_cleanup_on_peer_close() {
         let declared_size = 1000u64;
         let actual_size = 500u64; // Send less than declared
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3313,8 +3299,7 @@ fn test_file_upload_partial_file_cleanup_on_receive_error() {
         let declared_size = 1000u64;
         let actual_size = 500u64; // Send less than declared
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3440,8 +3425,7 @@ fn test_multiple_concurrent_file_uploads() {
                 let bundle_hash = format!("bundle_{i}");
                 let ws_url = format!("ws://127.0.0.1:{port}/ws/");
 
-                let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-                msg_raw.push_string(&test_uuid);
+                let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
                 msg_raw.push_uint(job_id as u32);
                 msg_raw.push_string(&bundle_hash);
                 msg_raw.push_string(&target_path);
@@ -3542,8 +3526,7 @@ fn test_file_upload_nested_directory_creation() {
         let target_path = "subdir/nested/deep/file.txt";
         let file_content = b"uploaded to nested dirs";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3632,8 +3615,7 @@ fn test_file_upload_write_permission_error() {
         let target_path = "protected/file.txt";
         let file_content = b"should fail to write";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3722,8 +3704,7 @@ fn test_file_upload_open_write_error() {
         let target_path = "protected/file.txt";
         let file_content = b"should fail to open";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3809,8 +3790,7 @@ fn test_file_upload_create_dir_all_error() {
         let target_path = "blocker/sub/file.txt";
         let file_content = b"should fail to create parent dir";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3879,8 +3859,7 @@ fn test_file_upload_large_file() {
         let file_content = vec![0u8; 1024 * 1024]; // 1MB
         let target_path = "large.bin";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -3949,8 +3928,7 @@ fn test_file_upload_mid_transfer_ping_is_ignored_and_complete_commits() {
         let file_content = vec![0xAB; 128 * 1024]; // 128KB
         let target_path = "ping.bin";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -4028,8 +4006,7 @@ fn test_file_upload_file_size_mismatch() {
 
         let test_uuid = "test-uuid-upload-mismatch".to_string();
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string("mismatch.txt");
@@ -4092,8 +4069,7 @@ fn test_file_upload_zero_byte_file() {
         let test_uuid = "test-uuid-upload-zero".to_string();
         let target_path = "zero.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -4152,8 +4128,7 @@ fn test_file_upload_actual_bigger_than_declared() {
         let test_uuid = "test-uuid-upload-bigger".to_string();
         let target_path = "bigger.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -4216,8 +4191,7 @@ fn test_file_upload_chunk_exceeds_declared_size() {
         let test_uuid = "test-uuid-upload-chunk-exceeds".to_string();
         let target_path = "chunk_exceeds.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
@@ -4286,8 +4260,7 @@ fn test_file_upload_zero_declared_with_chunk() {
         let test_uuid = "test-uuid-upload-zero-chunk".to_string();
         let target_path = "zero_chunk.txt";
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string(target_path);
