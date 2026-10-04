@@ -161,18 +161,6 @@ impl WebsocketLifecycleObserver {
     pub fn termination(&self) -> ConnectionTermination {
         ConnectionTermination::from_u8(self.state.termination.load(Ordering::Acquire))
     }
-
-    pub async fn wait_for_accepted(&self, target: usize) {
-        while self.accepted_connections() < target {
-            self.state.accepted_notify.notified().await;
-        }
-    }
-
-    pub async fn wait_for_handler_completion(&self, released_baseline: usize) {
-        while self.released_connections() <= released_baseline {
-            self.state.handler_completed_notify.notified().await;
-        }
-    }
 }
 
 struct LiveConnectionGuard {
