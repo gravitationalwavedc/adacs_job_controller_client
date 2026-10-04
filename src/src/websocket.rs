@@ -266,26 +266,6 @@ impl TungsteniteWebsocketClient {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn get_ping_timestamp(&self) -> i64 {
-        self.ping_timestamp.load(Ordering::SeqCst)
-    }
-
-    #[cfg(test)]
-    fn get_pong_timestamp(&self) -> i64 {
-        self.pong_timestamp.load(Ordering::SeqCst)
-    }
-
-    #[cfg(test)]
-    fn set_pong_timestamp(&self, ts: i64) {
-        self.pong_timestamp.store(ts, Ordering::SeqCst);
-    }
-
-    #[cfg(test)]
-    fn set_ping_timestamp(&self, ts: i64) {
-        self.ping_timestamp.store(ts, Ordering::SeqCst);
-    }
-
     fn handle_disconnect(&self, connection_id: u64, disconnect_notify: &Arc<Notify>) {
         if self.connection_id.load(Ordering::SeqCst) != connection_id {
             debug!(
@@ -2000,12 +1980,12 @@ mod tests {
         let client = TungsteniteWebsocketClient::new();
 
         assert_eq!(
-            client.get_ping_timestamp(),
+            client.ping_timestamp.load(Ordering::SeqCst),
             0,
             "pingTimestamp was not zero when it should have been"
         );
         assert_eq!(
-            client.get_pong_timestamp(),
+            client.pong_timestamp.load(Ordering::SeqCst),
             0,
             "pongTimestamp was not zero when it should have been"
         );
@@ -2026,16 +2006,16 @@ mod tests {
         // Check that neither ping or pong timestamp is zero
         let zero_time: i64 = 0;
         assert!(
-            client.get_ping_timestamp() != zero_time,
+            client.ping_timestamp.load(Ordering::SeqCst) != zero_time,
             "pingTimestamp was zero when it should not have been"
         );
         assert!(
-            client.get_pong_timestamp() != zero_time,
+            client.pong_timestamp.load(Ordering::SeqCst) != zero_time,
             "pongTimestamp was zero when it should not have been"
         );
 
-        let old_ping = client.get_ping_timestamp();
-        let prev_pong = client.get_pong_timestamp();
+        let old_ping = client.ping_timestamp.load(Ordering::SeqCst);
+        let prev_pong = client.pong_timestamp.load(Ordering::SeqCst);
 
         // Run the ping pong again, the new ping/pong timestamps should be greater than the previous ones
         // Wait a small amount to ensure timestamps are different
@@ -2047,9 +2027,9 @@ mod tests {
         }
 
         // Check that neither ping or pong timestamp is zero
-        assert!(client.get_ping_timestamp() > old_ping,
+        assert!(client.ping_timestamp.load(Ordering::SeqCst) > old_ping,
             "pingTimestamp was not greater than the previous ping timestamp when it should have been");
-        assert!(client.get_pong_timestamp() > prev_pong,
+        assert!(client.pong_timestamp.load(Ordering::SeqCst) > prev_pong,
             "pongTimestamp was not greater than the previous pong timestamp when it should have been");
     }
 
@@ -2066,7 +2046,7 @@ mod tests {
         }
 
         // Set the pong_timestamp back to zero (simulating timeout - matches C++ behavior)
-        client.set_pong_timestamp(0);
+        client.pong_timestamp.store(0, Ordering::SeqCst);
 
         // Running check_pings should now return an error (in C++ this throws/aborts)
         let result = client.check_pings_internal();
@@ -2082,7 +2062,7 @@ mod tests {
         let client = TungsteniteWebsocketClient::new();
 
         // Set ping timestamp (simulating that we sent a ping)
-        client.set_ping_timestamp(1000);
+        client.ping_timestamp.store(1000, Ordering::SeqCst);
 
         // Keep pong at zero (simulating no response)
         let result = client.check_pings_internal();
@@ -2097,8 +2077,8 @@ mod tests {
         // Normal case: both ping and pong timestamps are set
         let client = TungsteniteWebsocketClient::new();
 
-        client.set_ping_timestamp(1000);
-        client.set_pong_timestamp(1000);
+        client.ping_timestamp.store(1000, Ordering::SeqCst);
+        client.pong_timestamp.store(1000, Ordering::SeqCst);
 
         // check_pings should succeed
         let result = client.check_pings_internal();
@@ -2112,8 +2092,8 @@ mod tests {
     fn test_check_pings_initial_state_succeeds() {
         let client = TungsteniteWebsocketClient::new();
 
-        assert_eq!(client.get_ping_timestamp(), 0);
-        assert_eq!(client.get_pong_timestamp(), 0);
+        assert_eq!(client.ping_timestamp.load(Ordering::SeqCst), 0);
+        assert_eq!(client.pong_timestamp.load(Ordering::SeqCst), 0);
         assert!(
             client.check_pings_internal().is_ok(),
             "check_pings should succeed before any ping has been sent"
@@ -2129,7 +2109,7 @@ mod tests {
         client.handle_pong(1);
 
         assert_eq!(
-            client.get_pong_timestamp(),
+            client.pong_timestamp.load(Ordering::SeqCst),
             0,
             "pong from a superseded connection must not update pong_timestamp"
         );
@@ -2144,7 +2124,7 @@ mod tests {
         client.handle_pong(5);
 
         assert_ne!(
-            client.get_pong_timestamp(),
+            client.pong_timestamp.load(Ordering::SeqCst),
             0,
             "pong for the active connection should update pong_timestamp"
         );
@@ -2163,7 +2143,7 @@ mod tests {
         client.handle_pong(5);
 
         assert_ne!(
-            client.get_pong_timestamp(),
+            client.pong_timestamp.load(Ordering::SeqCst),
             0,
             "a pong received before any ping was sent should still update pong_timestamp"
         );
