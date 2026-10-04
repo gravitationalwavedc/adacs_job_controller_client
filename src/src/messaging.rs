@@ -121,22 +121,15 @@ impl Message {
     }
 
     pub fn push_bool(&mut self, value: bool) {
-        self.push_ubyte(u8::from(value));
-    }
-
-    pub fn pop_bool(&mut self) -> bool {
-        self.pop_ubyte() == 1
-    }
-
-    pub fn push_ubyte(&mut self, value: u8) {
+        let value = u8::from(value);
         trace!("Message: pushing ubyte value={}", value);
         self.data.write_u8(value).unwrap();
     }
 
-    pub fn pop_ubyte(&mut self) -> u8 {
+    pub fn pop_bool(&mut self) -> bool {
         if self.index + 1 > self.data.len() {
             warn!("pop_ubyte: buffer underflow at index {}", self.index);
-            return 0;
+            return false;
         }
         let value = self.data[self.index];
         self.index += 1;
@@ -145,7 +138,7 @@ impl Message {
             value,
             self.index - 1
         );
-        value
+        value == 1
     }
 
     pub fn push_byte(&mut self, value: i8) {
@@ -433,10 +426,10 @@ mod tests {
     #[test]
     fn pop_bool_treats_only_one_as_true() {
         let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_ubyte(0);
-        msg.push_ubyte(1);
-        msg.push_ubyte(2);
-        msg.push_ubyte(255);
+        msg.data.write_u8(0).unwrap();
+        msg.data.write_u8(1).unwrap();
+        msg.data.write_u8(2).unwrap();
+        msg.data.write_u8(255).unwrap();
 
         let mut read_msg = Message::from_data(msg.get_data().clone());
 
@@ -577,21 +570,6 @@ mod tests {
     }
 
     #[test]
-    fn test_primitive_ubyte() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_ubyte(1);
-        msg.push_ubyte(5);
-        msg.push_ubyte(245);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert_eq!(read_msg.pop_ubyte(), 1);
-        assert_eq!(read_msg.pop_ubyte(), 5);
-        assert_eq!(read_msg.pop_ubyte(), 245);
-    }
-
-    #[test]
     fn test_primitive_byte() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         msg.push_byte(-128);
@@ -610,7 +588,7 @@ mod tests {
     fn pop_byte_interprets_wire_octet_via_cast_signed() {
         let mut msg = Message::new(1, Priority::Highest, "test");
         // C++ wire format stores i8 as a single octet; pop_byte uses cast_signed.
-        msg.push_ubyte(255);
+        msg.data.write_u8(255).unwrap();
 
         let data = msg.get_data().clone();
         let mut read_msg = Message::from_data(data);
@@ -816,7 +794,7 @@ mod tests {
         let mut msg = Message::new(1, Priority::Highest, "test");
 
         msg.push_bool(true);
-        msg.push_ubyte(42);
+        msg.data.write_u8(42).unwrap();
         msg.push_short(-1000);
         msg.push_uint(12345);
         msg.push_string("test");
@@ -826,7 +804,7 @@ mod tests {
         let mut read_msg = Message::from_data(data);
 
         assert!(read_msg.pop_bool());
-        assert_eq!(read_msg.pop_ubyte(), 42);
+        assert_eq!(read_msg.pop_byte(), 42);
         assert_eq!(read_msg.pop_short(), -1000);
         assert_eq!(read_msg.pop_uint(), 12345);
         assert_eq!(read_msg.pop_string(), "test");
@@ -848,17 +826,6 @@ mod tests {
         let mut msg = truncated_message(vec![], 0);
         assert!(!msg.pop_bool());
         assert_eq!(msg.index, 0);
-    }
-
-    #[test]
-    fn pop_ubyte_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_ubyte(), 0);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01], 1);
-        assert_eq!(partial.pop_ubyte(), 0);
-        assert_eq!(partial.index, 1);
     }
 
     #[test]
