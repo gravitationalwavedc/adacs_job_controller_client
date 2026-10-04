@@ -341,21 +341,17 @@ impl Message {
         self.data.len().saturating_sub(self.index)
     }
 
-    pub fn clone_for_reading(&self) -> Self {
-        Self {
-            id: self.id,
-            source: self.source.clone(),
-            priority: self.priority,
-            data: self.data.clone(),
-            index: self.index,
-        }
-    }
-
     pub fn clone_for_payload_reading(&self) -> Self {
         if self.index == 0 {
             Self::from_data(self.data.clone())
         } else {
-            self.clone_for_reading()
+            Self {
+                id: self.id,
+                source: self.source.clone(),
+                priority: self.priority,
+                data: self.data.clone(),
+                index: self.index,
+            }
         }
     }
 
@@ -444,19 +440,6 @@ mod tests {
         assert!(read_msg.pop_bool());
         assert!(!read_msg.pop_bool());
         assert!(!read_msg.pop_bool());
-    }
-
-    #[test]
-    fn clone_for_reading_preserves_current_index() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_uint(123);
-        msg.push_ulong(456);
-
-        let mut read_msg = Message::from_data(msg.get_data().clone());
-        assert_eq!(read_msg.pop_uint(), 123);
-
-        let mut cloned = read_msg.clone_for_reading();
-        assert_eq!(cloned.pop_ulong(), 456);
     }
 
     #[test]
