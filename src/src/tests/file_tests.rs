@@ -217,7 +217,6 @@ fn test_get_file_list_job_not_exist() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(response_msg.pop_string(), "Job does not exist");
     } // end inner()
     inner();
@@ -268,7 +267,6 @@ fn test_get_file_list_database_error() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Database error: db connection failed"
@@ -335,7 +333,6 @@ fn test_get_file_list_job_submitting() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(response_msg.pop_string(), "Job is not submitted");
     } // end inner()
     inner();
@@ -400,7 +397,6 @@ fn test_get_file_list_job_outside_working_directory() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Path to list files is outside the working directory"
@@ -468,7 +464,6 @@ fn test_get_file_list_job_directory_not_exist() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Path to list files does not exist"
@@ -541,7 +536,6 @@ fn test_get_file_list_working_directory_not_exist() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Path to list files does not exist"
@@ -609,7 +603,6 @@ fn test_get_file_list_job_directory_is_a_file() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Path to list files is not a directory"
@@ -1040,7 +1033,6 @@ fn test_get_file_list_no_job_outside_working_directory() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Path to list files is outside the working directory"
@@ -1101,7 +1093,6 @@ fn test_get_file_list_no_job_directory_not_exist() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Path to list files does not exist"
@@ -1162,7 +1153,6 @@ fn test_get_file_list_no_job_directory_is_a_file() {
             .expect("No response");
         assert_eq!(response.id, FILE_LIST_ERROR);
         let mut response_msg = response;
-        assert_eq!(response_msg.pop_string(), test_uuid);
         assert_eq!(
             response_msg.pop_string(),
             "Path to list files is not a directory"
