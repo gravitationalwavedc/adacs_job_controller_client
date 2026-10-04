@@ -52,7 +52,6 @@ pub const CANCELLED: u32 = 70;
 pub const DELETING: u32 = 80;
 pub const DELETED: u32 = 90;
 pub const ERROR: u32 = 400;
-pub const WALL_TIME_EXCEEDED: u32 = 401;
 pub const OUT_OF_MEMORY: u32 = 402;
 pub const COMPLETED: u32 = 500;
 
