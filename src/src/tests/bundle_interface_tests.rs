@@ -13,18 +13,19 @@ use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoad
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, set_py_unicode_from_string_override,
-    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
-    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
-    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
-    PyUnicodeFromStringFn, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t,
-    PYTHON_MUTEX,
+    my_py_none_struct, set_py_tuple_new_override, set_py_tuple_set_item_override,
+    set_py_unicode_from_string_override, PyDict_GetItemString, PyDict_New, PyDict_SetItemString,
+    PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins, PyImport_ImportModule,
+    PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString, PyRun_StringFlags, PyTupleNewFn,
+    PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size, PyUnicodeFromStringFn, PyUnicode_FromString,
+    Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
 use std::io::Write;
 use std::os::raw::c_int;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1883,6 +1884,64 @@ fn test_run_returns_err_when_json_loads_returns_null() {
     assert!(
         result.is_err(),
         "run should return Err(NoneException) when json_loads returns NULL"
+    );
+}
+
+// The `PyTuple_New` allocation in `BundleInterface::run` (bundle_interface.rs)
+// is unreachable through the public API: `PyTuple_New(2)` always succeeds in
+// practice. This test uses the test-only `py_tuple_new` override seam to force
+// the NULL branch and verify `run` returns `Err(NoneException)` before calling
+// the bundle function.
+
+/// RAII guard that installs a `py_tuple_new` override for the duration of a
+/// test and restores the previous override on drop.
+struct PyTupleNewOverrideGuard(Option<PyTupleNewFn>);
+
+impl PyTupleNewOverrideGuard {
+    fn install(f: PyTupleNewFn) -> Self {
+        Self(set_py_tuple_new_override(Some(f)))
+    }
+}
+
+impl Drop for PyTupleNewOverrideGuard {
+    fn drop(&mut self) {
+        set_py_tuple_new_override(self.0);
+    }
+}
+
+/// Override that makes `py_tuple_new` always return NULL, forcing the
+/// `p_args.is_null()` early-return branch in `BundleInterface::run`.
+// SAFETY: Test-only; returns NULL without touching the Python error indicator.
+unsafe fn null_py_tuple_new(_len: Py_ssize_t) -> *mut PyObject {
+    NULL_PY_TUPLE_NEW_CALLS.fetch_add(1, Ordering::SeqCst);
+    std::ptr::null_mut()
+}
+
+static NULL_PY_TUPLE_NEW_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+/// DIRECT UNIT TEST — covers the `p_args.is_null()` early-return branch in
+/// `BundleInterface::run`. Forcing `py_tuple_new` to return NULL via the
+/// test-only override seam must make `run` return `Err(NoneException)` before
+/// the bundle function is called.
+#[test]
+fn test_run_returns_err_when_py_tuple_new_returns_null() {
+    NULL_PY_TUPLE_NEW_CALLS.store(0, Ordering::SeqCst);
+    let bundle = load_bundle_for_exception_printer();
+    let _override = PyTupleNewOverrideGuard::install(null_py_tuple_new);
+
+    let result = unsafe {
+        let _guard = PYTHON_MUTEX.lock();
+        let _scope = bundle.thread_scope().expect("thread scope");
+        bundle.run("submit", &serde_json::json!({}), "job_data")
+    };
+    assert!(
+        result.is_err(),
+        "run should return Err(NoneException) when PyTuple_New returns NULL"
+    );
+    assert_eq!(
+        NULL_PY_TUPLE_NEW_CALLS.load(Ordering::SeqCst),
+        1,
+        "the PyTuple_New override should have been hit exactly once"
     );
 }
 
