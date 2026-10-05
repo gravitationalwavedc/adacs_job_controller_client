@@ -47,7 +47,6 @@ pub const SUBMITTING: u32 = 20;
 pub const SUBMITTED: u32 = 30;
 pub const QUEUED: u32 = 40;
 pub const RUNNING: u32 = 50;
-pub const CANCELLING: u32 = 60;
 pub const CANCELLED: u32 = 70;
 pub const DELETING: u32 = 80;
 pub const DELETED: u32 = 90;

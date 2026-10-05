@@ -1951,7 +1951,7 @@ fn test_archive_dir_empty_directory() {
 
 use crate::db::{job, jobstatus};
 use crate::jobs::check_job_status;
-use crate::messaging::{CANCELLING, COMPLETED, RUNNING, UPDATE_JOB};
+use crate::messaging::{COMPLETED, RUNNING, UPDATE_JOB};
 use std::io::Write;
 use tempfile::TempDir;
 use tracing_subscriber::fmt::MakeWriter;
@@ -3512,7 +3512,7 @@ fn test_check_status_cancelling_does_not_terminate_job() {
         assert_eq!(msg.id, UPDATE_JOB);
         assert_eq!(msg.pop_uint(), job_id as u32);
         assert_eq!(msg.pop_string(), "cancel");
-        assert_eq!(msg.pop_uint(), CANCELLING);
+        assert_eq!(msg.pop_uint(), 60);
 
         // No completion message should follow
         assert!(
