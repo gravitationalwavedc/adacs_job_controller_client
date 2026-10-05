@@ -1054,7 +1054,7 @@ fn test_check_status_job_running_same_status() {
             id: original_id,
             job_id: job.id,
             what: "test_what".to_string(),
-            state: 50,
+            state: RUNNING as i32,
         };
         {
             let mut s = state.lock().unwrap();
@@ -1080,7 +1080,7 @@ fn test_check_status_job_running_same_status() {
             .collect();
         assert_eq!(v_status.len(), 1);
         assert_eq!(v_status[0].id, original_id);
-        assert_eq!(v_status[0].state, 50);
+        assert_eq!(v_status[0].state, RUNNING as i32);
     }
     inner();
 }
@@ -1175,7 +1175,7 @@ fn test_check_status_job_running_same_status_multiple() {
                     id: original_id1,
                     job_id: job.id,
                     what: "what1".to_string(),
-                    state: 50,
+                    state: RUNNING as i32,
                 },
             );
             s.statuses.insert(
@@ -1184,7 +1184,7 @@ fn test_check_status_job_running_same_status_multiple() {
                     id: original_id2,
                     job_id: job.id,
                     what: "what2".to_string(),
-                    state: 50,
+                    state: RUNNING as i32,
                 },
             );
             s.next_status_id = 3;
@@ -1956,6 +1956,8 @@ use std::io::Write;
 use tempfile::TempDir;
 use tracing_subscriber::fmt::MakeWriter;
 
+const RUNNING: u32 = 50;
+
 fn setup_check_status_test(
     db_name: &str,
 ) -> (
@@ -2666,7 +2668,7 @@ fn test_check_status_job_running_force_notification_duplicates() {
                     id: 1,
                     job_id: job.id,
                     what: "test_what".to_string(),
-                    state: 50 - 10,
+                    state: RUNNING as i32 - 10,
                 },
             );
             s.statuses.insert(
@@ -2675,7 +2677,7 @@ fn test_check_status_job_running_force_notification_duplicates() {
                     id: 2,
                     job_id: job.id,
                     what: "test_what".to_string(),
-                    state: 50 - 10,
+                    state: RUNNING as i32 - 10,
                 },
             );
             s.next_status_id = 3;
@@ -2702,7 +2704,7 @@ fn test_check_status_job_running_force_notification_duplicates() {
             .collect();
         assert_eq!(v_status.len(), 1);
         assert_eq!(v_status[0].what, "test_what");
-        assert_eq!(v_status[0].state, 50);
+        assert_eq!(v_status[0].state, RUNNING as i32);
 
         // Wait for message
         let msg_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
@@ -2714,7 +2716,7 @@ fn test_check_status_job_running_force_notification_duplicates() {
         assert_eq!(msg.id, UPDATE_JOB);
         assert_eq!(msg.pop_uint(), 1234);
         assert_eq!(msg.pop_string(), "test_what");
-        assert_eq!(msg.pop_uint(), 50);
+        assert_eq!(msg.pop_uint(), RUNNING);
         assert_eq!(msg.pop_string(), "Some info");
     }
     inner();
@@ -2742,7 +2744,7 @@ fn test_check_status_logs_failed_duplicate_status_delete() {
                 id: 1,
                 job_id: job.id,
                 what: "test_what".to_string(),
-                state: (50 - 10),
+                state: (RUNNING - 10) as i32,
             },
         );
         s.statuses.insert(
@@ -2751,7 +2753,7 @@ fn test_check_status_logs_failed_duplicate_status_delete() {
                 id: 2,
                 job_id: job.id,
                 what: "test_what".to_string(),
-                state: (50 - 10),
+                state: (RUNNING - 10) as i32,
             },
         );
         s.next_status_id = 3;
@@ -2780,11 +2782,11 @@ fn test_check_status_logs_failed_duplicate_status_delete() {
                     resp.push_ulong(1);
                     resp.push_ulong(job.id as u64);
                     resp.push_string("test_what");
-                    resp.push_uint(50 - 10);
+                    resp.push_uint(RUNNING - 10);
                     resp.push_ulong(2);
                     resp.push_ulong(job.id as u64);
                     resp.push_string("test_what");
-                    resp.push_uint(50 - 10);
+                    resp.push_uint(RUNNING - 10);
                 }
                 DB_JOBSTATUS_SAVE => {
                     let mut m = Message::from_data(msg.get_data().clone());
@@ -2853,7 +2855,7 @@ fn test_check_status_logs_failed_duplicate_status_delete() {
     assert_eq!(v_status.len(), 3);
     assert!(v_status
         .iter()
-        .any(|s| s.what == "test_what" && s.state == 50));
+        .any(|s| s.what == "test_what" && s.state == RUNNING as i32));
 
     // The UPDATE_JOB notification is still queued.
     let msg_data = rx.try_recv().expect("expected queued UPDATE_JOB message");
@@ -2861,7 +2863,7 @@ fn test_check_status_logs_failed_duplicate_status_delete() {
     assert_eq!(msg.id, UPDATE_JOB);
     assert_eq!(msg.pop_uint(), 1234);
     assert_eq!(msg.pop_string(), "test_what");
-    assert_eq!(msg.pop_uint(), 50);
+    assert_eq!(msg.pop_uint(), RUNNING);
     assert_eq!(msg.pop_string(), "Some info");
 }
 
@@ -2889,7 +2891,7 @@ fn test_check_status_job_running_force_notification() {
                     id: original_id,
                     job_id: job.id,
                     what: "test_what".to_string(),
-                    state: (50 - 10),
+                    state: (RUNNING - 10) as i32,
                 },
             );
             s.next_status_id = 2;
@@ -2917,7 +2919,7 @@ fn test_check_status_job_running_force_notification() {
         assert_eq!(v_status.len(), 1);
         assert_eq!(v_status[0].id, original_id);
         assert_eq!(v_status[0].what, "test_what");
-        assert_eq!(v_status[0].state, 50);
+        assert_eq!(v_status[0].state, RUNNING as i32);
 
         // Wait for message
         let msg_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
@@ -2929,7 +2931,7 @@ fn test_check_status_job_running_force_notification() {
         assert_eq!(msg.id, UPDATE_JOB);
         assert_eq!(msg.pop_uint(), 1234);
         assert_eq!(msg.pop_string(), "test_what");
-        assert_eq!(msg.pop_uint(), 50);
+        assert_eq!(msg.pop_uint(), RUNNING);
         assert_eq!(msg.pop_string(), "Some info");
     }
     inner();
@@ -2952,7 +2954,7 @@ fn test_check_status_job_running_force_notification_same_status() {
                 id: s.next_status_id,
                 job_id: job.id,
                 what: "test_what".to_string(),
-                state: 50,
+                state: RUNNING as i32,
             };
             s.next_status_id += 1;
             let original_id = status.id;
@@ -3021,7 +3023,7 @@ fn test_check_status_job_running_force_notification_same_status() {
             .collect();
         assert_eq!(v_status.len(), 1);
         assert_eq!(v_status[0].id, original_id);
-        assert_eq!(v_status[0].state, 50);
+        assert_eq!(v_status[0].state, RUNNING as i32);
 
         // Should still send message because force_notification=true
         let msg_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
@@ -3033,7 +3035,7 @@ fn test_check_status_job_running_force_notification_same_status() {
         assert_eq!(msg.id, UPDATE_JOB);
         assert_eq!(msg.pop_uint(), 1234);
         assert_eq!(msg.pop_string(), "test_what");
-        assert_eq!(msg.pop_uint(), 50);
+        assert_eq!(msg.pop_uint(), RUNNING);
     }
     inner();
 }
@@ -3076,7 +3078,7 @@ fn test_check_status_new_status_no_existing() {
             .collect();
         assert_eq!(v_status.len(), 1);
         assert_eq!(v_status[0].what, "test_what");
-        assert_eq!(v_status[0].state, 50);
+        assert_eq!(v_status[0].state, RUNNING as i32);
 
         // Wait for message
         let msg_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
@@ -3088,7 +3090,7 @@ fn test_check_status_new_status_no_existing() {
         assert_eq!(msg.id, UPDATE_JOB);
         assert_eq!(msg.pop_uint(), 1234);
         assert_eq!(msg.pop_string(), "test_what");
-        assert_eq!(msg.pop_uint(), 50);
+        assert_eq!(msg.pop_uint(), RUNNING);
         assert_eq!(msg.pop_string(), "Some info");
     }
     inner();
@@ -3121,7 +3123,7 @@ fn test_check_status_job_running_changed_status() {
             id: 1,
             job_id: job.id,
             what: "test_what".to_string(),
-            state: (50 - 10), // QUEUED
+            state: (RUNNING - 10) as i32, // QUEUED
         };
         state.lock().unwrap().statuses.insert(1, status);
 
@@ -3149,7 +3151,7 @@ fn test_check_status_job_running_changed_status() {
             .filter(|s| s.job_id == job.id)
             .cloned()
             .collect();
-        assert!(v_status.iter().any(|s| s.state == 50));
+        assert!(v_status.iter().any(|s| s.state == RUNNING as i32));
 
         // Wait for message
         let msg_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
@@ -3161,7 +3163,7 @@ fn test_check_status_job_running_changed_status() {
         assert_eq!(msg.id, UPDATE_JOB);
         assert_eq!(msg.pop_uint(), 1234);
         assert_eq!(msg.pop_string(), "test_what");
-        assert_eq!(msg.pop_uint(), 50);
+        assert_eq!(msg.pop_uint(), RUNNING);
         assert_eq!(msg.pop_string(), "Some info");
     }
     inner();
@@ -3620,7 +3622,7 @@ fn test_check_status_job_running_changed_status_multiple() {
                     id: original_id1,
                     job_id: job.id,
                     what: "what1".to_string(),
-                    state: (50 - 10),
+                    state: (RUNNING - 10) as i32,
                 },
             );
             s.statuses.insert(
@@ -3629,7 +3631,7 @@ fn test_check_status_job_running_changed_status_multiple() {
                     id: original_id2,
                     job_id: job.id,
                     what: "what2".to_string(),
-                    state: (50 - 10),
+                    state: (RUNNING - 10) as i32,
                 },
             );
             s.next_status_id = 3;
@@ -3654,7 +3656,7 @@ fn test_check_status_job_running_changed_status_multiple() {
         assert!(ids.contains(&original_id1));
         assert!(ids.contains(&original_id2));
         // Both should now be RUNNING
-        assert!(v_status.iter().all(|s| s.state == 50));
+        assert!(v_status.iter().all(|s| s.state == RUNNING as i32));
 
         // Wait for both messages
         let msg_data1 = tokio::time::timeout(Duration::from_secs(2), rx.recv())
@@ -3673,7 +3675,7 @@ fn test_check_status_job_running_changed_status_multiple() {
         let what1 = msg1.pop_string();
         let state1 = msg1.pop_uint();
         assert!(what1 == "what1" || what1 == "what2");
-        assert_eq!(state1, 50);
+        assert_eq!(state1, RUNNING);
 
         let mut msg2 = Message::from_data(msg_data2);
         assert_eq!(msg2.id, UPDATE_JOB);
@@ -3681,7 +3683,7 @@ fn test_check_status_job_running_changed_status_multiple() {
         let what2 = msg2.pop_string();
         let state2 = msg2.pop_uint();
         assert!(what2 == "what1" || what2 == "what2");
-        assert_eq!(state2, 50);
+        assert_eq!(state2, RUNNING);
 
         // Verify we got both statuses
         assert_ne!(
