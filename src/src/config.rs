@@ -123,7 +123,7 @@ pub fn get_python_library_path() -> String {
 }
 
 /// Ensure the WebSocket endpoint URL ends with a trailing slash.
-pub fn ensure_websocket_endpoint_trailing_slash(endpoint: &str) -> String {
+fn ensure_websocket_endpoint_trailing_slash(endpoint: &str) -> String {
     if endpoint.ends_with('/') {
         endpoint.to_string()
     } else {
