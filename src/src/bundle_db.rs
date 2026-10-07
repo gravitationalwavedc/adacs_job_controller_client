@@ -104,20 +104,22 @@ fn get_job_by_id_load_failure(bundle_hash: &str, e: &str) -> *mut PyObject {
 
 /// Handle a bundle-load failure in `load_bundle_and_job_id`: log the failure,
 /// then set the "Bundle not found in cache" error on the bundle's error
-/// exception object. Returns `None` without setting a Python error if the
-/// exception object could not be created.
+/// exception object. Returns without setting a Python error if the exception
+/// object could not be created.
 ///
 /// Extracted from `load_bundle_and_job_id` so the error-object-present branch
 /// is directly unit-testable (the full load-failure path cannot run with the
 /// GIL held, which `BundleInterface::new` requires the caller to have released).
-fn load_bundle_failure(bundle_hash: &str, e: &str) -> Option<()> {
+fn load_bundle_failure(bundle_hash: &str, e: &str) {
     error!(
         "DB: Bundle {} not found in cache during FFI callback: {}",
         bundle_hash, e
     );
-    let error_obj = get_bundle_db_error_or_abort("load_bundle_and_job_id", bundle_hash)?;
+    let Some(error_obj) = get_bundle_db_error_or_abort("load_bundle_and_job_id", bundle_hash)
+    else {
+        return;
+    };
     set_db_error_and_return_null(error_obj, "Bundle not found in cache");
-    None
 }
 
 pub(crate) fn set_bundle_db_error(bundle_hash: &str, exc: *mut crate::python_interface::PyObject) {
@@ -1123,8 +1125,7 @@ mod tests {
                 !error_obj.is_null(),
                 "fallback RuntimeError should be non-null"
             );
-            let result = load_bundle_failure(bundle_hash, "test error");
-            assert!(result.is_none(), "error helper should return None");
+            load_bundle_failure(bundle_hash, "test error");
             assert!(
                 !crate::python_interface::PyErr_Occurred().is_null(),
                 "Python error should be set"
