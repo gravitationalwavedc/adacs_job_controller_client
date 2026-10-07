@@ -281,14 +281,6 @@ impl TungsteniteWebsocketClient {
     }
 
     #[cfg(test)]
-    fn call_check_pings(&self) {
-        // Test entry point - simulates ping/pong cycle
-        let now = Self::get_epoch_millis();
-        self.ping_timestamp.store(now, Ordering::SeqCst);
-        self.pong_timestamp.store(now, Ordering::SeqCst);
-    }
-
-    #[cfg(test)]
     fn set_pong_timestamp(&self, ts: i64) {
         self.pong_timestamp.store(ts, Ordering::SeqCst);
     }
@@ -2029,7 +2021,11 @@ mod tests {
         // that a ping is sent, and a pong received
         let client = TungsteniteWebsocketClient::new();
 
-        client.call_check_pings();
+        {
+            let now = TungsteniteWebsocketClient::get_epoch_millis();
+            client.ping_timestamp.store(now, Ordering::SeqCst);
+            client.pong_timestamp.store(now, Ordering::SeqCst);
+        }
 
         // Check that neither ping or pong timestamp is zero
         let zero_time: i64 = 0;
@@ -2048,7 +2044,11 @@ mod tests {
         // Run the ping pong again, the new ping/pong timestamps should be greater than the previous ones
         // Wait a small amount to ensure timestamps are different
         std::thread::sleep(Duration::from_millis(10));
-        client.call_check_pings();
+        {
+            let now = TungsteniteWebsocketClient::get_epoch_millis();
+            client.ping_timestamp.store(now, Ordering::SeqCst);
+            client.pong_timestamp.store(now, Ordering::SeqCst);
+        }
 
         // Check that neither ping or pong timestamp is zero
         assert!(client.get_ping_timestamp() > old_ping,
@@ -2063,7 +2063,11 @@ mod tests {
         let client = TungsteniteWebsocketClient::new();
 
         // First run check_pings to set timestamps
-        client.call_check_pings();
+        {
+            let now = TungsteniteWebsocketClient::get_epoch_millis();
+            client.ping_timestamp.store(now, Ordering::SeqCst);
+            client.pong_timestamp.store(now, Ordering::SeqCst);
+        }
 
         // Set the pong_timestamp back to zero (simulating timeout - matches C++ behavior)
         client.set_pong_timestamp(0);
