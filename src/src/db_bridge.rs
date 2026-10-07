@@ -134,12 +134,6 @@ impl DbBridge {
         info!("DbBridge: started");
     }
 
-    pub fn global() -> &'static DbBridge {
-        DB_BRIDGE
-            .get()
-            .expect("DbBridge not started — call DbBridge::start() first")
-    }
-
     /// Returns `Some(&DbBridge)` if started, `None` otherwise.
     /// Used by `send_and_wait` to fall back gracefully in test environments.
     pub fn try_get() -> Option<&'static DbBridge> {
@@ -273,7 +267,7 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         let msg = Message::new(DB_BUNDLE_CREATE_OR_UPDATE_JOB, Priority::Medium, "test");
-        let result = DbBridge::global().send(msg);
+        let result = DbBridge::try_get().expect("DbBridge not started").send(msg);
         assert!(result.is_ok(), "send should succeed");
 
         let mut parsed = Message::from_data(result.unwrap().get_data().clone());
@@ -295,7 +289,7 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
-        let result = DbBridge::global().send(msg);
+        let result = DbBridge::try_get().expect("DbBridge not started").send(msg);
         assert!(
             result.is_ok(),
             "send should return Ok even for failure response"
@@ -308,12 +302,12 @@ mod tests {
     fn test_db_bridge_global_returns_same_instance() {
         DbBridge::start();
 
-        let first = std::ptr::from_ref(DbBridge::global());
-        let second = std::ptr::from_ref(DbBridge::global());
+        let first = std::ptr::from_ref(DbBridge::try_get().expect("DbBridge not started"));
+        let second = std::ptr::from_ref(DbBridge::try_get().expect("DbBridge not started"));
 
         assert_eq!(
             first, second,
-            "DbBridge::global() should return the same singleton instance"
+            "DbBridge::try_get() should return the same singleton instance"
         );
     }
 
@@ -347,7 +341,7 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
-        let result = DbBridge::global().send(msg);
+        let result = DbBridge::try_get().expect("DbBridge not started").send(msg);
 
         assert!(result.is_err());
         let err = result.err().unwrap();
@@ -366,7 +360,7 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
-        let result = DbBridge::global().send(msg);
+        let result = DbBridge::try_get().expect("DbBridge not started").send(msg);
 
         assert!(result.is_err());
         let err = result.err().unwrap();
@@ -391,7 +385,7 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
-        let result = DbBridge::global().send(msg);
+        let result = DbBridge::try_get().expect("DbBridge not started").send(msg);
 
         assert!(result.is_err());
         let err = result.err().unwrap();
@@ -413,7 +407,7 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         let msg = Message::new(DB_BUNDLE_GET_JOB_BY_ID, Priority::Medium, "test");
-        let result = DbBridge::global().send(msg);
+        let result = DbBridge::try_get().expect("DbBridge not started").send(msg);
 
         set_db_request_timeout_for_test(None);
 
@@ -538,11 +532,13 @@ mod tests {
             })
             .unwrap();
 
-        let result = DbBridge::global().send(Message::new(
-            DB_BUNDLE_GET_JOB_BY_ID,
-            Priority::Medium,
-            "test",
-        ));
+        let result = DbBridge::try_get()
+            .expect("DbBridge not started")
+            .send(Message::new(
+                DB_BUNDLE_GET_JOB_BY_ID,
+                Priority::Medium,
+                "test",
+            ));
         assert!(
             result.is_ok(),
             "bridge should remain functional after a caller dropped its receiver"
@@ -573,11 +569,13 @@ mod tests {
             })
             .unwrap();
 
-        let result = DbBridge::global().send(Message::new(
-            DB_BUNDLE_GET_JOB_BY_ID,
-            Priority::Medium,
-            "test",
-        ));
+        let result = DbBridge::try_get()
+            .expect("DbBridge not started")
+            .send(Message::new(
+                DB_BUNDLE_GET_JOB_BY_ID,
+                Priority::Medium,
+                "test",
+            ));
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(err.contains("WebSocket is disconnected"));
@@ -600,7 +598,7 @@ mod tests {
             set_websocket_client(Arc::new(mock));
 
             let msg = Message::new(DB_BUNDLE_CREATE_OR_UPDATE_JOB, Priority::Medium, "test");
-            let result = DbBridge::global().send(msg);
+            let result = DbBridge::try_get().expect("DbBridge not started").send(msg);
 
             assert!(result.is_ok(), "send should not panic in async context");
         }
