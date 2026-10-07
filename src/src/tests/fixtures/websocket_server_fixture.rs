@@ -107,11 +107,6 @@ impl LifecycleBarrier {
         self.released.store(true, Ordering::Release);
         self.release_notify.notify_waiters();
     }
-
-    pub fn reset(&self) {
-        self.reached.store(false, Ordering::Release);
-        self.released.store(false, Ordering::Release);
-    }
 }
 
 #[derive(Debug)]
@@ -170,12 +165,6 @@ impl WebsocketLifecycleObserver {
     pub async fn wait_for_accepted(&self, target: usize) {
         while self.accepted_connections() < target {
             self.state.accepted_notify.notified().await;
-        }
-    }
-
-    pub async fn wait_for_released(&self, target: usize) {
-        while self.released_connections() < target {
-            self.state.released_notify.notified().await;
         }
     }
 
