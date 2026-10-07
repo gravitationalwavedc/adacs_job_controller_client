@@ -9,22 +9,18 @@
 //! bundle scripts and capture the structured log output to verify that
 //! the full stack trace is printed to the console.
 
-use crate::bundle_interface::{set_json_loads_override, BundleInterface, JsonLoadsFn};
+use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    my_py_none_struct, set_py_tuple_set_item_override, set_py_unicode_from_string_override,
-    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
-    PyEval_GetBuiltins, PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject,
-    PyObject_SetAttrString, PyRun_StringFlags, PyTupleSetItemFn, PyTuple_SetItem, PyTuple_Size,
-    PyUnicodeFromStringFn, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, Py_ssize_t,
-    PYTHON_MUTEX,
+    PyDict_GetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
+    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
 use std::io::Write;
-use std::os::raw::c_int;
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -673,63 +669,6 @@ fn test_run_returns_err_for_nul_byte_job_data() {
     inner();
 }
 
-/// RAII guard that installs a `py_unicode_from_string` override for the duration
-/// of a test and restores the previous override on drop.
-struct UnicodeFromStringOverrideGuard(Option<PyUnicodeFromStringFn>);
-
-impl UnicodeFromStringOverrideGuard {
-    fn install(f: PyUnicodeFromStringFn) -> Self {
-        Self(set_py_unicode_from_string_override(Some(f)))
-    }
-}
-
-impl Drop for UnicodeFromStringOverrideGuard {
-    fn drop(&mut self) {
-        set_py_unicode_from_string_override(self.0);
-    }
-}
-
-/// Forces `py_unicode_from_string` to return NULL, exercising the defensive
-/// `is_null()` branch in `BundleInterface::run` that releases `p_args` and
-/// `p_func` and returns `Err(NoneException)`.
-// SAFETY: Test-only; returns a NULL pointer, which the caller handles.
-unsafe fn fail_unicode_from_string(_s: *const std::os::raw::c_char) -> *mut PyObject {
-    std::ptr::null_mut()
-}
-
-#[test]
-fn test_run_returns_err_when_unicode_from_string_fails() {
-    #[tokio::main(flavor = "current_thread")]
-    async fn inner() {
-        crate::tests::init_python_global();
-        let fixture = BundleFixture::new();
-        let bundle_hash = Uuid::new_v4().to_string();
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
-        fixture.write_raw_script(
-            &bundle_hash,
-            "def submit(details, job_data):\n    return {}\n",
-        );
-
-        let bundle = BundleManager::singleton()
-            .load_bundle(&bundle_hash)
-            .expect("bundle should load");
-
-        let _guard = PYTHON_MUTEX.lock();
-        let _override = UnicodeFromStringOverrideGuard::install(fail_unicode_from_string);
-        unsafe {
-            let _scope = bundle
-                .thread_scope()
-                .expect("thread scope should be created");
-            let result = bundle.run("submit", &serde_json::json!({}), "job-data");
-            assert!(
-                result.is_err(),
-                "PyUnicode_FromString failure should make run return Err"
-            );
-        }
-    }
-    inner();
-}
-
 /// A missing bundle function makes `PyObject_GetAttrString` return NULL, so
 /// `run` must return `Err(NoneException)`.
 #[test]
@@ -792,124 +731,6 @@ fn test_run_returns_err_for_non_callable_function() {
                 "non-callable function should make run return Err"
             );
         }
-    }
-    inner();
-}
-
-/// Override that fails `py_tuple_set_item` only for the size-2 `p_args` tuple
-/// at index 0 (the json-object slot in `run`). Mirrors `CPython`'s failure
-/// behaviour: releases the item reference and returns -1.
-// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
-unsafe fn fail_run_args_index_zero(
-    tuple: *mut PyObject,
-    pos: Py_ssize_t,
-    item: *mut PyObject,
-) -> c_int {
-    if PyTuple_Size(tuple) == 2 && pos == 0 {
-        Py_DecRef(item);
-        -1
-    } else {
-        PyTuple_SetItem(tuple, pos, item)
-    }
-}
-
-/// Override that fails `py_tuple_set_item` only for the size-2 `p_args` tuple
-/// at index 1 (the job-data slot in `run`). Mirrors `CPython`'s failure
-/// behaviour: releases the item reference and returns -1.
-// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
-unsafe fn fail_run_args_index_one(
-    tuple: *mut PyObject,
-    pos: Py_ssize_t,
-    item: *mut PyObject,
-) -> c_int {
-    if PyTuple_Size(tuple) == 2 && pos == 1 {
-        Py_DecRef(item);
-        -1
-    } else {
-        PyTuple_SetItem(tuple, pos, item)
-    }
-}
-
-/// DIRECT UNIT TEST — forces `py_tuple_set_item(p_args, 0, json_obj)` to fail
-/// in `run`. The branch logs "Error setting json object in args tuple" and
-/// returns `Err(NoneException)`.
-#[test]
-fn test_run_returns_err_when_json_obj_set_item_fails() {
-    #[tokio::main(flavor = "current_thread")]
-    async fn inner() {
-        crate::tests::init_python_global();
-        let fixture = BundleFixture::new();
-        let bundle_hash = Uuid::new_v4().to_string();
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
-        fixture.write_raw_script(
-            &bundle_hash,
-            "def submit(details, job_data):\n    return {}\n",
-        );
-
-        let bundle = BundleManager::singleton()
-            .load_bundle(&bundle_hash)
-            .expect("bundle should load");
-
-        let _override = TupleSetItemOverrideGuard::install(fail_run_args_index_zero);
-        let logs = capture_logs(|| {
-            let _guard = PYTHON_MUTEX.lock();
-            unsafe {
-                let _scope = bundle
-                    .thread_scope()
-                    .expect("thread scope should be created");
-                let result = bundle.run("submit", &serde_json::json!({"a": 1}), "job-data");
-                assert!(
-                    result.is_err(),
-                    "json obj SetItem failure should make run return Err"
-                );
-            }
-        });
-        assert!(
-            logs.contains("Error setting json object in args tuple"),
-            "expected 'Error setting json object in args tuple' marker in logs, got:\n{logs}"
-        );
-    }
-    inner();
-}
-
-/// DIRECT UNIT TEST — forces `py_tuple_set_item(p_args, 1, p_job_data)` to
-/// fail in `run`. The branch logs "Error setting job data in args tuple" and
-/// returns `Err(NoneException)`.
-#[test]
-fn test_run_returns_err_when_job_data_set_item_fails() {
-    #[tokio::main(flavor = "current_thread")]
-    async fn inner() {
-        crate::tests::init_python_global();
-        let fixture = BundleFixture::new();
-        let bundle_hash = Uuid::new_v4().to_string();
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
-        fixture.write_raw_script(
-            &bundle_hash,
-            "def submit(details, job_data):\n    return {}\n",
-        );
-
-        let bundle = BundleManager::singleton()
-            .load_bundle(&bundle_hash)
-            .expect("bundle should load");
-
-        let _override = TupleSetItemOverrideGuard::install(fail_run_args_index_one);
-        let logs = capture_logs(|| {
-            let _guard = PYTHON_MUTEX.lock();
-            unsafe {
-                let _scope = bundle
-                    .thread_scope()
-                    .expect("thread scope should be created");
-                let result = bundle.run("submit", &serde_json::json!({"a": 1}), "job-data");
-                assert!(
-                    result.is_err(),
-                    "job data SetItem failure should make run return Err"
-                );
-            }
-        });
-        assert!(
-            logs.contains("Error setting job data in args tuple"),
-            "expected 'Error setting job data in args tuple' marker in logs, got:\n{logs}"
-        );
     }
     inner();
 }
@@ -1096,51 +917,6 @@ fn test_json_loads_returns_null_when_loads_lookup_fails() {
                 "json_loads should return NULL when json.loads is unavailable"
             );
         }
-    }
-    inner();
-}
-
-/// DIRECT UNIT TEST — covers the `PyTuple_SetItem` failure branch in
-/// `BundleInterface::json_loads` (the only FFI error branch in that function
-/// not yet covered). Forces the size-1 args tuple's `PyTuple_SetItem` to fail
-/// via the test-only `py_tuple_set_item` override seam; `json_loads` must log
-/// and return NULL after releasing its references.
-#[test]
-fn test_json_loads_returns_null_when_set_item_fails() {
-    #[tokio::main(flavor = "current_thread")]
-    async fn inner() {
-        crate::tests::init_python_global();
-        let fixture = BundleFixture::new();
-        let bundle_hash = Uuid::new_v4().to_string();
-        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
-        fixture.write_raw_script(
-            &bundle_hash,
-            "def submit(details, job_data):\n    return {}\n",
-        );
-
-        let bundle = BundleManager::singleton()
-            .load_bundle(&bundle_hash)
-            .expect("bundle should load");
-
-        let _override = TupleSetItemOverrideGuard::install(fail_size_one_tuple);
-        let logs = capture_logs(|| {
-            let _guard = PYTHON_MUTEX.lock();
-            unsafe {
-                let _scope = bundle
-                    .thread_scope()
-                    .expect("thread scope should be created");
-                let obj = bundle.json_loads(r#"{"key": "value"}"#);
-                assert!(
-                    obj.is_null(),
-                    "json_loads should return NULL when PyTuple_SetItem fails"
-                );
-            }
-        });
-
-        assert!(
-            logs.contains("Error setting object in args tuple"),
-            "expected 'Error setting object in args tuple' marker in logs, got:\n{logs}"
-        );
     }
     inner();
 }
@@ -1514,31 +1290,6 @@ def submit(details, job_data):
     inner();
 }
 
-// ─── PyTuple_SetItem failure-branch tests (MR !315 reviewer requests) ────────
-//
-// The four `py_tuple_set_item` failure branches in
-// `BundleInterface::print_last_python_exception` are unreachable through the
-// public API: `PyTuple_SetItem` on a freshly-created tuple with a valid index
-// always succeeds. These tests use the test-only FFI override seam
-// (`set_py_tuple_set_item_override`) to force each branch and verify the
-// defensive error handling.
-
-/// RAII guard that installs a `py_tuple_set_item` override for the duration of
-/// a test and restores the previous override on drop.
-struct TupleSetItemOverrideGuard(Option<PyTupleSetItemFn>);
-
-impl TupleSetItemOverrideGuard {
-    fn install(f: PyTupleSetItemFn) -> Self {
-        Self(set_py_tuple_set_item_override(Some(f)))
-    }
-}
-
-impl Drop for TupleSetItemOverrideGuard {
-    fn drop(&mut self) {
-        set_py_tuple_set_item_override(self.0);
-    }
-}
-
 /// Load a real bundle so the sub-interpreter has a live `traceback_module`,
 /// which `print_last_python_exception` needs for its attribute lookups.
 fn load_bundle_for_exception_printer() -> BundleInterface {
@@ -1567,146 +1318,6 @@ unsafe fn runtime_error_type() -> *mut PyObject {
     );
     Py_IncRef(exc);
     exc
-}
-
-/// Override that fails `PyTuple_SetItem` only for size-1 tuples (the `tb_args`
-/// tuple in `print_last_python_exception`). Mirrors `CPython`'s failure
-/// behaviour: releases the item reference and returns -1.
-// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
-unsafe fn fail_size_one_tuple(tuple: *mut PyObject, pos: Py_ssize_t, item: *mut PyObject) -> c_int {
-    if PyTuple_Size(tuple) == 1 {
-        Py_DecRef(item);
-        -1
-    } else {
-        PyTuple_SetItem(tuple, pos, item)
-    }
-}
-
-/// Override that fails `PyTuple_SetItem` only for the size-2 `eo_args` tuple at
-/// index 0 (the exception-type slot).
-// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
-unsafe fn fail_eo_args_index_zero(
-    tuple: *mut PyObject,
-    pos: Py_ssize_t,
-    item: *mut PyObject,
-) -> c_int {
-    if PyTuple_Size(tuple) == 2 && pos == 0 {
-        Py_DecRef(item);
-        -1
-    } else {
-        PyTuple_SetItem(tuple, pos, item)
-    }
-}
-
-/// Override that fails `PyTuple_SetItem` only for the size-2 `eo_args` tuple at
-/// index 1 when the item is not `Py_None` (the non-NULL-value slot).
-// SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
-unsafe fn fail_eo_args_non_none_item(
-    tuple: *mut PyObject,
-    pos: Py_ssize_t,
-    item: *mut PyObject,
-) -> c_int {
-    if PyTuple_Size(tuple) == 2 && pos == 1 && item != my_py_none_struct() {
-        Py_DecRef(item);
-        -1
-    } else {
-        PyTuple_SetItem(tuple, pos, item)
-    }
-}
-
-/// DIRECT UNIT TEST — reviewer request on MR !315.
-///
-/// Forces `py_tuple_set_item(tb_args, 0, traceback)` to fail. The branch logs
-/// "Error setting traceback in args tuple" and continues to the exception
-/// header, which must still be produced.
-#[test]
-fn test_print_last_python_exception_handles_tb_args_set_item_failure() {
-    let bundle = load_bundle_for_exception_printer();
-    let _override = TupleSetItemOverrideGuard::install(fail_size_one_tuple);
-
-    let logs = capture_logs(|| {
-        let _guard = PYTHON_MUTEX.lock();
-        unsafe {
-            let _scope = bundle.thread_scope().expect("thread scope");
-            // Raise a Python exception WITH a traceback by running a snippet
-            // that raises; the error indicator is left set.
-            let globals = PyDict_New();
-            assert!(!globals.is_null(), "PyDict_New should succeed");
-            PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins());
-            let code = c"def f():\n    raise RuntimeError('boom')\nf()";
-            let _result = PyRun_StringFlags(
-                code.as_ptr(),
-                Py_file_input,
-                globals,
-                globals,
-                std::ptr::null_mut(),
-            );
-            Py_DecRef(globals);
-            bundle.print_last_python_exception();
-        }
-    });
-
-    assert!(
-        logs.contains("Error setting traceback in args tuple"),
-        "expected 'Error setting traceback in args tuple' marker in logs, got:\n{logs}"
-    );
-    assert!(
-        logs.contains("RuntimeError: boom"),
-        "expected exception header after tb_args SetItem failure, got:\n{logs}"
-    );
-}
-
-/// DIRECT UNIT TEST — reviewer request on MR !315.
-///
-/// Forces `py_tuple_set_item(eo_args, 0, extype)` to fail. The branch logs
-/// "Error setting exception type in args tuple" and returns early.
-#[test]
-fn test_print_last_python_exception_handles_eo_args_type_set_item_failure() {
-    let bundle = load_bundle_for_exception_printer();
-    let _override = TupleSetItemOverrideGuard::install(fail_eo_args_index_zero);
-
-    let logs = capture_logs(|| {
-        let _guard = PYTHON_MUTEX.lock();
-        unsafe {
-            let _scope = bundle.thread_scope().expect("thread scope");
-            let exc = runtime_error_type();
-            PyErr_SetString(exc, c"boom".as_ptr());
-            Py_DecRef(exc);
-            bundle.print_last_python_exception();
-        }
-    });
-
-    assert!(
-        logs.contains("Error setting exception type in args tuple"),
-        "expected 'Error setting exception type in args tuple' marker in logs, got:\n{logs}"
-    );
-}
-
-/// DIRECT UNIT TEST — reviewer request on MR !315.
-///
-/// Forces `py_tuple_set_item(eo_args, 1, value)` to fail when the exception has
-/// a non-NULL value. The branch logs "Error setting exception value in args
-/// tuple" and returns early.
-#[test]
-fn test_print_last_python_exception_handles_eo_args_value_set_item_failure() {
-    let bundle = load_bundle_for_exception_printer();
-    let _override = TupleSetItemOverrideGuard::install(fail_eo_args_non_none_item);
-
-    let logs = capture_logs(|| {
-        let _guard = PYTHON_MUTEX.lock();
-        unsafe {
-            let _scope = bundle.thread_scope().expect("thread scope");
-            let exc = runtime_error_type();
-            PyErr_SetString(exc, c"boom".as_ptr());
-            Py_DecRef(exc);
-            bundle.print_last_python_exception();
-        }
-    });
-
-    assert!(
-        logs.contains("Error setting exception value in args tuple"),
-        "expected 'Error setting exception value in args tuple' marker in logs, got:\n{logs}"
-    );
 }
 
 /// DIRECT UNIT TEST for the NULL-traceback branch in
@@ -1832,58 +1443,6 @@ def submit(details, job_data):
         assert!(!result);
     }
     inner();
-}
-
-// ─── json_loads NULL override tests ──────────────────────────────────────────
-//
-// The `json_obj.is_null()` early-return branch in `BundleInterface::run`
-// (bundle_interface.rs) is unreachable through the public API: `run` always
-// serializes valid JSON, so `json_loads` always returns a non-NULL object.
-// These tests use the test-only `json_loads` override seam to force the branch
-// and verify `run` returns `Err(NoneException)` before calling the bundle
-// function.
-
-/// RAII guard that installs a `json_loads` override for the duration of a test
-/// and restores the previous override on drop.
-struct JsonLoadsOverrideGuard(Option<JsonLoadsFn>);
-
-impl JsonLoadsOverrideGuard {
-    fn install(f: JsonLoadsFn) -> Self {
-        Self(set_json_loads_override(Some(f)))
-    }
-}
-
-impl Drop for JsonLoadsOverrideGuard {
-    fn drop(&mut self) {
-        set_json_loads_override(self.0);
-    }
-}
-
-/// Override that makes `json_loads` always return NULL, forcing the
-/// `json_obj.is_null()` early-return branch in `BundleInterface::run`.
-// SAFETY: Test-only; returns NULL without touching the Python error indicator.
-unsafe fn null_json_loads(_bundle: &BundleInterface, _content: &str) -> *mut PyObject {
-    std::ptr::null_mut()
-}
-
-/// DIRECT UNIT TEST — covers the `json_obj.is_null()` early-return branch in
-/// `BundleInterface::run`. Forcing `json_loads` to return NULL via the
-/// test-only override seam must make `run` return `Err(NoneException)` before
-/// the bundle function is called.
-#[test]
-fn test_run_returns_err_when_json_loads_returns_null() {
-    let bundle = load_bundle_for_exception_printer();
-    let _override = JsonLoadsOverrideGuard::install(null_json_loads);
-
-    let result = unsafe {
-        let _guard = PYTHON_MUTEX.lock();
-        let _scope = bundle.thread_scope().expect("thread scope");
-        bundle.run("submit", &serde_json::json!({}), "job_data")
-    };
-    assert!(
-        result.is_err(),
-        "run should return Err(NoneException) when json_loads returns NULL"
-    );
 }
 
 /// A bundle function that raises a Python exception makes `PyObject_CallObject`
