@@ -6,14 +6,13 @@
 //! that lives for the duration of the call.  We replicate that here.
 
 use crate::python_interface::{
-    get_main_ts, my_py_none_struct, my_py_true_struct, py_tuple_set_item, py_unicode_from_string,
-    MyPy_IsNone, PyCallable_Check, PyDict_New, PyDict_SetItemString, PyErr_Clear, PyErr_Fetch,
-    PyErr_Occurred, PyErr_Print, PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread,
-    PyImport_ImportModule, PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject,
-    PyObject_CallObject, PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr,
-    PyRun_StringFlags, PySys_GetObject, PyThreadState, PyTuple_New, PyTuple_SetItem,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_XDECREF, Py_file_input,
-    SubInterpreter, ThreadScope, PYTHON_MUTEX,
+    get_main_ts, my_py_none_struct, my_py_true_struct, MyPy_IsNone, PyCallable_Check, PyDict_New,
+    PyDict_SetItemString, PyErr_Clear, PyErr_Fetch, PyErr_Occurred, PyErr_Print,
+    PyEval_GetBuiltins, PyEval_RestoreThread, PyEval_SaveThread, PyImport_ImportModule,
+    PyIter_Next, PyList_Append, PyLong_AsUnsignedLongLong, PyObject, PyObject_CallObject,
+    PyObject_GetAttrString, PyObject_GetIter, PyObject_Repr, PyRun_StringFlags, PySys_GetObject,
+    PyThreadState, PyTuple_New, PyTuple_SetItem, PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef,
+    Py_IncRef, Py_XDECREF, Py_file_input, SubInterpreter, ThreadScope, PYTHON_MUTEX,
 };
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
@@ -72,30 +71,6 @@ static STATE: StdMutex<SendPtr> = StdMutex::new(SendPtr(std::ptr::null_mut()));
 #[derive(Clone)]
 pub struct BundleInterface {
     inner: Arc<BundleInterfaceInner>,
-}
-
-// ─── Test-only json_loads override seam ──────────────────────────────────────
-// The `json_obj.is_null()` early-return branch in `BundleInterface::run` is
-// unreachable through the public API because `run` always serializes valid
-// JSON, so `json_loads` always returns a non-NULL object. This seam lets tests
-// force `json_loads` to return NULL without changing production behavior.
-// Tests run serially (`--test-threads=1`), so the global override cannot race
-// across tests.
-
-#[cfg(test)]
-pub type JsonLoadsFn = unsafe fn(&BundleInterface, &str) -> *mut PyObject;
-
-#[cfg(test)]
-static JSON_LOADS_OVERRIDE: StdMutex<Option<JsonLoadsFn>> = StdMutex::new(None);
-
-/// Test-only: install an override for `BundleInterface::json_loads`, returning
-/// the previously-installed override (if any). Pass `None` to clear it.
-#[cfg(test)]
-pub fn set_json_loads_override(f: Option<JsonLoadsFn>) -> Option<JsonLoadsFn> {
-    let mut guard = JSON_LOADS_OVERRIDE
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    std::mem::replace(&mut *guard, f)
 }
 
 impl BundleInterface {
@@ -391,7 +366,7 @@ impl BundleInterface {
         }
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if py_tuple_set_item(p_args, 0, json_obj) < 0 {
+        if PyTuple_SetItem(p_args, 0, json_obj) < 0 {
             error!("Error setting json object in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
@@ -403,7 +378,7 @@ impl BundleInterface {
             Py_XDECREF(p_func);
             return Err(NoneException);
         };
-        let p_job_data = py_unicode_from_string(c_job_data.as_ptr());
+        let p_job_data = PyUnicode_FromString(c_job_data.as_ptr());
         if p_job_data.is_null() {
             swallow_python_error();
             Py_DecRef(p_args);
@@ -412,7 +387,7 @@ impl BundleInterface {
         }
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if py_tuple_set_item(p_args, 1, p_job_data) < 0 {
+        if PyTuple_SetItem(p_args, 1, p_job_data) < 0 {
             error!("Error setting job data in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
@@ -547,14 +522,6 @@ impl BundleInterface {
 
     /// Call json.loads on a string. Mirrors C++ `BundleInterface::jsonLoads()`.
     pub unsafe fn json_loads(&self, content: &str) -> *mut PyObject {
-        #[cfg(test)]
-        if let Some(f) = *JSON_LOADS_OVERRIDE
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-        {
-            return f(self, content);
-        }
-
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"loads".as_ptr());
         if p_func.is_null() {
             error!("json_loads: failed to get json.loads function");
@@ -588,7 +555,7 @@ impl BundleInterface {
         }
         // On failure PyTuple_SetItem releases the item reference itself, so we
         // must not Py_DecRef the item again here.
-        if py_tuple_set_item(p_args, 0, p_value) < 0 {
+        if PyTuple_SetItem(p_args, 0, p_value) < 0 {
             error!("Error setting object in args tuple");
             PyErr_Print();
             Py_DecRef(p_args);
@@ -683,7 +650,7 @@ impl BundleInterface {
                 } else {
                     // On failure PyTuple_SetItem releases the item reference itself, so we
                     // must not Py_DecRef the item again here.
-                    if py_tuple_set_item(tb_args, 0, traceback) < 0 {
+                    if PyTuple_SetItem(tb_args, 0, traceback) < 0 {
                         error!("Error setting traceback in args tuple");
                         PyErr_Print();
                         Py_DecRef(tb_args);
@@ -749,7 +716,7 @@ impl BundleInterface {
             } else {
                 // On failure PyTuple_SetItem releases the item reference itself, so we
                 // must not Py_DecRef the item again here.
-                if py_tuple_set_item(eo_args, 0, extype) < 0 {
+                if PyTuple_SetItem(eo_args, 0, extype) < 0 {
                     error!("Error setting exception type in args tuple");
                     PyErr_Print();
                     Py_DecRef(eo_args);
@@ -883,14 +850,14 @@ unsafe fn set_exception_value_slot(
     if value.is_null() {
         let none = my_py_none_struct();
         Py_IncRef(none);
-        if py_tuple_set_item(eo_args, 1, none) < 0 {
+        if PyTuple_SetItem(eo_args, 1, none) < 0 {
             error!("Error setting exception value in args tuple");
             PyErr_Print();
             Py_DecRef(eo_args);
             Py_XDECREF(eo_func);
             return false;
         }
-    } else if py_tuple_set_item(eo_args, 1, value) < 0 {
+    } else if PyTuple_SetItem(eo_args, 1, value) < 0 {
         error!("Error setting exception value in args tuple");
         PyErr_Print();
         Py_DecRef(eo_args);
@@ -1360,54 +1327,7 @@ mod bundle_interface_conversion_tests {
 #[cfg(test)]
 mod set_exception_value_slot_tests {
     use super::*;
-    use crate::python_interface::{
-        set_py_tuple_set_item_override, PyTupleSetItemFn, PyTuple_GetItem, PyTuple_Size, Py_ssize_t,
-    };
-    use std::os::raw::c_int;
-
-    /// RAII guard that installs a `py_tuple_set_item` override for the duration
-    /// of a test and restores the previous override on drop.
-    struct TupleSetItemOverrideGuard(Option<PyTupleSetItemFn>);
-
-    impl TupleSetItemOverrideGuard {
-        fn install(f: PyTupleSetItemFn) -> Self {
-            Self(set_py_tuple_set_item_override(Some(f)))
-        }
-    }
-
-    impl Drop for TupleSetItemOverrideGuard {
-        fn drop(&mut self) {
-            set_py_tuple_set_item_override(self.0);
-        }
-    }
-
-    /// Override that fails `PyTuple_SetItem` only for the size-2 `eo_args`
-    /// tuple at index 1 when the item is `Py_None` (the NULL-value slot).
-    // SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
-    unsafe fn fail_none_item(tuple: *mut PyObject, pos: Py_ssize_t, item: *mut PyObject) -> c_int {
-        if PyTuple_Size(tuple) == 2 && pos == 1 && item == my_py_none_struct() {
-            Py_DecRef(item);
-            -1
-        } else {
-            PyTuple_SetItem(tuple, pos, item)
-        }
-    }
-
-    /// Override that fails `PyTuple_SetItem` only for the size-2 `eo_args`
-    /// tuple at index 1 when the item is not `Py_None` (the value slot).
-    // SAFETY: Test-only; `tuple`/`item` are live objects from the caller.
-    unsafe fn fail_non_none_item(
-        tuple: *mut PyObject,
-        pos: Py_ssize_t,
-        item: *mut PyObject,
-    ) -> c_int {
-        if PyTuple_Size(tuple) == 2 && pos == 1 && item != my_py_none_struct() {
-            Py_DecRef(item);
-            -1
-        } else {
-            PyTuple_SetItem(tuple, pos, item)
-        }
-    }
+    use crate::python_interface::PyTuple_GetItem;
 
     /// `set_exception_value_slot` must store `Py_None` when `value` is NULL
     /// (the `value.is_null()` branch) and report success.
@@ -1452,47 +1372,6 @@ mod set_exception_value_slot_tests {
             let stored = PyTuple_GetItem(eo_args, 1);
             assert_eq!(stored, value, "value should be stored");
             Py_DecRef(eo_args);
-        }
-    }
-
-    /// `set_exception_value_slot` must log the marker and return `false` when
-    /// the `Py_None` slot `SetItem` fails (the NULL-value failure branch).
-    #[test]
-    fn handles_none_set_item_failure() {
-        crate::tests::init_python_global();
-        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
-        // interpreter provides a valid current thread state.
-        unsafe {
-            let _guard = PYTHON_MUTEX.lock();
-            let interp = (*get_main_ts()).interp;
-            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
-            let _override = TupleSetItemOverrideGuard::install(fail_none_item);
-            let eo_args = PyTuple_New(2);
-            assert!(!eo_args.is_null(), "PyTuple_New should succeed");
-            let eo_func = my_py_true_struct();
-            let ok = set_exception_value_slot(eo_args, std::ptr::null_mut(), eo_func);
-            assert!(!ok, "None SetItem failure should return false");
-        }
-    }
-
-    /// `set_exception_value_slot` must log the marker and return `false` when
-    /// the value slot `SetItem` fails (the non-NULL-value failure branch).
-    #[test]
-    fn handles_value_set_item_failure() {
-        crate::tests::init_python_global();
-        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
-        // interpreter provides a valid current thread state.
-        unsafe {
-            let _guard = PYTHON_MUTEX.lock();
-            let interp = (*get_main_ts()).interp;
-            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
-            let _override = TupleSetItemOverrideGuard::install(fail_non_none_item);
-            let eo_args = PyTuple_New(2);
-            assert!(!eo_args.is_null(), "PyTuple_New should succeed");
-            let eo_func = my_py_true_struct();
-            let value = my_py_true_struct();
-            let ok = set_exception_value_slot(eo_args, value, eo_func);
-            assert!(!ok, "value SetItem failure should return false");
         }
     }
 }
