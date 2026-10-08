@@ -339,7 +339,7 @@ unsafe fn install_gil_hooks() -> Result<(), String> {
         *p_release,
         myPyGILState_Release as *mut c_void,
         "PyGILState_Release",
-        "myPyGILState_Release redirection failed to install",
+        "PyGILState_Release redirection failed to install",
     )?;
 
     info!("GIL hooks installed successfully");
