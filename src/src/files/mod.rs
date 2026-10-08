@@ -1884,7 +1884,10 @@ async fn connect_file_ws_raw(
                 return None;
             }
             Err(_) => {
-                warn!("{prefix}Timed out connecting for {operation}");
+                warn!(
+                    "{prefix}Timed out connecting for {operation} after {}s",
+                    file_ws_connect_timeout().as_secs()
+                );
                 return None;
             }
         };
