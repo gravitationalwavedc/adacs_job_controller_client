@@ -975,7 +975,7 @@ static RECONNECT_NOTIFY: std::sync::LazyLock<Arc<Notify>> =
 static SHUTDOWN_NOTIFY: std::sync::LazyLock<Arc<Notify>> =
     std::sync::LazyLock::new(|| Arc::new(Notify::new()));
 
-pub(crate) fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
+fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
     let mut client = TUNGSTENITE_CLIENT.write();
     if let Some(ref c) = *client {
         return c.clone();
