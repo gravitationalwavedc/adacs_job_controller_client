@@ -75,7 +75,7 @@ pub struct BundleInterface {
 
 impl BundleInterface {
     /// Return the bundle hash for this interface.
-    pub fn bundle_hash(&self) -> &str {
+    pub(crate) fn bundle_hash(&self) -> &str {
         &self.inner.bundle_hash
     }
 
@@ -84,7 +84,7 @@ impl BundleInterface {
     /// `BundleManager` without depending on `PyThreadState_New` allocation
     /// failure (which is not reliably triggerable).
     #[cfg(test)]
-    pub fn with_thread_scope_error(bundle_hash: &str, error: &str) -> Self {
+    pub(crate) fn with_thread_scope_error(bundle_hash: &str, error: &str) -> Self {
         BundleInterface {
             inner: Arc::new(BundleInterfaceInner {
                 python_interpreter: SubInterpreter::null(),
