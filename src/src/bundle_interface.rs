@@ -42,7 +42,6 @@ sys.stderr = StderrCatcher()
 
 struct BundleInterfaceInner {
     python_interpreter: SubInterpreter,
-    p_global: *mut PyObject,
     p_bundle_module: *mut PyObject,
     json_module: *mut PyObject,
     traceback_module: *mut PyObject,
@@ -88,7 +87,6 @@ impl BundleInterface {
         BundleInterface {
             inner: Arc::new(BundleInterfaceInner {
                 python_interpreter: SubInterpreter::null(),
-                p_global: std::ptr::null_mut(),
                 p_bundle_module: std::ptr::null_mut(),
                 json_module: std::ptr::null_mut(),
                 traceback_module: std::ptr::null_mut(),
@@ -263,7 +261,6 @@ impl BundleInterface {
         Ok(BundleInterface {
             inner: Arc::new(BundleInterfaceInner {
                 python_interpreter,
-                p_global,
                 p_bundle_module,
                 json_module,
                 traceback_module,
@@ -959,7 +956,6 @@ mod bundle_interface_conversion_tests {
         BundleInterface {
             inner: Arc::new(BundleInterfaceInner {
                 python_interpreter: SubInterpreter::null(),
-                p_global: std::ptr::null_mut(),
                 p_bundle_module: std::ptr::null_mut(),
                 json_module: std::ptr::null_mut(),
                 traceback_module: std::ptr::null_mut(),
