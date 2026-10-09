@@ -224,7 +224,6 @@ py_wrap!(PyLong_AsUnsignedLongLong, (obj: *mut PyObject) -> u64);
 py_wrap!(PyErr_NewException, (name: *const c_char, base: *mut PyObject, dict: *mut PyObject) -> *mut PyObject);
 py_wrap!(PyModule_AddObject, (module: *mut PyObject, name: *const c_char, value: *mut PyObject) -> c_int);
 py_wrap!(PyErr_SetString, (type_: *mut PyObject, message: *const c_char) -> ());
-py_wrap!(PyTuple_Size, (tuple: *mut PyObject) -> Py_ssize_t);
 py_wrap!(PyRun_StringFlags, (code: *const c_char, start: c_int, globals: *mut PyObject, locals: *mut PyObject, flags: *mut c_void) -> *mut PyObject);
 
 // ─── Convenience helpers ─────────────────────────────────────────────────────
