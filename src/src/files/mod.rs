@@ -1608,7 +1608,7 @@ pub fn handle_file_upload(msg: Message) {
     handle_file_upload_with_url(msg, ws_endpoint);
 }
 
-pub fn handle_file_upload_with_url(mut msg: Message, ws_endpoint: String) {
+pub(crate) fn handle_file_upload_with_url(mut msg: Message, ws_endpoint: String) {
     let fields = parse_upload_fields(&mut msg);
 
     handle_file_upload_internal(
