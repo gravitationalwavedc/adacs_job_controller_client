@@ -648,12 +648,13 @@ impl BundleInterface {
                         type_name
                     );
                 } else {
-                    // On failure PyTuple_SetItem releases the item reference itself, so we
-                    // must not Py_DecRef the item again here.
+                    // PyTuple_SetItem steals the item reference only on success; on
+                    // failure it returns -1 without stealing, so release it here.
                     if PyTuple_SetItem(tb_args, 0, traceback) < 0 {
                         error!("Error setting traceback in args tuple");
                         PyErr_Print();
                         Py_DecRef(tb_args);
+                        Py_XDECREF(traceback);
                         Py_XDECREF(tb_func);
                     } else {
                         let tb_lines = PyObject_CallObject(tb_func, tb_args);
@@ -714,14 +715,15 @@ impl BundleInterface {
                     fallback_value_text(&value_display, &value_str)
                 );
             } else {
-                // On failure PyTuple_SetItem releases the item reference itself, so we
-                // must not Py_DecRef the item again here.
+                // PyTuple_SetItem steals the item reference only on success; on
+                // failure it returns -1 without stealing, so release it here.
                 if PyTuple_SetItem(eo_args, 0, extype) < 0 {
                     error!("Error setting exception type in args tuple");
                     PyErr_Print();
                     Py_DecRef(eo_args);
                     // `value` has not been consumed by any SetItem yet; release it
                     // so it is not leaked.
+                    Py_XDECREF(extype);
                     Py_XDECREF(value);
                     Py_XDECREF(eo_func);
                     return;
@@ -837,8 +839,9 @@ fn fallback_value_text<'a>(display: &'a str, repr: &'a str) -> &'a str {
 /// marker, releases `eo_args` and `eo_func`, and returns `false` (the caller
 /// must return early).
 ///
-/// On failure `PyTuple_SetItem` releases the item reference itself, so we must
-/// not `Py_DecRef` the item again here.
+/// On failure `PyTuple_SetItem` returns -1 without stealing the item
+/// reference (it steals only on success), so the caller must release the item
+/// itself here.
 // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
 // `eo_args` is a live size-2 tuple, `value` is NULL or a live object, and
 // `eo_func` is a live callable.
@@ -861,6 +864,7 @@ unsafe fn set_exception_value_slot(
         error!("Error setting exception value in args tuple");
         PyErr_Print();
         Py_DecRef(eo_args);
+        Py_XDECREF(value);
         Py_XDECREF(eo_func);
         return false;
     }
