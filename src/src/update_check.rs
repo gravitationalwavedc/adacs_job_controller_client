@@ -101,7 +101,7 @@ fn verify_sha256(data: &[u8], expected: &str) -> Result<(), Box<dyn std::error::
     let expected_hex = trimmed
         .strip_prefix("sha256:")
         .or_else(|| trimmed.strip_prefix("SHA256:"))
-        .unwrap_or(trimmed);
+        .map_or(trimmed, str::trim);
     let mut hasher = Sha256::new();
     hasher.update(data);
     let computed = format!("{:x}", hasher.finalize());
@@ -710,6 +710,20 @@ mod tests {
             verify_sha256(data, &prefixed).is_ok(),
             "an uppercase 'SHA256:'-prefixed digest should verify after stripping"
         );
+    }
+
+    #[test]
+    fn test_verify_sha256_trims_whitespace_after_prefix() {
+        // A digest with incidental whitespace after the prefix must still
+        // verify: the stripped result is trimmed before comparison.
+        let data = b"hello world";
+        let hex = format!("{:x}", Sha256::digest(data));
+        for prefixed in [format!("sha256: {hex}"), format!("SHA256: {hex}")] {
+            assert!(
+                verify_sha256(data, &prefixed).is_ok(),
+                "a '{prefixed:?}' digest with whitespace after the prefix should verify"
+            );
+        }
     }
 
     // ─── verify_download tests ─────────────────────────────────────────
