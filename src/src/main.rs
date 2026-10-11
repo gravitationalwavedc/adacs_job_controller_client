@@ -147,6 +147,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .join("logs");
 
     let config = read_client_config();
+    // Validate the config before initializing logging: an invalid logLevel would
+    // otherwise build an EnvFilter that matches nothing, silently swallowing the
+    // validation errors below. Report to the terminal before daemonization.
+    if let Err(errors) = validate_config(&config) {
+        for e in &errors {
+            eprintln!("Config validation error: {e}");
+        }
+        std::process::exit(1);
+    }
     let log_level = get_log_level(&config);
     init_logging_with_level(&executable_path, &log_level);
     info!(
@@ -186,12 +195,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .join("config.json")
                 .display()
         );
-        if let Err(errors) = validate_config(&config) {
-            for e in &errors {
-                error!("Config validation error: {e}");
-            }
-            std::process::exit(1);
-        }
         let python_library_path = get_python_library_path();
         info!("Python library: {}", python_library_path);
         let (ws_token, reconnectable) = match resolve_websocket_token(&args, &config) {
