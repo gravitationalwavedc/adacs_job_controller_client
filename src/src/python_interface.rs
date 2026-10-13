@@ -4,6 +4,8 @@ use libloading::{Library, Symbol};
 use parking_lot::Mutex;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tracing::{debug, error, info, trace};
 
@@ -485,11 +487,23 @@ pub struct ThreadScope {
     ts: *mut PyThreadState,
 }
 
+/// Test-only: when set, `ThreadScope::new` returns the same error as a failed
+/// `PyThreadState_New` (NULL return), letting tests exercise the thread-scope
+/// failure path in `BundleInterface::new` without relying on real allocation
+/// failure.
+#[cfg(test)]
+pub static FORCE_THREAD_SCOPE_FAILURE: AtomicBool = AtomicBool::new(false);
+
 impl ThreadScope {
     /// Create a new `ThreadScope` for the given interpreter.
     /// This is the equivalent of C++ `SubInterpreter::ThreadScope`.
     pub unsafe fn new(interp: *mut PyInterpreterState) -> Result<Self, String> {
         trace!("ThreadScope::new - creating for interpreter: {:?}", interp);
+        #[cfg(test)]
+        if FORCE_THREAD_SCOPE_FAILURE.load(Ordering::SeqCst) {
+            error!("ThreadScope::new - PyThreadState_New failed");
+            return Err("PyThreadState_New failed".to_string());
+        }
         let ts = PyThreadState_New(interp);
         if ts.is_null() {
             error!("ThreadScope::new - PyThreadState_New failed");

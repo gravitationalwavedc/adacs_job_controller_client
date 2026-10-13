@@ -157,7 +157,25 @@ impl BundleInterface {
         // Activate the new interpreter via ThreadScope
         let interp = python_interpreter.interp();
         debug!("BundleInterface::new creating thread scope");
-        let _scope = ThreadScope::new(interp)?;
+        let _scope = match ThreadScope::new(interp) {
+            Ok(scope) => scope,
+            Err(e) => {
+                // The main thread state was saved above (GIL released). Restore
+                // it (acquire the GIL) so the SubInterpreter is dropped with the
+                // GIL held — Py_EndInterpreter requires it — then re-save it so
+                // the caller's precondition (main thread state saved, GIL
+                // released) holds and subsequent Python FFI calls do not
+                // deadlock, mirroring the SubInterpreter::new failure branch.
+                let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+                if !state.0.is_null() {
+                    PyEval_RestoreThread(state.0);
+                    state.0 = std::ptr::null_mut();
+                }
+                drop(python_interpreter);
+                state.0 = PyEval_SaveThread();
+                return Err(e);
+            }
+        };
         debug!("BundleInterface::new created thread scope");
 
         let bundle_path = Path::new(bundle_path_root).join(bundle_hash);

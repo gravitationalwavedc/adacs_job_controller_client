@@ -15,12 +15,13 @@ use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
     PyDict_GetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
     PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyUnicode_FromString, Py_DecRef, Py_IncRef, PYTHON_MUTEX,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, FORCE_THREAD_SCOPE_FAILURE, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
 use std::ffi::CString;
 use std::io::Write;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use test_fork::test;
 use tracing_subscriber::fmt::MakeWriter;
@@ -1167,6 +1168,44 @@ fn test_bundle_interface_new_missing_bundle_module() {
             Some("Failed to load bundle module"),
             "missing bundle module should fail with 'Failed to load bundle module'"
         );
+    }
+    inner();
+}
+
+/// Regression test for the `ThreadScope::new` failure path in
+/// `BundleInterface::new`. When `PyThreadState_New` returns NULL,
+/// `ThreadScope::new` fails while the main thread state is saved (GIL
+/// released). The constructor must restore the main thread state before
+/// returning `Err` so the `SubInterpreter` is dropped with the GIL held
+/// (`Py_EndInterpreter` requires it) and the GIL is not leaked. A
+/// subsequent `BundleInterface::new` must still succeed.
+#[test]
+fn test_bundle_interface_new_thread_scope_failure_restores_main_state() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+
+        FORCE_THREAD_SCOPE_FAILURE.store(true, Ordering::SeqCst);
+        let result = unsafe { BundleInterface::new(&bundle_hash, &path_root) };
+        FORCE_THREAD_SCOPE_FAILURE.store(false, Ordering::SeqCst);
+        assert_eq!(
+            result.err().as_deref(),
+            Some("PyThreadState_New failed"),
+            "forced PyThreadState_New failure should propagate as Err"
+        );
+
+        // A subsequent BundleInterface::new must still succeed, proving the
+        // main thread state was restored and the GIL not leaked.
+        let bundle =
+            unsafe { BundleInterface::new(&bundle_hash, &path_root) }.expect("bundle should load");
+        assert_eq!(bundle.bundle_hash(), bundle_hash);
     }
     inner();
 }
