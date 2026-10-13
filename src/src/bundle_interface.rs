@@ -971,6 +971,8 @@ mod bundle_interface_conversion_tests {
 
     #[test]
     fn to_bool_returns_false_for_null_pointer() {
+        // SAFETY: A null pointer is a valid input to `to_bool`, which returns
+        // false without dereferencing it.
         unsafe {
             assert!(!BundleInterface::to_bool(std::ptr::null_mut()));
         }
@@ -1006,6 +1008,8 @@ mod bundle_interface_conversion_tests {
 
     #[test]
     fn to_uint64_returns_zero_for_null_pointer() {
+        // SAFETY: A null pointer is a valid input to `to_uint64`, which
+        // returns 0 without dereferencing it.
         unsafe {
             assert_eq!(BundleInterface::to_uint64(std::ptr::null_mut()), 0);
         }
@@ -1013,6 +1017,8 @@ mod bundle_interface_conversion_tests {
 
     #[test]
     fn to_string_py_returns_empty_for_null_pointer() {
+        // SAFETY: A null pointer is a valid input to `to_string_py`, which
+        // returns an empty string without dereferencing it.
         unsafe {
             assert_eq!(BundleInterface::to_string_py(std::ptr::null_mut()), "");
         }
@@ -1062,7 +1068,8 @@ mod bundle_interface_conversion_tests {
 
     #[test]
     fn dispose_object_is_safe_with_null_pointer() {
-        // Should not crash or dereference null
+        // SAFETY: A null pointer is a valid input to `dispose_object`, which
+        // returns without dereferencing it.
         unsafe {
             BundleInterface::dispose_object(std::ptr::null_mut());
         }
@@ -1071,6 +1078,8 @@ mod bundle_interface_conversion_tests {
     #[test]
     fn json_dumps_returns_null_string_for_null_pointer() {
         let bundle = null_bundle();
+        // SAFETY: A null pointer is a valid input to `json_dumps`, which
+        // serializes it as "null" without dereferencing it.
         unsafe {
             let result = bundle.json_dumps(std::ptr::null_mut());
             assert_eq!(result.unwrap(), "null");
@@ -1404,6 +1413,9 @@ mod append_bundle_path_to_sys_path_tests {
     fn returns_err_on_null_sys_path() {
         let bundle = load_test_bundle();
         let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `append_bundle_path_to_sys_path`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let result = BundleInterface::append_bundle_path_to_sys_path(
@@ -1421,6 +1433,9 @@ mod append_bundle_path_to_sys_path_tests {
     fn returns_err_when_pylist_append_fails() {
         let bundle = load_test_bundle();
         let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `append_bundle_path_to_sys_path`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let p_not_a_list = PyTuple_New(0);
@@ -1441,6 +1456,9 @@ mod append_bundle_path_to_sys_path_tests {
     fn returns_err_on_nul_byte_in_bundle_path() {
         let bundle = load_test_bundle();
         let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `append_bundle_path_to_sys_path`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let p_path = PySys_GetObject(c"path".as_ptr());
@@ -1461,6 +1479,9 @@ mod append_bundle_path_to_sys_path_tests {
     fn appends_bundle_path_on_success() {
         let bundle = load_test_bundle();
         let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `append_bundle_path_to_sys_path`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let p_path = PySys_GetObject(c"path".as_ptr());
