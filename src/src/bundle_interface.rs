@@ -108,6 +108,9 @@ impl BundleInterface {
     ///
     /// IMPORTANT: The `PYTHON_MUTEX` must NOT be held by the caller, and the
     /// main thread state must have been saved (GIL released) before calling this.
+    // SAFETY: Caller must NOT hold PYTHON_MUTEX and must have saved the main
+    // thread state (GIL released); this acquires PYTHON_MUTEX and restores the
+    // saved main thread state before returning.
     pub unsafe fn new(bundle_hash: &str, bundle_path_root: &str) -> Result<Self, String> {
         let _guard = PYTHON_MUTEX.lock();
         debug!("BundleInterface::new start for {}", bundle_hash);
@@ -311,6 +314,8 @@ impl BundleInterface {
 
     /// Get a `ThreadScope` for this bundle's interpreter.
     /// Equivalent to C++ `bundle->threadScope()`.
+    // SAFETY: Caller holds PYTHON_MUTEX; the returned ThreadScope makes this
+    // bundle's sub-interpreter thread state current for its lifetime.
     pub unsafe fn thread_scope(&self) -> Result<ThreadScope, String> {
         #[cfg(test)]
         if let Some(e) = &self.inner.thread_scope_error {
@@ -321,6 +326,9 @@ impl BundleInterface {
 
     /// Run a bundle function. Mirrors C++ `BundleInterface::run()`.
     /// Returns the raw `PyObject`* result.
+    // SAFETY: Caller holds PYTHON_MUTEX and a ThreadScope on the bundle
+    // sub-interpreter provides a valid current thread state; `self` is a live
+    // BundleInterface.
     pub unsafe fn run(
         &self,
         func: &str,
@@ -435,6 +443,8 @@ impl BundleInterface {
     }
 
     /// Convert a `PyObject` to a Rust String. Mirrors C++ `BundleInterface::toString()`.
+    // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+    // `obj` is NULL or a valid PyObject on this thread.
     pub unsafe fn to_string_py(obj: *mut PyObject) -> String {
         if obj.is_null() {
             return String::new();
@@ -450,6 +460,8 @@ impl BundleInterface {
     }
 
     /// Convert a `PyObject` to u64. Mirrors C++ `BundleInterface::toUint64()`.
+    // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+    // `obj` is NULL or a valid PyObject on this thread.
     pub unsafe fn to_uint64(obj: *mut PyObject) -> u64 {
         if obj.is_null() {
             return 0;
@@ -463,6 +475,8 @@ impl BundleInterface {
     }
 
     /// Convert a `PyObject` to bool. Mirrors C++ `BundleInterface::toBool()`.
+    // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
+    // `obj` is NULL or a valid PyObject on this thread.
     pub unsafe fn to_bool(obj: *mut PyObject) -> bool {
         if obj.is_null() {
             return false;
@@ -471,6 +485,9 @@ impl BundleInterface {
     }
 
     /// Call json.dumps on a `PyObject`. Mirrors C++ `BundleInterface::jsonDumps()`.
+    // SAFETY: Caller holds PYTHON_MUTEX and a ThreadScope on the bundle
+    // sub-interpreter provides a valid current thread state; `obj` is NULL or a
+    // valid PyObject on this thread; `self` is a live BundleInterface.
     pub unsafe fn json_dumps(&self, obj: *mut PyObject) -> Result<String, String> {
         if obj.is_null() {
             return Ok("null".to_string());
@@ -521,6 +538,9 @@ impl BundleInterface {
     }
 
     /// Call json.loads on a string. Mirrors C++ `BundleInterface::jsonLoads()`.
+    // SAFETY: Caller holds PYTHON_MUTEX and a ThreadScope on the bundle
+    // sub-interpreter provides a valid current thread state; `self` is a live
+    // BundleInterface.
     pub unsafe fn json_loads(&self, content: &str) -> *mut PyObject {
         let p_func = PyObject_GetAttrString(self.inner.json_module, c"loads".as_ptr());
         if p_func.is_null() {
@@ -604,6 +624,9 @@ impl BundleInterface {
     /// strings. We also defensively skip `format_tb` entirely when `tb` is
     /// NULL, and pass `my_py_none_struct()` to `format_exception_only` when
     /// `value` is NULL.
+    // SAFETY: Caller holds PYTHON_MUTEX and a ThreadScope on the bundle
+    // sub-interpreter provides a valid current thread state; `self` is a live
+    // BundleInterface.
     pub unsafe fn print_last_python_exception(&self) {
         let mut extype: *mut PyObject = std::ptr::null_mut();
         let mut value: *mut PyObject = std::ptr::null_mut();
@@ -763,6 +786,8 @@ impl BundleInterface {
     }
 
     /// Dispose a `PyObject`. Mirrors C++ `BundleInterface::disposeObject()`.
+    // SAFETY: Caller holds PYTHON_MUTEX; `obj` is NULL or a valid owned
+    // reference on this thread.
     pub unsafe fn dispose_object(obj: *mut PyObject) {
         if !obj.is_null() {
             Py_DecRef(obj);
