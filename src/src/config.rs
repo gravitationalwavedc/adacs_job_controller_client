@@ -51,7 +51,16 @@ const VALID_LOG_LEVELS: [&str; 6] = ["trace", "debug", "info", "warn", "error", 
 pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
 
-    validate_string_field(config, "pythonLibrary", &mut errors, true);
+    // pythonLibrary is optional when a non-empty PYTHON_LIB_PATH env var is
+    // set (highest priority source in get_python_library_path); otherwise it
+    // is required.
+    let python_library_required = !env_python_library_path_is_set();
+    validate_string_field(
+        config,
+        "pythonLibrary",
+        &mut errors,
+        python_library_required,
+    );
     validate_string_field(config, "websocketEndpoint", &mut errors, true);
     validate_string_field(config, "logLevel", &mut errors, false);
     validate_string_field(config, "ltk", &mut errors, false);
@@ -96,6 +105,10 @@ fn get_non_empty_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
+}
+
+fn env_python_library_path_is_set() -> bool {
+    std::env::var("PYTHON_LIB_PATH").is_ok_and(|path| !path.trim().is_empty())
 }
 
 pub fn get_ltk_from_config(config: &Value) -> Option<String> {
@@ -172,10 +185,35 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn validate_config_rejects_missing_python_library() {
+        let saved_env = std::env::var("PYTHON_LIB_PATH").ok();
+        std::env::remove_var("PYTHON_LIB_PATH");
         let config = json!({"websocketEndpoint": "ws://example.com/ws/"});
         let err = validate_config(&config).unwrap_err();
         assert!(err.iter().any(|e| e.contains("pythonLibrary")));
+        if let Some(v) = saved_env {
+            std::env::set_var("PYTHON_LIB_PATH", v);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn validate_config_accepts_missing_python_library_when_env_var_set() {
+        let saved_env = std::env::var("PYTHON_LIB_PATH").ok();
+
+        let config = json!({"websocketEndpoint": "ws://example.com/ws/"});
+
+        std::env::set_var("PYTHON_LIB_PATH", "/env/libpython.so");
+        assert!(validate_config(&config).is_ok());
+
+        std::env::remove_var("PYTHON_LIB_PATH");
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.iter().any(|e| e.contains("pythonLibrary")));
+
+        if let Some(v) = saved_env {
+            std::env::set_var("PYTHON_LIB_PATH", v);
+        }
     }
 
     #[test]
@@ -186,12 +224,18 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn validate_config_rejects_both_missing() {
+        let saved_env = std::env::var("PYTHON_LIB_PATH").ok();
+        std::env::remove_var("PYTHON_LIB_PATH");
         let config = json!({});
         let err = validate_config(&config).unwrap_err();
         assert_eq!(err.len(), 2);
         assert!(err.iter().any(|e| e.contains("pythonLibrary")));
         assert!(err.iter().any(|e| e.contains("websocketEndpoint")));
+        if let Some(v) = saved_env {
+            std::env::set_var("PYTHON_LIB_PATH", v);
+        }
     }
 
     #[test]
@@ -216,13 +260,19 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn validate_config_rejects_null_values() {
+        let saved_env = std::env::var("PYTHON_LIB_PATH").ok();
+        std::env::remove_var("PYTHON_LIB_PATH");
         let config = json!({
             "pythonLibrary": null,
             "websocketEndpoint": null
         });
         let err = validate_config(&config).unwrap_err();
         assert_eq!(err.len(), 2);
+        if let Some(v) = saved_env {
+            std::env::set_var("PYTHON_LIB_PATH", v);
+        }
     }
 
     // --- read_client_config tests ---
