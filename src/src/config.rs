@@ -52,7 +52,7 @@ pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
 
     validate_string_field(config, "pythonLibrary", &mut errors, true);
-    validate_string_field(config, "websocketEndpoint", &mut errors, true);
+    validate_string_field(config, "websocketEndpoint", &mut errors, false);
     validate_string_field(config, "logLevel", &mut errors, false);
     validate_string_field(config, "ltk", &mut errors, false);
 
@@ -172,6 +172,12 @@ mod tests {
     }
 
     #[test]
+    fn validate_config_accepts_missing_websocket_endpoint() {
+        let config = json!({"pythonLibrary": "/usr/lib/libpython3.so"});
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
     fn validate_config_rejects_missing_python_library() {
         let config = json!({"websocketEndpoint": "ws://example.com/ws/"});
         let err = validate_config(&config).unwrap_err();
@@ -179,19 +185,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_config_rejects_missing_websocket_endpoint() {
-        let config = json!({"pythonLibrary": "/usr/lib/libpython3.so"});
-        let err = validate_config(&config).unwrap_err();
-        assert!(err.iter().any(|e| e.contains("websocketEndpoint")));
-    }
-
-    #[test]
-    fn validate_config_rejects_both_missing() {
+    fn validate_config_rejects_missing_python_library_only() {
         let config = json!({});
         let err = validate_config(&config).unwrap_err();
-        assert_eq!(err.len(), 2);
+        assert_eq!(err.len(), 1);
         assert!(err.iter().any(|e| e.contains("pythonLibrary")));
-        assert!(err.iter().any(|e| e.contains("websocketEndpoint")));
     }
 
     #[test]
@@ -222,7 +220,8 @@ mod tests {
             "websocketEndpoint": null
         });
         let err = validate_config(&config).unwrap_err();
-        assert_eq!(err.len(), 2);
+        assert_eq!(err.len(), 1);
+        assert!(err.iter().any(|e| e.contains("pythonLibrary")));
     }
 
     // --- read_client_config tests ---
