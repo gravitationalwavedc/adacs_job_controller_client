@@ -6,7 +6,7 @@ use tracing::trace;
 pub static THREAD_BUNDLE_HASH_MAP: std::sync::LazyLock<RwLock<HashMap<ThreadId, String>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
-pub fn set_current_thread_bundle(bundle_hash: String) {
+pub(crate) fn set_current_thread_bundle(bundle_hash: String) {
     let thread_id = std::thread::current().id();
     trace!(
         "thread_bundle_map: set bundle='{}' for thread {:?}",
