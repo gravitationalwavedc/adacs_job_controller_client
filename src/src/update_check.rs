@@ -40,7 +40,7 @@ fn get_current_version() -> &'static str {
 /// Returns the path where the update binary should be written.
 /// The update file is placed next to the current executable.
 fn get_update_path(executable_path: &Path) -> PathBuf {
-    executable_path.with_file_name("adacs_job_client.update")
+    executable_path.with_extension("update")
 }
 
 /// Computes the delay in seconds for retry attempt N (1-indexed using exponential backoff).
@@ -331,6 +331,7 @@ mod tests {
                 "/usr/bin/adacs_job_client.update",
             ),
             ("./adacs_job_client", "./adacs_job_client.update"),
+            ("/opt/custom/jobd", "/opt/custom/jobd.update"),
         ];
         for (exe, expected) in &cases {
             let result = get_update_path(&PathBuf::from(exe));
