@@ -213,21 +213,6 @@ impl Message {
         value
     }
 
-    pub fn push_int(&mut self, value: i32) {
-        self.data.write_i32::<LittleEndian>(value).unwrap();
-    }
-
-    pub fn pop_int(&mut self) -> i32 {
-        if self.index + 4 > self.data.len() {
-            warn!("pop_int: buffer underflow at index {}", self.index);
-            return 0;
-        }
-        let mut rdr = Cursor::new(&self.data[self.index..]);
-        let value = rdr.read_i32::<LittleEndian>().unwrap();
-        self.index += 4;
-        value
-    }
-
     pub fn push_ulong(&mut self, value: u64) {
         trace!("Message: pushing ulong value={}", value);
         self.data.write_u64::<LittleEndian>(value).unwrap();
@@ -649,23 +634,6 @@ mod tests {
     }
 
     #[test]
-    fn test_primitive_int() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-        msg.push_int(-2_147_483_648);
-        msg.push_int(-1);
-        msg.push_int(0);
-        msg.push_int(2_147_483_647);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert_eq!(read_msg.pop_int(), -2_147_483_648);
-        assert_eq!(read_msg.pop_int(), -1);
-        assert_eq!(read_msg.pop_int(), 0);
-        assert_eq!(read_msg.pop_int(), 2_147_483_647);
-    }
-
-    #[test]
     fn test_primitive_float() {
         let mut msg = Message::new(1, Priority::Highest, "test");
 
@@ -897,17 +865,6 @@ mod tests {
 
         let mut partial = truncated_message(vec![0x01], 0);
         assert_eq!(partial.pop_short(), 0);
-        assert_eq!(partial.index, 0);
-    }
-
-    #[test]
-    fn pop_int_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_int(), 0);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01, 0x02, 0x03], 0);
-        assert_eq!(partial.pop_int(), 0);
         assert_eq!(partial.index, 0);
     }
 
