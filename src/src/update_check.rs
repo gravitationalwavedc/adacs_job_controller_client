@@ -98,10 +98,10 @@ fn parse_release_response(
 /// leading `sha256:` prefix (case-insensitive) is stripped before comparison.
 fn verify_sha256(data: &[u8], expected: &str) -> Result<(), Box<dyn std::error::Error>> {
     let trimmed = expected.trim();
-    let expected_hex = trimmed
-        .strip_prefix("sha256:")
-        .or_else(|| trimmed.strip_prefix("SHA256:"))
-        .unwrap_or(trimmed);
+    let expected_hex = match trimmed.get(..7) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("sha256:") => &trimmed[7..],
+        _ => trimmed,
+    };
     let mut hasher = Sha256::new();
     hasher.update(data);
     let computed = format!("{:x}", hasher.finalize());
@@ -709,6 +709,17 @@ mod tests {
         assert!(
             verify_sha256(data, &prefixed).is_ok(),
             "an uppercase 'SHA256:'-prefixed digest should verify after stripping"
+        );
+    }
+
+    #[test]
+    fn test_verify_sha256_strips_sha256_prefix_mixed_case() {
+        let data = b"hello world";
+        let hex = format!("{:x}", Sha256::digest(data));
+        let prefixed = format!("Sha256:{hex}");
+        assert!(
+            verify_sha256(data, &prefixed).is_ok(),
+            "a mixed-case 'Sha256:'-prefixed digest should verify after stripping"
         );
     }
 
