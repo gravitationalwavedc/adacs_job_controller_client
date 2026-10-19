@@ -249,21 +249,6 @@ impl Message {
         value
     }
 
-    pub fn push_long(&mut self, value: i64) {
-        self.data.write_i64::<LittleEndian>(value).unwrap();
-    }
-
-    pub fn pop_long(&mut self) -> i64 {
-        if self.index + 8 > self.data.len() {
-            warn!("pop_long: buffer underflow at index {}", self.index);
-            return 0;
-        }
-        let mut rdr = Cursor::new(&self.data[self.index..]);
-        let value = rdr.read_i64::<LittleEndian>().unwrap();
-        self.index += 8;
-        value
-    }
-
     pub fn push_float(&mut self, value: f32) {
         self.data.write_f32::<LittleEndian>(value).unwrap();
     }
@@ -769,22 +754,6 @@ mod tests {
     }
 
     #[test]
-    fn test_primitive_long() {
-        let mut msg = Message::new(1, Priority::Highest, "test");
-
-        msg.push_long(0x1);
-        msg.push_long(-0x1234_5678_1234_5678);
-        msg.push_long(0x1234_5678_1234_5678);
-
-        let data = msg.get_data().clone();
-        let mut read_msg = Message::from_data(data);
-
-        assert_eq!(read_msg.pop_long(), 0x1);
-        assert_eq!(read_msg.pop_long(), -0x1234_5678_1234_5678);
-        assert_eq!(read_msg.pop_long(), 0x1234_5678_1234_5678);
-    }
-
-    #[test]
     fn from_data_empty_buffer_leaves_defaults() {
         let mut msg = Message::from_data(Vec::new());
 
@@ -919,17 +888,6 @@ mod tests {
 
         let mut partial = truncated_message(vec![0x01, 0x02, 0x03, 0x04], 0);
         assert_eq!(partial.pop_ulong(), 0);
-        assert_eq!(partial.index, 0);
-    }
-
-    #[test]
-    fn pop_long_returns_zero_on_buffer_underflow() {
-        let mut empty = truncated_message(vec![], 0);
-        assert_eq!(empty.pop_long(), 0);
-        assert_eq!(empty.index, 0);
-
-        let mut partial = truncated_message(vec![0x01, 0x02, 0x03, 0x04], 0);
-        assert_eq!(partial.pop_long(), 0);
         assert_eq!(partial.index, 0);
     }
 
