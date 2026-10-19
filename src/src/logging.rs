@@ -27,7 +27,12 @@ static LOG_INIT: Once = Once::new();
 /// # Panics
 /// Panics if the log directory cannot be created or if tracing subscriber
 /// cannot be initialized.
-pub fn init_logging(log_dir: &Path, log_prefix: &str, max_log_files: usize, log_level: &str) {
+pub(crate) fn init_logging(
+    log_dir: &Path,
+    log_prefix: &str,
+    max_log_files: usize,
+    log_level: &str,
+) {
     // Create log directory if it doesn't exist
     std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
 
