@@ -100,6 +100,32 @@ impl BundleInterface {
 /// Custom error for when a Python function returns None
 pub struct NoneException;
 
+/// Tear down the sub-interpreter on an error path of `BundleInterface::new`
+/// where both `_scope` (a live `ThreadScope`) and `python_interpreter` (a
+/// `SubInterpreter`) are still alive.
+///
+/// Order is critical. `_scope` must be dropped first — its `Drop` calls
+/// `PyThreadState_DeleteCurrent`, which releases the GIL and deletes the
+/// sub-interpreter's current thread state. The saved main thread state is
+/// then restored so the GIL is held while `python_interpreter` is dropped
+/// (`Py_EndInterpreter` requires the GIL). Finally the main thread state
+/// is re-saved so the caller's precondition (GIL released, main state
+/// saved) still holds after the error is returned.
+///
+/// # Safety
+/// The caller must hold `PYTHON_MUTEX`, and `STATE` must hold the saved
+/// main thread state (set earlier in `BundleInterface::new`).
+unsafe fn teardown_interpreter_after_scope(scope: ThreadScope, python_interpreter: SubInterpreter) {
+    drop(scope);
+    let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    if !state.0.is_null() {
+        PyEval_RestoreThread(state.0);
+        state.0 = std::ptr::null_mut();
+    }
+    drop(python_interpreter);
+    state.0 = PyEval_SaveThread();
+}
+
 impl BundleInterface {
     /// Create a new `BundleInterface` for the given bundle hash.
     /// This exactly mirrors the C++ `BundleInterface` constructor.
@@ -157,7 +183,7 @@ impl BundleInterface {
         // Activate the new interpreter via ThreadScope
         let interp = python_interpreter.interp();
         debug!("BundleInterface::new creating thread scope");
-        let _scope = ThreadScope::new(interp)?;
+        let scope = ThreadScope::new(interp)?;
         debug!("BundleInterface::new created thread scope");
 
         let bundle_path = Path::new(bundle_path_root).join(bundle_hash);
@@ -168,12 +194,14 @@ impl BundleInterface {
         if p_global.is_null() {
             error!("Error creating global dict");
             PyErr_Print();
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err("Failed to create global dict".to_string());
         }
         if PyDict_SetItemString(p_global, c"__builtins__".as_ptr(), PyEval_GetBuiltins()) < 0 {
             error!("Error setting __builtins__ in globals dict");
             PyErr_Print();
             Py_DecRef(p_global);
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err("Failed to set __builtins__ in globals dict".to_string());
         }
 
@@ -183,6 +211,7 @@ impl BundleInterface {
             error!("Error creating local dict");
             PyErr_Print();
             Py_DecRef(p_global);
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err("Failed to create local dict".to_string());
         }
         let c_redirect = CString::new(STDOUT_REDIRECTION).unwrap();
@@ -199,6 +228,7 @@ impl BundleInterface {
             PyErr_Print();
             Py_DecRef(p_global);
             Py_DecRef(p_local);
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err("Failed to install stdout/stderr redirection".to_string());
         }
 
@@ -212,6 +242,7 @@ impl BundleInterface {
             error!("Error importing json module");
             PyErr_Print();
             Py_DecRef(p_global);
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err("Failed to import json module".to_string());
         }
         if PyDict_SetItemString(p_global, c"json".as_ptr(), json_module) < 0 {
@@ -219,6 +250,7 @@ impl BundleInterface {
             PyErr_Print();
             Py_DecRef(json_module);
             Py_DecRef(p_global);
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err("Failed to set json module in globals dict".to_string());
         }
 
@@ -230,6 +262,7 @@ impl BundleInterface {
             PyErr_Print();
             Py_DecRef(json_module);
             Py_DecRef(p_global);
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err("Failed to import traceback module".to_string());
         }
 
@@ -240,6 +273,7 @@ impl BundleInterface {
             Py_DecRef(p_global);
             Py_DecRef(json_module);
             Py_DecRef(traceback_module);
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err(e);
         }
 
@@ -255,6 +289,7 @@ impl BundleInterface {
             Py_DecRef(json_module);
             Py_DecRef(traceback_module);
             Py_XDECREF(p_bundle_module);
+            teardown_interpreter_after_scope(scope, python_interpreter);
             return Err("Failed to load bundle module".to_string());
         }
 

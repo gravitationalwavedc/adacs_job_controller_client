@@ -1171,6 +1171,46 @@ fn test_bundle_interface_new_missing_bundle_module() {
     inner();
 }
 
+/// Regression test for the error paths of `BundleInterface::new` that run
+/// after `ThreadScope::new` succeeds. Those paths must restore the saved
+/// main thread state (acquire the GIL) before the `SubInterpreter` is
+/// dropped — `Py_EndInterpreter` requires the GIL — and then re-save the
+/// main thread state before returning `Err`, so a subsequent
+/// `BundleInterface::new` still works.
+///
+/// Forces the missing-bundle-module error path, then asserts a subsequent
+/// `BundleInterface::new` with a valid bundle still succeeds. This is a
+/// smoke test: it may pass even without the fix (the main thread state is
+/// already saved), but it guards the error-path GIL handling and matches the
+/// repo's existing test style.
+#[test]
+fn test_bundle_interface_new_error_path_restores_main_state() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let path_root = fixture.get_bundle_path().to_string_lossy().to_string();
+
+        let missing_hash = Uuid::new_v4().to_string();
+        let result = unsafe { BundleInterface::new(&missing_hash, &path_root) };
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Failed to load bundle module"),
+            "missing bundle module should fail with 'Failed to load bundle module'"
+        );
+
+        let good_hash = Uuid::new_v4().to_string();
+        fixture.write_raw_script(
+            &good_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        let bundle =
+            unsafe { BundleInterface::new(&good_hash, &path_root) }.expect("bundle should load");
+        assert_eq!(bundle.bundle_hash(), good_hash);
+    }
+    inner();
+}
+
 /// DIRECT UNIT TEST — reviewer request on MR !200 ("Needs coverage." /
 /// "Please test the new branches.").
 ///
