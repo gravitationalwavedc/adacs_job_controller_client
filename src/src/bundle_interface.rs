@@ -1061,6 +1061,23 @@ mod bundle_interface_conversion_tests {
     }
 
     #[test]
+    fn to_uint64_returns_value_for_int_object() {
+        crate::tests::init_python_global();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the main
+        // interpreter provides a valid current thread state, satisfying the
+        // preconditions of `to_uint64`.
+        unsafe {
+            let _guard = PYTHON_MUTEX.lock();
+            let interp = (*get_main_ts()).interp;
+            let _scope = ThreadScope::new(interp).expect("thread scope should be created");
+            let int_obj = PyLong_FromUnsignedLongLong(42);
+            assert!(!int_obj.is_null(), "int object should be created");
+            assert_eq!(BundleInterface::to_uint64(int_obj), 42);
+            Py_DecRef(int_obj);
+        }
+    }
+
+    #[test]
     fn dispose_object_is_safe_with_null_pointer() {
         // Should not crash or dereference null
         unsafe {
