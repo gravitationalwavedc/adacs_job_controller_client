@@ -189,7 +189,6 @@ py_wrap!(PyImport_AppendInittab, (name: *const c_char, init_func: Option<unsafe 
 py_wrap!(PyImport_ImportModule, (name: *const c_char) -> *mut PyObject);
 py_wrap!(PyDict_New, () -> *mut PyObject);
 py_wrap!(PyDict_SetItemString, (dict: *mut PyObject, key: *const c_char, item: *mut PyObject) -> c_int);
-py_wrap!(PyDict_GetItemString, (dict: *mut PyObject, key: *const c_char) -> *mut PyObject);
 py_wrap!(PyEval_GetBuiltins, () -> *mut PyObject);
 py_wrap!(PyObject_GetAttrString, (obj: *mut PyObject, name: *const c_char) -> *mut PyObject);
 py_wrap!(PyObject_SetAttrString, (obj: *mut PyObject, name: *const c_char, value: *mut PyObject) -> c_int);

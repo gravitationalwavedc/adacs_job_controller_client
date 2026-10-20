@@ -13,9 +13,9 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    PyDict_GetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyUnicode_FromString, Py_DecRef, Py_IncRef, PYTHON_MUTEX,
+    PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins, PyImport_ImportModule,
+    PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString, PyRun_StringFlags,
+    PyUnicode_FromString, Py_DecRef, Py_eval_input, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -1311,12 +1311,17 @@ fn load_bundle_for_exception_printer() -> BundleInterface {
 // reference owned by the caller.
 unsafe fn runtime_error_type() -> *mut PyObject {
     let builtins = PyEval_GetBuiltins();
-    let exc = PyDict_GetItemString(builtins, c"RuntimeError".as_ptr());
+    let exc = PyRun_StringFlags(
+        c"RuntimeError".as_ptr(),
+        Py_eval_input,
+        builtins,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    );
     assert!(
         !exc.is_null(),
         "RuntimeError should be available in builtins"
     );
-    Py_IncRef(exc);
     exc
 }
 
