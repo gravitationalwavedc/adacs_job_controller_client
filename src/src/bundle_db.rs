@@ -746,6 +746,9 @@ mod tests {
             .expect("bundle should load");
 
         let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `set_job_id_in_dict`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let dict = crate::python_interface::PyDict_New();
@@ -780,6 +783,9 @@ mod tests {
             .expect("bundle should load");
 
         let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `set_job_id_in_dict`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             // A tuple is not a dict, so PyDict_SetItemString fails deterministically.
@@ -816,6 +822,9 @@ mod tests {
             .expect("bundle should load");
 
         let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `set_job_id_in_dict`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let dict = crate::python_interface::PyDict_New();
@@ -890,6 +899,9 @@ mod tests {
             .expect("bundle should load");
 
         let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `set_db_error_and_return_null`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let error_obj = get_bundle_db_error(bundle_hash);
@@ -936,6 +948,9 @@ mod tests {
             .expect("bundle should load");
 
         let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `get_job_by_id`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let _bundle_guard =
@@ -1243,6 +1258,9 @@ mod tests {
             .expect("bundle should load");
 
         let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `delete_job`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let _bundle_guard =
@@ -1320,6 +1338,9 @@ mod tests {
         set_websocket_client(Arc::new(mock));
 
         let _guard = crate::python_interface::PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and a ThreadScope on the bundle's
+        // sub-interpreter provides a valid current thread state for the Python
+        // C-API calls performed by `delete_job`.
         unsafe {
             let _scope = bundle.thread_scope().expect("thread scope");
             let _bundle_guard =
