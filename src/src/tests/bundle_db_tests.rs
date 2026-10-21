@@ -57,6 +57,55 @@ fn test_create_or_update_job() {
 }
 
 #[test]
+fn test_create_or_update_job_strips_job_id_from_payload() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        fixture.write_bundle_db_create_or_update_job(
+            &bundle_hash,
+            r#"{"job_id": 9876, "submit_id": 1234, "working_directory": "/test/working/directory"}"#,
+        );
+
+        let sent_hash = bundle_hash.clone();
+        let mut mock_ws = MockWebsocketClient::new();
+        mock_ws
+            .expect_send_db_request()
+            .times(1)
+            .returning(move |msg| {
+                let mut m = Message::from_data(msg.get_data().clone());
+                let job_id = m.pop_ulong();
+                let job_data = m.pop_string();
+                let sent_bundle_hash = m.pop_string();
+
+                assert_eq!(job_id, 9876);
+                assert!(!job_data.contains("\"job_id\""));
+                assert_eq!(sent_bundle_hash, sent_hash);
+
+                let mut resp = make_db_response();
+                resp.push_ulong(9876); // returned job_id
+                Box::pin(async move { Ok(resp) })
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        let result = BundleManager::singleton().run_bundle_json(
+            "submit",
+            &bundle_hash,
+            &serde_json::json!({}),
+            "",
+        );
+
+        assert_eq!(result["job_id"], 9876);
+        assert_eq!(result["submit_id"], 1234);
+    }
+    inner();
+}
+
+#[test]
 fn test_create_or_update_job_failure() {
     #[tokio::main(flavor = "current_thread")]
     async fn inner() {
