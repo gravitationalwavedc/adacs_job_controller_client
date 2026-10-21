@@ -292,7 +292,7 @@ fn perform_update(release: &ReleaseInfo) -> Result<(), Box<dyn std::error::Error
 }
 
 /// Main update check function — call this at startup before connecting WebSocket.
-pub fn check_for_updates() {
+pub(crate) fn check_for_updates() {
     // Never perform a real network update check during tests: the reconnect
     // test triggers this via check_for_updates_on_reconnect, and a live update
     // would replace the test binary and exit the process mid-run, killing the
