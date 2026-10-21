@@ -143,7 +143,6 @@ pub fn get_websocket_endpoint() -> String {
 pub fn get_log_level(config: &Value) -> String {
     let result =
         get_non_empty_str(config, "logLevel").map_or_else(|| "info".to_string(), ToOwned::to_owned);
-    tracing::debug!("Config log level: {}", result);
     result
 }
 
