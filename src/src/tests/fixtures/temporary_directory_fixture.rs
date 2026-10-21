@@ -78,18 +78,6 @@ impl TemporaryDirectoryFixture {
         self.temp_dir.path()
     }
 
-    pub fn get_temp_file_path(&self) -> &Path {
-        &self.temp_file
-    }
-
-    pub fn get_temp_file2_path(&self) -> &Path {
-        &self.temp_file2
-    }
-
-    pub fn get_temp_dir2_path(&self) -> &Path {
-        &self.temp_dir2
-    }
-
     pub fn create_test_file(&self, name: &str, content: &str) -> PathBuf {
         let path = self.temp_dir.path().join(name);
         fs::write(&path, content).expect("Failed to write test file");
@@ -99,27 +87,6 @@ impl TemporaryDirectoryFixture {
     pub fn create_test_directory(&self, name: &str) -> PathBuf {
         let path = self.temp_dir.path().join(name);
         fs::create_dir_all(&path).expect("Failed to create test directory");
-        path
-    }
-
-    pub fn write_large_file(&self, name: &str, size_mb: usize) -> PathBuf {
-        use std::io::Write;
-
-        let path = self.temp_dir.path().join(name);
-        let mut file = fs::File::create(&path).expect("Failed to create large file");
-
-        // Write random data
-        let chunk_size = 1024 * 1024; // 1MB chunks
-        let mut written = 0;
-
-        while written < size_mb * 1024 * 1024 {
-            let to_write = std::cmp::min(chunk_size, size_mb * 1024 * 1024 - written);
-            let data: Vec<u8> = (0..to_write).map(|_| rand::random::<u8>()).collect();
-            file.write_all(&data).expect("Failed to write data");
-            written += to_write;
-        }
-
-        file.flush().expect("Failed to flush file");
         path
     }
 }
