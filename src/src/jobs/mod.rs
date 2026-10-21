@@ -519,7 +519,7 @@ pub async fn archive_job(job: &job::Model) -> Result<(), String> {
     }
 }
 
-pub fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String> {
+pub(crate) fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String> {
     archive_dir_with_limit(dir, archive_path, MAX_ARCHIVE_SIZE_BYTES)
 }
 
