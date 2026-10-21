@@ -4216,8 +4216,7 @@ fn test_file_upload_server_ready_withheld_queues_error_on_main_ws() {
         // finishes deterministically.
         set_server_ready_timeout_for_test(Some(Duration::from_millis(50)));
 
-        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, SYSTEM_SOURCE);
-        msg_raw.push_string(&test_uuid);
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
         msg_raw.push_uint(job_id as u32);
         msg_raw.push_string("some_hash");
         msg_raw.push_string("withheld.txt");
