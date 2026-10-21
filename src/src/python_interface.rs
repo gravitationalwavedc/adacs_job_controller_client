@@ -166,7 +166,7 @@ fn dlopen_error_detail(err_ptr: *const c_char) -> String {
     }
 }
 
-pub fn get_python_lib() -> Arc<Library> {
+fn get_python_lib() -> Arc<Library> {
     trace!("get_python_lib called");
     PY_LIB
         .get()
