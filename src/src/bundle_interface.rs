@@ -972,7 +972,7 @@ mod fallback_value_text_tests {
 mod bundle_interface_conversion_tests {
     use super::*;
     use crate::python_interface::{
-        PyLong_FromUnsignedLongLong, PyObject_SetAttrString, PyUnicode_FromString, Py_eval_input,
+        PyLong_FromUnsignedLongLong, PyUnicode_FromString, Py_eval_input,
     };
 
     /// Helper: create a minimal `BundleInterface` with null pointer fields.
@@ -1282,7 +1282,8 @@ mod bundle_interface_conversion_tests {
             let _scope = ThreadScope::new(interp).expect("thread scope should be created");
             // Create a fresh class instance whose `__name__` attribute is a
             // non-unicode int, so `PyUnicode_AsUTF8` fails inside
-            // `extract_type_name`.
+            // `extract_type_name`. The `__name__` is set at construction time
+            // via the class dict rather than mutated afterwards.
             let globals = PyDict_New();
             assert!(!globals.is_null(), "globals dict should be created");
             assert_eq!(
@@ -1290,7 +1291,7 @@ mod bundle_interface_conversion_tests {
                 0,
                 "setting __builtins__ should succeed"
             );
-            let code = c"type('_T', (), {})()";
+            let code = c"type('_T', (), {'__name__': 42})()";
             let instance = PyRun_StringFlags(
                 code.as_ptr(),
                 Py_eval_input,
@@ -1299,19 +1300,11 @@ mod bundle_interface_conversion_tests {
                 std::ptr::null_mut(),
             );
             assert!(!instance.is_null(), "class instance should be created");
-            let int_obj = PyLong_FromUnsignedLongLong(42);
-            assert!(!int_obj.is_null(), "int object should be created");
-            assert_eq!(
-                PyObject_SetAttrString(instance, c"__name__".as_ptr(), int_obj),
-                0,
-                "setting __name__ should succeed"
-            );
             assert_eq!(extract_type_name(instance), "unknown");
             assert!(
                 PyErr_Occurred().is_null(),
                 "stale error from PyUnicode_AsUTF8 must be cleared"
             );
-            Py_DecRef(int_obj);
             Py_DecRef(instance);
             Py_DecRef(globals);
         }

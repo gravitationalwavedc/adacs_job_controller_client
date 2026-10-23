@@ -13,9 +13,9 @@ use crate::bundle_interface::BundleInterface;
 use crate::bundle_manager::BundleManager;
 use crate::messaging::{Message, Priority, DB_RESPONSE};
 use crate::python_interface::{
-    PyDict_GetItemString, PyErr_Occurred, PyErr_SetString, PyEval_GetBuiltins,
-    PyImport_ImportModule, PyLong_FromUnsignedLongLong, PyObject, PyObject_SetAttrString,
-    PyUnicode_FromString, Py_DecRef, Py_IncRef, PYTHON_MUTEX,
+    PyDict_GetItemString, PyDict_New, PyDict_SetItemString, PyErr_Occurred, PyErr_SetString,
+    PyEval_GetBuiltins, PyLong_FromUnsignedLongLong, PyObject, PyRun_StringFlags,
+    PyUnicode_FromString, Py_DecRef, Py_IncRef, Py_file_input, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
 use crate::websocket::{set_websocket_client, MockWebsocketClient};
@@ -873,6 +873,34 @@ fn test_json_loads_returns_null_for_invalid_json() {
     inner();
 }
 
+/// Delete an attribute from the cached `json` module in the sub-interpreter by
+/// running Python code, so `json_loads` / `json_dumps` hit their
+/// attribute-lookup-failure branches without needing `PyObject_SetAttrString`.
+///
+/// # Safety
+/// The caller must hold `PYTHON_MUTEX` and a `ThreadScope` on the bundle
+/// sub-interpreter so a valid current thread state exists for `PyRun_StringFlags`.
+unsafe fn delete_json_attr(attr: &str) {
+    let globals = PyDict_New();
+    assert!(!globals.is_null(), "globals dict should be created");
+    assert_eq!(
+        PyDict_SetItemString(globals, c"__builtins__".as_ptr(), PyEval_GetBuiltins()),
+        0,
+        "setting __builtins__ should succeed"
+    );
+    let code = CString::new(format!("import json; del json.{attr}")).unwrap();
+    let result = PyRun_StringFlags(
+        code.as_ptr(),
+        Py_file_input,
+        globals,
+        globals,
+        std::ptr::null_mut(),
+    );
+    assert!(!result.is_null(), "deleting json.{attr} should succeed");
+    Py_DecRef(result);
+    Py_DecRef(globals);
+}
+
 /// The `json.loads` attribute lookup can fail (e.g. when the `loads`
 /// attribute is removed from the json module), so `json_loads` must return
 /// NULL (the "failed to get json.loads function" branch) instead of
@@ -899,18 +927,9 @@ fn test_json_loads_returns_null_when_loads_lookup_fails() {
             let _scope = bundle
                 .thread_scope()
                 .expect("thread scope should be created");
-            // The json module is cached in the sub-interpreter, so this
-            // returns the same module object `json_loads` reads from.
-            let json_module = PyImport_ImportModule(c"json".as_ptr());
-            assert!(!json_module.is_null(), "json module should import");
-            let c_name = CString::new("loads").unwrap();
-            // PyObject_SetAttrString with a NULL value deletes the attribute
-            // (this is what CPython's PyObject_DelAttrString macro expands to).
-            assert_eq!(
-                PyObject_SetAttrString(json_module, c_name.as_ptr(), std::ptr::null_mut()),
-                0,
-                "deleting json.loads should succeed"
-            );
+            // The json module is cached in the sub-interpreter, so deleting
+            // `loads` from it makes `json_loads`'s attribute lookup fail.
+            delete_json_attr("loads");
             let obj = bundle.json_loads(r#"{"key": "value"}"#);
             assert!(
                 obj.is_null(),
@@ -987,18 +1006,9 @@ fn test_json_dumps_returns_err_when_dumps_lookup_fails() {
             let _scope = bundle
                 .thread_scope()
                 .expect("thread scope should be created");
-            // The json module is cached in the sub-interpreter, so this
-            // returns the same module object `json_dumps` reads from.
-            let json_module = PyImport_ImportModule(c"json".as_ptr());
-            assert!(!json_module.is_null(), "json module should import");
-            let c_name = CString::new("dumps").unwrap();
-            // PyObject_SetAttrString with a NULL value deletes the attribute
-            // (this is what CPython's PyObject_DelAttrString macro expands to).
-            assert_eq!(
-                PyObject_SetAttrString(json_module, c_name.as_ptr(), std::ptr::null_mut()),
-                0,
-                "deleting json.dumps should succeed"
-            );
+            // The json module is cached in the sub-interpreter, so deleting
+            // `dumps` from it makes `json_dumps`'s attribute lookup fail.
+            delete_json_attr("dumps");
             let obj = bundle.json_loads(r#"{"key": "value"}"#);
             assert!(!obj.is_null(), "json_loads should succeed");
             let result = bundle.json_dumps(obj);
