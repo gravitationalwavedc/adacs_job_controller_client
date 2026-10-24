@@ -57,7 +57,7 @@ pub const OUT_OF_MEMORY: u32 = 402;
 pub const COMPLETED: u32 = 500;
 
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Priority {
     Highest = 0,
     Medium = 10,
@@ -374,16 +374,6 @@ mod tests {
         assert_eq!(Priority::Highest as u32, 0);
         assert_eq!(Priority::Medium as u32, 10);
         assert_eq!(Priority::Lowest as u32, 19);
-    }
-
-    #[test]
-    fn priority_ordering_reflects_queue_precedence() {
-        assert!(Priority::Highest < Priority::Medium);
-        assert!(Priority::Medium < Priority::Lowest);
-        assert_eq!(
-            Priority::Highest.cmp(&Priority::Highest),
-            std::cmp::Ordering::Equal
-        );
     }
 
     #[test]
