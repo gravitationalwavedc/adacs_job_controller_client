@@ -18,7 +18,7 @@ pub(crate) fn set_current_thread_bundle(bundle_hash: String) {
         .insert(thread_id, bundle_hash);
 }
 
-pub fn clear_current_thread_bundle() {
+pub(crate) fn clear_current_thread_bundle() {
     let thread_id = std::thread::current().id();
     trace!(
         "thread_bundle_map: clearing bundle for thread {:?}",
@@ -27,7 +27,7 @@ pub fn clear_current_thread_bundle() {
     THREAD_BUNDLE_HASH_MAP.write().remove(&thread_id);
 }
 
-pub fn get_current_thread_bundle() -> Option<String> {
+pub(crate) fn get_current_thread_bundle() -> Option<String> {
     let thread_id = std::thread::current().id();
     let result = THREAD_BUNDLE_HASH_MAP.read().get(&thread_id).cloned();
     if result.is_some() {
@@ -44,10 +44,10 @@ pub fn get_current_thread_bundle() -> Option<String> {
 
 /// RAII guard that sets the current thread bundle on creation
 /// and clears it on drop, even if the scope panics.
-pub struct ThreadBundleGuard;
+pub(crate) struct ThreadBundleGuard;
 
 impl ThreadBundleGuard {
-    pub fn new(bundle_hash: String) -> Self {
+    pub(crate) fn new(bundle_hash: String) -> Self {
         set_current_thread_bundle(bundle_hash);
         Self
     }
