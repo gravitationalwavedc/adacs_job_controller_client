@@ -359,7 +359,7 @@ impl AuthoritativeResult {
 /// used after the supervisor finishes to drive completion and failure
 /// reporting without exposing internal `Pending` state. `pub(crate)` so the
 /// test-only outcome observer can hand it to integration tests.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TransferOutcome {
     PrimaryError(String),
     PeerTerminal(String),
