@@ -1452,7 +1452,6 @@ fn log_job_lookup_error(prefix: &str, job_id: i64, err: &JobLookupError) {
 /// Per-transfer mutable state owned by the supervisor. Encapsulates
 /// authoritative result selection, transmitted-byte accounting, and the
 /// pending chunk that survives a Sending-phase peer input branch.
-#[derive(Debug)]
 struct TransferState {
     authoritative: AuthoritativeResult,
     transmitted_bytes: u64,
