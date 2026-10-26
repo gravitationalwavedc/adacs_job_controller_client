@@ -328,7 +328,7 @@ type WsReceiver = futures_util::stream::SplitStream<
 /// Authoritative transfer result selected by the supervisor before unified
 /// cleanup. Once a primary operation failure has been selected, later peer
 /// terminal events and cleanup failures cannot replace it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum AuthoritativeResult {
     /// No result yet — used internally before the clean-EOF boundary.
     Pending,
