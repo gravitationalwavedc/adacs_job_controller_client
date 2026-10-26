@@ -493,11 +493,11 @@ pub async fn resolve_working_directory(
     })
 }
 
-pub fn get_executable_path() -> PathBuf {
+pub(crate) fn get_executable_path() -> PathBuf {
     std::env::current_exe().unwrap_or_default()
 }
 
-pub fn get_default_bundle_path() -> String {
+pub(crate) fn get_default_bundle_path() -> String {
     let mut path = get_executable_path();
     path.pop();
     path.push("bundles");
