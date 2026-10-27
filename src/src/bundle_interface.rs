@@ -74,6 +74,7 @@ pub struct BundleInterface {
 
 impl BundleInterface {
     /// Return the bundle hash for this interface.
+    #[cfg(test)]
     pub(crate) fn bundle_hash(&self) -> &str {
         &self.inner.bundle_hash
     }

@@ -60,6 +60,7 @@ pub struct PyMethodDef {
 
 pub const METH_VARARGS: c_int = 0x0001;
 pub const Py_file_input: c_int = 257;
+#[cfg(test)]
 pub const Py_eval_input: c_int = 258;
 pub const PYTHON_API_VERSION: c_int = 1013;
 
@@ -412,6 +413,7 @@ unsafe impl Sync for SubInterpreter {}
 impl SubInterpreter {
     /// Create a null `SubInterpreter` for testing purposes.
     /// Only safe for testing null-object paths that don't dereference `ts`.
+    #[cfg(test)]
     pub fn null() -> Self {
         SubInterpreter {
             ts: std::ptr::null_mut(),
