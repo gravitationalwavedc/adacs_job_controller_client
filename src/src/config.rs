@@ -14,7 +14,7 @@ pub static TEST_CONFIG: LazyLock<std::sync::Mutex<Option<Value>>> =
 // startup), so the parsed config can be cached for the process lifetime.
 static CACHED_CONFIG: OnceLock<Value> = OnceLock::new();
 
-pub fn read_client_config() -> Value {
+pub(crate) fn read_client_config() -> Value {
     #[cfg(test)]
     {
         if let Some(config) = TEST_CONFIG.lock().unwrap().as_ref() {
@@ -48,7 +48,7 @@ pub fn read_client_config() -> Value {
 
 const VALID_LOG_LEVELS: [&str; 6] = ["trace", "debug", "info", "warn", "error", "off"];
 
-pub fn validate_config(config: &Value) -> Result<(), Vec<String>> {
+pub(crate) fn validate_config(config: &Value) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
 
     validate_string_field(config, "pythonLibrary", &mut errors, true);
@@ -98,12 +98,12 @@ fn get_non_empty_str<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|value| !value.is_empty())
 }
 
-pub fn get_ltk_from_config(config: &Value) -> Option<String> {
+pub(crate) fn get_ltk_from_config(config: &Value) -> Option<String> {
     get_non_empty_str(config, "ltk").map(ToOwned::to_owned)
 }
 
 /// Get the Python library path from config or environment variable
-pub fn get_python_library_path() -> String {
+pub(crate) fn get_python_library_path() -> String {
     // First check environment variable (highest priority)
     if let Ok(path) = std::env::var("PYTHON_LIB_PATH") {
         let trimmed = path.trim();
@@ -132,7 +132,7 @@ fn ensure_websocket_endpoint_trailing_slash(endpoint: &str) -> String {
 }
 
 /// Get the WebSocket endpoint from config, normalizing the trailing slash.
-pub fn get_websocket_endpoint() -> String {
+pub(crate) fn get_websocket_endpoint() -> String {
     let config = read_client_config();
     ensure_websocket_endpoint_trailing_slash(
         get_non_empty_str(&config, "websocketEndpoint").unwrap_or("ws://127.0.0.1:8001/ws/"),
@@ -140,7 +140,7 @@ pub fn get_websocket_endpoint() -> String {
 }
 
 /// Get the log level from config, defaulting to "info" if not set
-pub fn get_log_level(config: &Value) -> String {
+pub(crate) fn get_log_level(config: &Value) -> String {
     let result =
         get_non_empty_str(config, "logLevel").map_or_else(|| "info".to_string(), ToOwned::to_owned);
     tracing::debug!("Config log level: {}", result);
