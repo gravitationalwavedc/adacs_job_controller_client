@@ -85,7 +85,6 @@ static PY_LIB: OnceLock<Arc<Library>> = OnceLock::new();
 
 // SAFETY: `_Py_NoneStruct`/`_Py_TrueStruct` are process-wide singletons that live
 // for the lifetime of the process; the pointer is never dereferenced from Rust.
-#[derive(Clone, Copy)]
 struct PyObjectPtr(*mut PyObject);
 // SAFETY: The pointed-to object is a process-wide singleton that is never freed
 // while the library is loaded; the pointer is never dereferenced from Rust.
@@ -100,7 +99,6 @@ static PY_TRUE_STRUCT: OnceLock<PyObjectPtr> = OnceLock::new();
 /// Mirrors the C++ `static std::shared_mutex mutex_` used throughout.
 pub static PYTHON_MUTEX: Mutex<()> = Mutex::new(());
 
-#[derive(Clone, Copy)]
 pub struct ThreadStatePtr(pub *mut PyThreadState);
 // SAFETY: Pointer is only transferred between threads while holding PYTHON_MUTEX
 // and dereferenced on the owning Python thread after PyEval_RestoreThread.
