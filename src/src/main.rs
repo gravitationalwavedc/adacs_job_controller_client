@@ -165,6 +165,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     check_for_updates();
 
+    // Resolve the WebSocket token before daemonizing so configuration errors are
+    // printed to the terminal rather than only appearing in the redirected log.
+    let (ws_token, reconnectable) = match resolve_websocket_token(&args, &config) {
+        Ok((token, is_ltk)) => {
+            IS_LTK.store(is_ltk, Ordering::SeqCst);
+            (token, is_ltk)
+        }
+        Err(message) => {
+            error!("{message}");
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+    };
+
     // Daemonize BEFORE creating the tokio runtime — fork() in a multi-threaded
     // process is undefined behaviour (worker threads are silently destroyed).
     match daemonize_with_log_redirect(&log_dir) {
@@ -194,17 +208,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         let python_library_path = get_python_library_path();
         info!("Python library: {}", python_library_path);
-        let (ws_token, reconnectable) = match resolve_websocket_token(&args, &config) {
-            Ok((token, is_ltk)) => {
-                IS_LTK.store(is_ltk, Ordering::SeqCst);
-                (token, is_ltk)
-            }
-            Err(message) => {
-                error!("{message}");
-                eprintln!("{message}");
-                std::process::exit(1);
-            }
-        };
 
         if reconnectable {
             info!("Using persistent WebSocket token from config.json");
