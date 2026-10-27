@@ -442,7 +442,7 @@ impl BundleInterface {
     /// Convert a `PyObject` to a Rust String. Mirrors C++ `BundleInterface::toString()`.
     // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
     // `obj` is NULL or a valid PyObject on this thread.
-    pub unsafe fn to_string_py(obj: *mut PyObject) -> String {
+    pub(crate) unsafe fn to_string_py(obj: *mut PyObject) -> String {
         if obj.is_null() {
             return String::new();
         }
@@ -459,7 +459,7 @@ impl BundleInterface {
     /// Convert a `PyObject` to u64. Mirrors C++ `BundleInterface::toUint64()`.
     // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
     // `obj` is NULL or a valid PyObject on this thread.
-    pub unsafe fn to_uint64(obj: *mut PyObject) -> u64 {
+    pub(crate) unsafe fn to_uint64(obj: *mut PyObject) -> u64 {
         if obj.is_null() {
             return 0;
         }
@@ -474,7 +474,7 @@ impl BundleInterface {
     /// Convert a `PyObject` to bool. Mirrors C++ `BundleInterface::toBool()`.
     // SAFETY: Caller holds PYTHON_MUTEX and the bundle sub-interpreter GIL;
     // `obj` is NULL or a valid PyObject on this thread.
-    pub unsafe fn to_bool(obj: *mut PyObject) -> bool {
+    pub(crate) unsafe fn to_bool(obj: *mut PyObject) -> bool {
         if obj.is_null() {
             return false;
         }
@@ -785,7 +785,7 @@ impl BundleInterface {
     /// Dispose a `PyObject`. Mirrors C++ `BundleInterface::disposeObject()`.
     // SAFETY: Caller holds PYTHON_MUTEX; `obj` is NULL or a valid owned
     // reference on this thread.
-    pub unsafe fn dispose_object(obj: *mut PyObject) {
+    pub(crate) unsafe fn dispose_object(obj: *mut PyObject) {
         if !obj.is_null() {
             Py_DecRef(obj);
         }
