@@ -95,7 +95,7 @@ pub(crate) fn init_logging(
 /// Uses the log directory relative to the executable path,
 /// prefix "`adacs_job_client`", retains 7 days of logs,
 /// and uses the specified log level.
-pub fn init_logging_with_level(executable_path: &Path, log_level: &str) {
+pub(crate) fn init_logging_with_level(executable_path: &Path, log_level: &str) {
     let log_dir = executable_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
