@@ -20,15 +20,15 @@ use walkdir::WalkDir;
 static SUBMIT_MUTEX: std::sync::LazyLock<TokioMutex<()>> =
     std::sync::LazyLock::new(|| TokioMutex::new(()));
 
-pub const MAX_SUBMIT_COUNT: i32 = 60;
+pub(crate) const MAX_SUBMIT_COUNT: i32 = 60;
 
 fn saturating_increment_submit_count(count: i32) -> i32 {
     count.saturating_add(1)
 }
 
-pub const ARCHIVE_FILE_NAME: &str = "archive.tar.gz";
+pub(crate) const ARCHIVE_FILE_NAME: &str = "archive.tar.gz";
 
-pub const MAX_ARCHIVE_SIZE_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
+pub(crate) const MAX_ARCHIVE_SIZE_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
 
 struct ArchiveSizeLimiter<W> {
     inner: W,
@@ -118,7 +118,7 @@ async fn save_job_or_abort(job_model: job::Model, context: &str) -> Option<job::
     }
 }
 
-pub fn handle_job_submit(mut msg: Message) {
+pub(crate) fn handle_job_submit(mut msg: Message) {
     let job_id = i64::from(msg.pop_uint());
     let bundle_hash = msg.pop_string();
     let params = msg.pop_string();
@@ -614,7 +614,7 @@ async fn get_or_create_job_or_abort(job_id: i64, context: &str) -> Option<job::M
     }
 }
 
-pub fn handle_job_cancel(mut msg: Message) {
+pub(crate) fn handle_job_cancel(mut msg: Message) {
     tokio::spawn(async move {
         let job_id = i64::from(msg.pop_uint());
 
@@ -727,7 +727,7 @@ pub fn handle_job_cancel(mut msg: Message) {
     });
 }
 
-pub fn handle_job_delete(mut msg: Message) {
+pub(crate) fn handle_job_delete(mut msg: Message) {
     tokio::spawn(async move {
         let job_id = i64::from(msg.pop_uint());
 
