@@ -45,7 +45,7 @@ struct DbRequest {
     response_tx: std::sync::mpsc::Sender<Result<Message, String>>,
 }
 
-pub struct DbBridge {
+pub(crate) struct DbBridge {
     request_tx: std::sync::mpsc::SyncSender<DbRequest>,
     queue_depth: Arc<AtomicUsize>,
 }
@@ -53,7 +53,7 @@ pub struct DbBridge {
 static DB_BRIDGE: OnceLock<DbBridge> = OnceLock::new();
 
 impl DbBridge {
-    pub fn start() {
+    pub(crate) fn start() {
         let (tx, rx) = std::sync::mpsc::sync_channel::<DbRequest>(CHANNEL_CAPACITY);
         let queue_depth = Arc::new(AtomicUsize::new(0));
         let qd = Arc::clone(&queue_depth);
@@ -137,11 +137,11 @@ impl DbBridge {
 
     /// Returns `Some(&DbBridge)` if started, `None` otherwise.
     /// Used by `send_and_wait` to fall back gracefully in test environments.
-    pub fn try_get() -> Option<&'static DbBridge> {
+    pub(crate) fn try_get() -> Option<&'static DbBridge> {
         DB_BRIDGE.get()
     }
 
-    pub fn send(&self, msg: Message) -> Result<Message, String> {
+    pub(crate) fn send(&self, msg: Message) -> Result<Message, String> {
         let (tx, rx) = std::sync::mpsc::channel();
         let depth = self.queue_depth.fetch_add(1, Ordering::SeqCst) + 1;
         let msg_id = msg.id;
