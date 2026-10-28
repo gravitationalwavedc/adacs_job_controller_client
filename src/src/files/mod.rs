@@ -461,7 +461,7 @@ fn cap_file_count(len: usize) -> u32 {
 }
 
 /// Caller note: this function spawns internally and does not need to be awaited.
-pub fn handle_file_list(mut msg: Message) {
+pub(crate) fn handle_file_list(mut msg: Message) {
     let sem = FILE_LIST_SEMAPHORE.clone();
     tokio::spawn(async move {
         debug!("handle_file_list: received request");
@@ -715,7 +715,7 @@ fn send_file_list_error(uuid: &str, error_msg: &str) {
     );
 }
 
-pub fn handle_file_download(mut msg: Message) {
+pub(crate) fn handle_file_download(mut msg: Message) {
     let job_id = i64::from(msg.pop_uint());
     let uuid = msg.pop_string();
     let bundle_hash = msg.pop_string();
@@ -1601,7 +1601,7 @@ fn parse_upload_fields(msg: &mut Message) -> UploadFields {
     }
 }
 
-pub fn handle_file_upload(msg: Message) {
+pub(crate) fn handle_file_upload(msg: Message) {
     // Read config BEFORE spawning to capture the correct URL for this upload
     let ws_endpoint = crate::config::get_websocket_endpoint();
 
