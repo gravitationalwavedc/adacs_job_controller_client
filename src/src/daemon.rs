@@ -30,7 +30,7 @@ use tracing::{error, info, warn};
 /// * `Ok(true)` - This is the daemon process
 /// * `Ok(false)` - This is a parent process that should exit
 /// * `Err(e)` - Daemonization failed
-pub fn daemonize_with_log_redirect(
+pub(crate) fn daemonize_with_log_redirect(
     log_dir: &std::path::Path,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // First fork
