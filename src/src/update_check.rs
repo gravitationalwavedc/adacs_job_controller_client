@@ -55,6 +55,7 @@ fn retry_delay_secs(attempt: u32) -> u64 {
 
 /// A release asset selected for download: its URL plus an optional SHA-256
 /// digest used to verify the downloaded bytes before installation.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct ReleaseInfo {
     download_url: String,
     digest: Option<String>,
