@@ -72,7 +72,7 @@ async fn send_db_request_timed(
     Ok((raw, elapsed))
 }
 
-pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
+pub(crate) async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
     debug!("DB: get_running_jobs - sending request");
     let msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Medium, "database");
     let (raw, elapsed) = send_db_request_timed(msg, |e| {
@@ -116,15 +116,15 @@ async fn get_job_by_message(
     Ok(Some(job))
 }
 
-pub async fn get_job_by_id(id: i64) -> Result<Option<job::Model>, String> {
+pub(crate) async fn get_job_by_id(id: i64) -> Result<Option<job::Model>, String> {
     get_job_by_message(DB_JOB_GET_BY_ID, id, "get_job_by_id").await
 }
 
-pub async fn get_job_by_job_id(job_id_val: i64) -> Result<Option<job::Model>, String> {
+pub(crate) async fn get_job_by_job_id(job_id_val: i64) -> Result<Option<job::Model>, String> {
     get_job_by_message(DB_JOB_GET_BY_JOB_ID, job_id_val, "get_job_by_job_id").await
 }
 
-pub async fn delete_job(id: i64) -> Result<(), String> {
+pub(crate) async fn delete_job(id: i64) -> Result<(), String> {
     debug!("DB: delete_job - deleting job id={}", id);
     let mut msg = Message::new(DB_JOB_DELETE, Priority::Medium, "database");
     msg.push_ulong(u64::try_from(id).unwrap_or(0));
@@ -137,7 +137,7 @@ pub async fn delete_job(id: i64) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn get_or_create_by_job_id(job_id_val: i64) -> Result<job::Model, String> {
+pub(crate) async fn get_or_create_by_job_id(job_id_val: i64) -> Result<job::Model, String> {
     match get_job_by_job_id(job_id_val).await? {
         Some(job) => Ok(job),
         None => Ok(job::Model::default()),
@@ -161,7 +161,7 @@ async fn get_job_statuses(msg: Message, context: &str) -> Result<Vec<jobstatus::
     Ok(statuses)
 }
 
-pub async fn get_job_status_by_job_id_and_what(
+pub(crate) async fn get_job_status_by_job_id_and_what(
     job_id: i64,
     what: &str,
 ) -> Result<Vec<jobstatus::Model>, String> {
@@ -179,14 +179,14 @@ pub async fn get_job_status_by_job_id_and_what(
     get_job_statuses(msg, "get_job_status_by_job_id_and_what").await
 }
 
-pub async fn get_job_status_by_job_id(job_id: i64) -> Result<Vec<jobstatus::Model>, String> {
+pub(crate) async fn get_job_status_by_job_id(job_id: i64) -> Result<Vec<jobstatus::Model>, String> {
     debug!("DB: get_job_status_by_job_id - job_id={}", job_id);
     let mut msg = Message::new(DB_JOBSTATUS_GET_BY_JOB_ID, Priority::Medium, "database");
     msg.push_ulong(u64::try_from(job_id).unwrap_or(0));
     get_job_statuses(msg, "get_job_status_by_job_id").await
 }
 
-pub async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
+pub(crate) async fn delete_status_by_id_list(ids: Vec<i64>) -> Result<(), String> {
     let mut msg = Message::new(DB_JOBSTATUS_DELETE_BY_ID_LIST, Priority::Medium, "database");
     let count = cap_status_count(ids.len());
     msg.push_uint(count);
@@ -217,7 +217,7 @@ async fn send_save_request(msg: Message, context: &str, error_string: &str) -> R
     Ok(saved_id)
 }
 
-pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
+pub(crate) async fn save_job(job: job::Model) -> Result<job::Model, String> {
     debug!(
         "DB: save_job - saving job id={:?}, job_id={:?}",
         job.id, job.job_id
@@ -241,7 +241,7 @@ pub async fn save_job(job: job::Model) -> Result<job::Model, String> {
     })
 }
 
-pub async fn save_status(status: jobstatus::Model) -> Result<jobstatus::Model, String> {
+pub(crate) async fn save_status(status: jobstatus::Model) -> Result<jobstatus::Model, String> {
     debug!(
         "DB: save_status - saving status id={}, job_id={}, what={}, state={}",
         status.id, status.job_id, status.what, status.state
