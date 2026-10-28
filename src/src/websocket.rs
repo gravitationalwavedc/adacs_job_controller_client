@@ -967,7 +967,7 @@ fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
     c
 }
 
-pub fn get_websocket_client() -> Arc<dyn WebsocketClient> {
+pub(crate) fn get_websocket_client() -> Arc<dyn WebsocketClient> {
     let client = GLOBAL_CLIENT.read();
     if let Some(ref c) = *client {
         return c.clone();
@@ -984,22 +984,22 @@ pub fn get_websocket_client() -> Arc<dyn WebsocketClient> {
     arc_c
 }
 
-pub fn get_reconnect_notify() -> Arc<Notify> {
+pub(crate) fn get_reconnect_notify() -> Arc<Notify> {
     RECONNECT_NOTIFY.clone()
 }
 
-pub fn get_shutdown_notify() -> Arc<Notify> {
+pub(crate) fn get_shutdown_notify() -> Arc<Notify> {
     SHUTDOWN_NOTIFY.clone()
 }
 
 #[cfg(test)]
-pub fn set_websocket_client(client: Arc<dyn WebsocketClient>) {
+pub(crate) fn set_websocket_client(client: Arc<dyn WebsocketClient>) {
     let mut c = GLOBAL_CLIENT.write();
     *c = Some(client);
 }
 
 #[cfg(test)]
-pub fn reset_websocket_client_for_test() {
+pub(crate) fn reset_websocket_client_for_test() {
     let mut c = GLOBAL_CLIENT.write();
     *c = None;
     let mut tc = TUNGSTENITE_CLIENT.write();
