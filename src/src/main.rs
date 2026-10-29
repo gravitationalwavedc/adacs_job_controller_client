@@ -165,6 +165,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     check_for_updates();
 
+    // Resolve the Python library path before daemonizing so a missing
+    // pythonLibrary (with PYTHON_LIB_PATH unset) produces a visible terminal
+    // error instead of a silent daemon exit (get_python_library_path exits on
+    // failure, and stderr is redirected to the log after daemonization).
+    let python_library_path = get_python_library_path();
+
     // Daemonize BEFORE creating the tokio runtime — fork() in a multi-threaded
     // process is undefined behaviour (worker threads are silently destroyed).
     match daemonize_with_log_redirect(&log_dir) {
@@ -192,7 +198,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             std::process::exit(1);
         }
-        let python_library_path = get_python_library_path();
         info!("Python library: {}", python_library_path);
         let (ws_token, reconnectable) = match resolve_websocket_token(&args, &config) {
             Ok((token, is_ltk)) => {
