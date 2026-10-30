@@ -165,6 +165,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     check_for_updates();
 
+    // Validate config BEFORE daemonizing so config errors reach the terminal
+    // instead of only stderr.log after stderr has been redirected.
+    if let Err(errors) = validate_config(&config) {
+        for e in &errors {
+            eprintln!("Config validation error: {e}");
+        }
+        std::process::exit(1);
+    }
+
     // Daemonize BEFORE creating the tokio runtime — fork() in a multi-threaded
     // process is undefined behaviour (worker threads are silently destroyed).
     match daemonize_with_log_redirect(&log_dir) {
@@ -186,12 +195,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .join("config.json")
                 .display()
         );
-        if let Err(errors) = validate_config(&config) {
-            for e in &errors {
-                error!("Config validation error: {e}");
-            }
-            std::process::exit(1);
-        }
         let python_library_path = get_python_library_path();
         info!("Python library: {}", python_library_path);
         let (ws_token, reconnectable) = match resolve_websocket_token(&args, &config) {
