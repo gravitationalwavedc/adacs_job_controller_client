@@ -910,6 +910,21 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn get_default_job_details_cluster_is_null_when_absent_from_config() {
+        let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
+        *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
+            "pythonLibrary": "/usr/lib/libpython3.so",
+            "websocketEndpoint": "ws://127.0.0.1:0/ws/",
+        }));
+
+        let details = get_default_job_details();
+        assert!(details["cluster"].is_null());
+
+        *crate::config::TEST_CONFIG.lock().unwrap() = saved;
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn get_job_details_includes_cluster_job_id_and_scheduler_id() {
         let saved = crate::config::TEST_CONFIG.lock().unwrap().clone();
         *crate::config::TEST_CONFIG.lock().unwrap() = Some(json!({
