@@ -77,7 +77,7 @@ fn create_thread_scope(
 }
 
 impl BundleManager {
-    pub fn initialize(bundle_path_root: String) {
+    pub(crate) fn initialize(bundle_path_root: String) {
         let manager = BundleManager {
             bundle_path_root,
             bundles: RwLock::new(HashMap::new()),
@@ -106,7 +106,7 @@ impl BundleManager {
         }
     }
 
-    pub fn singleton() -> &'static BundleManager {
+    pub(crate) fn singleton() -> &'static BundleManager {
         #[cfg(not(test))]
         return SINGLETON.get().expect("BundleManager not initialized");
 
@@ -174,7 +174,7 @@ impl BundleManager {
 
     /// Load (or return cached) `BundleInterface` for a given hash.
     /// Mirrors C++ `BundleManager::loadBundle()`.
-    pub fn load_bundle(&self, bundle_hash: &str) -> Result<BundleInterface, String> {
+    pub(crate) fn load_bundle(&self, bundle_hash: &str) -> Result<BundleInterface, String> {
         debug!(
             "BundleManager: load_bundle() called for hash '{}'",
             bundle_hash
@@ -244,7 +244,7 @@ impl BundleManager {
 
     /// Run a bundle function and return the result as a String.
     /// Mirrors C++ `BundleManager::runBundle_string()`.
-    pub fn run_bundle_string(
+    pub(crate) fn run_bundle_string(
         &self,
         function_name: &str,
         bundle_hash: &str,
@@ -306,7 +306,7 @@ impl BundleManager {
 
     /// Run a bundle function and return the result as u64.
     /// Mirrors C++ `BundleManager::runBundle_uint64()`.
-    pub fn run_bundle_uint64(
+    pub(crate) fn run_bundle_uint64(
         &self,
         function_name: &str,
         bundle_hash: &str,
@@ -362,7 +362,7 @@ impl BundleManager {
 
     /// Run a bundle function and return the result as bool.
     /// Mirrors C++ `BundleManager::runBundle_bool()`.
-    pub fn run_bundle_bool(
+    pub(crate) fn run_bundle_bool(
         &self,
         function_name: &str,
         bundle_hash: &str,
@@ -411,7 +411,7 @@ impl BundleManager {
 
     /// Run a bundle function and return the result as JSON.
     /// Mirrors C++ `BundleManager::runBundle_json()`.
-    pub fn run_bundle_json(
+    pub(crate) fn run_bundle_json(
         &self,
         function_name: &str,
         bundle_hash: &str,
