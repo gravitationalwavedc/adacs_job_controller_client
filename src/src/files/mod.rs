@@ -756,6 +756,7 @@ async fn run_download_supervisor(
     else {
         queue_file_error_on_main_ws(
             &uuid,
+            "file websocket connect failed",
             "Failed to connect to file websocket",
             FILE_DOWNLOAD_ERROR,
         );
@@ -892,6 +893,12 @@ async fn run_download_supervisor(
         warn!(
             "handle_file_download: Failed to send FILE_DOWNLOAD_DETAILS: {}",
             e
+        );
+        queue_file_error_on_main_ws(
+            &uuid,
+            "file websocket details send failed",
+            "Failed to send file download details",
+            FILE_DOWNLOAD_ERROR,
         );
         return fail_download(
             &mut ws_sender,
@@ -1569,11 +1576,12 @@ where
 }
 
 /// Queue a `FILE_DOWNLOAD_ERROR`/`FILE_UPLOAD_ERROR` on the primary WebSocket
-/// when the dedicated file WebSocket could not be established at all. The file
-/// connection is unusable in this case, so the error is delivered over the main
-/// connection to stop the client hanging on a transfer that will never start.
-fn queue_file_error_on_main_ws(uuid: &str, error_msg: &str, msg_id: u32) {
-    warn!("{uuid}: file websocket connect failed, notifying client: {error_msg}");
+/// when the dedicated file WebSocket is unusable (could not be established, or
+/// a required send on it failed). The file connection cannot deliver the error
+/// in this case, so it is delivered over the main connection to stop the
+/// client hanging on a transfer that will never start.
+fn queue_file_error_on_main_ws(uuid: &str, log_msg: &str, error_msg: &str, msg_id: u32) {
+    warn!("{uuid}: {log_msg}, notifying client: {error_msg}");
     let mut error_message = Message::new(msg_id, Priority::Highest, uuid);
     error_message.push_string(error_msg);
     get_websocket_client().queue_message(
@@ -1635,6 +1643,7 @@ fn handle_file_upload_internal(
         else {
             queue_file_error_on_main_ws(
                 &uuid,
+                "file websocket connect failed",
                 "Failed to connect to file websocket",
                 FILE_UPLOAD_ERROR,
             );
@@ -2946,7 +2955,7 @@ mod tests {
             });
         set_websocket_client(Arc::new(mock_ws));
 
-        queue_file_error_on_main_ws(&test_uuid, "boom", FILE_UPLOAD_ERROR);
+        queue_file_error_on_main_ws(&test_uuid, "connect failed", "boom", FILE_UPLOAD_ERROR);
 
         let data = rx.try_recv().expect("expected a queued FILE_UPLOAD_ERROR");
         let mut resp = Message::from_data(data);

@@ -5218,7 +5218,8 @@ fn test_task4_details_send_failure_selects_primary_error() {
         fs::write(&path, &content).unwrap();
 
         let state = create_mock_state();
-        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        mock_ws.expect_queue_message().returning(|_, _, _| {});
         set_websocket_client(Arc::new(mock_ws));
 
         let job_id = 8015i64;
@@ -5272,6 +5273,122 @@ fn test_task4_details_send_failure_selects_primary_error() {
         // DETAILS send fails rather than being buffered.
         tokio::time::sleep(Duration::from_millis(50)).await;
         barrier.release();
+
+        // The authoritative result must be the details-send primary error.
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::PrimaryError(ref m) if m == "details send failed"),
+            "details-send failure must select the primary error, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the details-send failure"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+
+/// Details-send failure must notify the client on the main WebSocket. The file
+/// socket transport is reset (`SO_LINGER=0` RST) so the `FILE_DOWNLOAD_DETAILS`
+/// send deterministically fails; the supervisor must then queue a
+/// `FILE_DOWNLOAD_ERROR` on the main WebSocket so the client is not left hanging
+/// on a download that will never start.
+#[test_fork::test]
+fn test_task4_details_send_failure_notifies_client_on_main_ws() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_details_send_failure_main_ws");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("details_fail.bin");
+        let content = vec![0xEE; 32 * 1024];
+        fs::write(&path, &content).unwrap();
+
+        let state = create_mock_state();
+        let mut mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let test_uuid = "test-uuid-task4-details-fail-main-ws".to_string();
+        let uuid_clone = test_uuid.clone();
+        mock_ws
+            .expect_queue_message()
+            .with(eq(uuid_clone), always(), eq(Priority::Highest))
+            .times(1)
+            .returning(move |_, data, _| {
+                let msg = Message::from_data(data);
+                let _ = tx.send(msg);
+            });
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8016i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_pre_details_send_barrier_for_test(Some(barrier.clone()));
+
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("details_fail.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        // Park the supervisor before the DETAILS send, then reset the peer
+        // transport so the DETAILS send deterministically fails.
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the pre-details-send barrier");
+        server.reset_connection().await;
+        // Give the client's reactor time to observe the transport reset so the
+        // DETAILS send fails rather than being buffered.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        barrier.release();
+
+        // The client must be notified on the main WebSocket.
+        let response = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_ERROR on main WS")
+            .expect("No response");
+        assert_eq!(response.id, FILE_DOWNLOAD_ERROR);
+        let mut response_msg = response;
+        assert_eq!(
+            response_msg.pop_string(),
+            "Failed to send file download details"
+        );
 
         // The authoritative result must be the details-send primary error.
         let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
