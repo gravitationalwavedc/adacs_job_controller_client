@@ -112,7 +112,7 @@ static MAIN_TS: OnceLock<ThreadStatePtr> = OnceLock::new();
 static INIT_PYTHON: OnceLock<Result<(), String>> = OnceLock::new();
 
 // ─── Library loading ─────────────────────────────────────────────────────────
-pub fn load_python_library(path: &str) -> Result<(), String> {
+pub(crate) fn load_python_library(path: &str) -> Result<(), String> {
     info!("Python library load requested: {}", path);
     if PY_LIB.get().is_some() {
         debug!("Python library already loaded, skipping");
@@ -174,7 +174,7 @@ fn get_python_lib() -> Arc<Library> {
         .clone()
 }
 
-pub fn get_main_ts() -> *mut PyThreadState {
+pub(crate) fn get_main_ts() -> *mut PyThreadState {
     trace!("get_main_ts called");
     MAIN_TS.get().expect("Python not initialized").0
 }
@@ -356,7 +356,7 @@ unsafe fn install_gil_hooks() -> Result<(), String> {
 //
 // NOTE: PyImport_AppendInittab calls must happen BEFORE this function is called,
 // and the library must already be loaded.
-pub fn init_python() -> Result<(), String> {
+pub(crate) fn init_python() -> Result<(), String> {
     info!("Initializing Python interpreter");
     INIT_PYTHON
         .get_or_init(|| {
