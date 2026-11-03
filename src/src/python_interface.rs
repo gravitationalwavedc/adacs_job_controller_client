@@ -229,7 +229,7 @@ py_wrap!(PyRun_StringFlags, (code: *const c_char, start: c_int, globals: *mut Py
 // ─── Convenience helpers ─────────────────────────────────────────────────────
 // SAFETY: Caller holds PYTHON_MUTEX; `obj` is NULL or a valid owned/borrowed
 // reference on this thread's Python interpreter.
-pub unsafe fn Py_XDECREF(obj: *mut PyObject) {
+pub(crate) unsafe fn Py_XDECREF(obj: *mut PyObject) {
     if !obj.is_null() {
         Py_DecRef(obj);
     }
@@ -252,25 +252,25 @@ unsafe fn get_python_singleton(cache: &OnceLock<PyObjectPtr>, symbol: &[u8]) -> 
 }
 
 // SAFETY: Python library is loaded; `_Py_NoneStruct` is a process-wide singleton.
-pub unsafe fn my_py_none_struct() -> *mut PyObject {
+pub(crate) unsafe fn my_py_none_struct() -> *mut PyObject {
     get_python_singleton(&PY_NONE_STRUCT, b"_Py_NoneStruct\0")
 }
 
 // SAFETY: Caller holds PYTHON_MUTEX; returns a new reference to the `None`
 // singleton, mirroring the C++ `Py_None` INCREF return pattern.
-pub unsafe fn return_py_none() -> *mut PyObject {
+pub(crate) unsafe fn return_py_none() -> *mut PyObject {
     let result = my_py_none_struct();
     Py_IncRef(result);
     result
 }
 
 // SAFETY: Python library is loaded; `_Py_TrueStruct` is a process-wide singleton.
-pub unsafe fn my_py_true_struct() -> *mut PyObject {
+pub(crate) unsafe fn my_py_true_struct() -> *mut PyObject {
     get_python_singleton(&PY_TRUE_STRUCT, b"_Py_TrueStruct\0")
 }
 
 // SAFETY: Caller holds PYTHON_MUTEX; `obj` is a live object on this thread.
-pub unsafe fn MyPy_IsNone(obj: *mut PyObject) -> bool {
+pub(crate) unsafe fn MyPy_IsNone(obj: *mut PyObject) -> bool {
     obj == my_py_none_struct()
 }
 
@@ -278,13 +278,13 @@ pub unsafe fn MyPy_IsNone(obj: *mut PyObject) -> bool {
 // These replace the real PyGILState_Ensure / PyGILState_Release in libpython
 // at runtime via binary patching, exactly as the C++ code does.
 #[unsafe(no_mangle)]
-pub extern "C" fn myPyGILState_Ensure() -> PyGILState_STATE {
+pub(crate) extern "C" fn myPyGILState_Ensure() -> PyGILState_STATE {
     tracing::trace!("myPyGILState_Ensure called");
     PY_GILSTATE_LOCKED
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn myPyGILState_Release(_state: PyGILState_STATE) {
+pub(crate) extern "C" fn myPyGILState_Release(_state: PyGILState_STATE) {
     tracing::trace!("myPyGILState_Release called");
 }
 
