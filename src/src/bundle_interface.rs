@@ -261,6 +261,8 @@ impl BundleInterface {
         // Clear the thread from the thread bundle hash map
         debug!("BundleInterface::new finished for {}", bundle_hash);
 
+        Py_DecRef(p_global);
+
         Ok(BundleInterface {
             inner: Arc::new(BundleInterfaceInner {
                 python_interpreter,
