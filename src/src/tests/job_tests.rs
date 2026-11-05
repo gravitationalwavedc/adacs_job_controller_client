@@ -333,7 +333,7 @@ fn setup_mock_ws() -> (MockWebsocketClient, Arc<std::sync::Mutex<MockDbState>>) 
                     resp.push_ulong(st.id as u64);
                     resp.push_ulong(st.job_id as u64);
                     resp.push_string(&st.what);
-                    resp.push_int(st.state);
+                    resp.push_uint(st.state as u32);
                 }
             }
             DB_JOBSTATUS_GET_BY_JOB_ID_AND_WHAT => {
@@ -2535,7 +2535,7 @@ fn test_check_status_no_status_not_complete() {
                             resp.push_ulong(status.id as u64);
                             resp.push_ulong(status.job_id as u64);
                             resp.push_string(&status.what);
-                            resp.push_int(status.state);
+                            resp.push_uint(status.state as u32);
                         }
                     }
                     DB_JOB_GET_BY_ID => {
@@ -2988,7 +2988,7 @@ fn test_check_status_job_running_force_notification_same_status() {
                         resp.push_ulong(status.id as u64);
                         resp.push_ulong(status.job_id as u64);
                         resp.push_string(&status.what);
-                        resp.push_int(status.state);
+                        resp.push_uint(status.state as u32);
                     }
                 } else {
                     resp.push_bool(true);
