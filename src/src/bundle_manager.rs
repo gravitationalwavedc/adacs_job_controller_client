@@ -469,7 +469,7 @@ impl BundleManager {
 
 /// Resolve a job's working directory by running the bundle's `working_directory`
 /// function off the async executor. Mirrors the C++ daemon's behaviour.
-pub async fn resolve_working_directory(
+pub(crate) async fn resolve_working_directory(
     bundle_hash: &str,
     details: Value,
     job_data: &str,
