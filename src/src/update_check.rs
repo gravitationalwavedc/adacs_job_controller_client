@@ -244,7 +244,7 @@ fn read_bounded(
     let mut data = Vec::new();
     reader
         .by_ref()
-        .take(max_bytes + 1)
+        .take(max_bytes.saturating_add(1))
         .read_to_end(&mut data)
         .map_err(ureq::Error::from)?;
     if data.len() as u64 > max_bytes {
@@ -945,6 +945,13 @@ mod tests {
         assert_eq!(result, body);
 
         let result = read_bounded(std::io::Cursor::new(body), body.len() as u64 + 100).unwrap();
+        assert_eq!(result, body);
+    }
+
+    #[test]
+    fn test_read_bounded_max_bytes_max_returns_full_body() {
+        let body = b"full body at the cap";
+        let result = read_bounded(std::io::Cursor::new(body), u64::MAX).unwrap();
         assert_eq!(result, body);
     }
 
