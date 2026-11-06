@@ -1951,11 +1951,22 @@ async fn validate_path_is_within(target_path: &Path, working_directory: &str) ->
         return false;
     }
 
-    // Verify remaining components don't contain parent dir references
+    // Verify remaining components don't escape the working directory. Track the
+    // resolved depth relative to the existing prefix so a `..` that climbs back
+    // inside the prefix (rather than escaping it) is accepted, matching the
+    // existing-path branch.
     let remaining = target_path.strip_prefix(&current).unwrap_or(target_path);
+    let mut depth: i32 = 0;
     for component in remaining.components() {
-        if matches!(component, Component::ParentDir) {
-            return false;
+        match component {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            Component::Normal(_) | Component::RootDir => depth += 1,
+            Component::CurDir | Component::Prefix(_) => {}
         }
     }
 
@@ -2457,6 +2468,30 @@ mod tests {
         assert!(
             !run_validate(&nested_escape, &wd),
             "nested non-existent path with .. in suffix should fail"
+        );
+    }
+
+    #[test]
+    fn test_non_existent_path_parent_dir_within_wd_allowed() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        // subdir does not exist; `subdir/../file.txt` resolves to <wd>/file.txt
+        let within = tmp.path().join("subdir").join("..").join("file.txt");
+        assert!(
+            run_validate(&within, &wd),
+            "non-existent path whose .. stays within wd should pass"
+        );
+
+        // `subdir/../../outside.txt` resolves above wd and must still fail
+        let escape = tmp
+            .path()
+            .join("subdir")
+            .join("..")
+            .join("..")
+            .join("outside.txt");
+        assert!(
+            !run_validate(&escape, &wd),
+            "non-existent path whose .. escapes wd should fail"
         );
     }
 
