@@ -735,6 +735,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_get_job_by_id_response_returns_empty_on_truncated_payload() {
+        let mut response = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        response.push_uint(1);
+
+        let payload = parse_get_job_by_id_response(&response, 9).unwrap();
+        assert_eq!(payload, "");
+    }
+
+    #[test]
     fn set_job_id_in_dict_returns_false_and_sets_error_on_null_value() {
         crate::tests::init_python_global();
         let fixture = crate::tests::fixtures::bundle_fixture::BundleFixture::new();
