@@ -199,8 +199,6 @@ pub struct WebsocketServerFixture {
     reset_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
     ping_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
     text_tx: mpsc::UnboundedSender<oneshot::Sender<()>>,
-    pub final_send_barrier: Arc<LifecycleBarrier>,
-    pub zero_byte_eof_barrier: Arc<LifecycleBarrier>,
 }
 
 struct SpawnArgs {
@@ -543,8 +541,6 @@ impl WebsocketServerFixture {
             reset_tx,
             ping_tx,
             text_tx,
-            final_send_barrier: LifecycleBarrier::new(),
-            zero_byte_eof_barrier: LifecycleBarrier::new(),
         }
     }
 
