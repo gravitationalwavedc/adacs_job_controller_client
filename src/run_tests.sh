@@ -58,6 +58,9 @@ if [[ "$COVERAGE" == true ]]; then
         COVERAGE_CMD="$COVERAGE_CMD --open"
     fi
 
+    # Tests must run serially (--test-threads=1)
+    COVERAGE_CMD="$COVERAGE_CMD $DEFAULT_TEST_ARGS"
+
     exec $COVERAGE_CMD
 elif [[ "$*" == *"--test-threads"* ]]; then
     # User knows what they're doing, pass through
