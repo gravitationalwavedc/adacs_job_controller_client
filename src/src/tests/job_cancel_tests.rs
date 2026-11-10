@@ -1020,3 +1020,47 @@ fn test_cancel_job_save_failure_after_cancel() {
         "expected post-cancel save-failure log, got: {logs}"
     );
 }
+
+#[test_fork::test]
+fn test_cancel_get_or_create_db_failure_returns_early() {
+    let db_name = Uuid::new_v4().to_string();
+    let (_fixture, _bundle_hash, _state, _working_dir) = setup_cancel_test(&db_name);
+    crate::websocket::reset_websocket_client_for_test();
+
+    let mut mock_ws = MockWebsocketClient::new();
+    mock_ws.expect_is_connection_closed().returning(|| false);
+    mock_ws.expect_is_server_ready().returning(|| true);
+    // Every DB request fails, so get_or_create_by_job_id returns Err and
+    // handle_job_cancel takes the None => return early-exit branch.
+    mock_ws
+        .expect_send_db_request()
+        .times(..)
+        .returning(move |_msg| {
+            Box::pin(
+                async move { Err(Box::<dyn std::error::Error + Send + Sync>::from("db down")) },
+            )
+        });
+    // The get_or_create failure aborts the cancel task before any queue_message.
+    mock_ws.expect_queue_message().times(0);
+    set_websocket_client(Arc::new(mock_ws));
+
+    let mut msg_raw = Message::new(CANCEL_JOB, Priority::Medium, SYSTEM_SOURCE);
+    msg_raw.push_uint(1234);
+    let msg = Message::from_data(msg_raw.get_data().clone());
+
+    let logs = capture_error_logs(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            handle_job_cancel(msg);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+    });
+
+    assert!(
+        logs.contains("DB Error in handle_job_cancel"),
+        "expected get_or_create DB error in logs, got:\n{logs}"
+    );
+}
