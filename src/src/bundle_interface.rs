@@ -369,11 +369,12 @@ impl BundleInterface {
             Py_DecRef(json_obj);
             return Err(NoneException);
         }
-        // On failure PyTuple_SetItem releases the item reference itself, so we
-        // must not Py_DecRef the item again here.
+        // PyTuple_SetItem steals the item reference only on success; on failure
+        // the caller still owns it, so release it here.
         if PyTuple_SetItem(p_args, 0, json_obj) < 0 {
             error!("Error setting json object in args tuple");
             PyErr_Print();
+            Py_XDECREF(json_obj);
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
             return Err(NoneException);
@@ -390,11 +391,12 @@ impl BundleInterface {
             Py_XDECREF(p_func);
             return Err(NoneException);
         }
-        // On failure PyTuple_SetItem releases the item reference itself, so we
-        // must not Py_DecRef the item again here.
+        // PyTuple_SetItem steals the item reference only on success; on failure
+        // the caller still owns it, so release it here.
         if PyTuple_SetItem(p_args, 1, p_job_data) < 0 {
             error!("Error setting job data in args tuple");
             PyErr_Print();
+            Py_XDECREF(p_job_data);
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
             return Err(NoneException);
@@ -504,11 +506,12 @@ impl BundleInterface {
         }
         // INCREF before SetItem (which steals a ref) – matches C++
         Py_IncRef(obj);
-        // On failure PyTuple_SetItem releases the item reference itself, so we
-        // must not Py_DecRef the item again here.
+        // PyTuple_SetItem steals the item reference only on success; on failure
+        // the caller still owns it, so release it here.
         if PyTuple_SetItem(p_args, 0, obj) < 0 {
             error!("Error setting object in args tuple");
             PyErr_Print();
+            Py_XDECREF(obj);
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
             return Err("Error calling json.dumps".to_string());
@@ -570,11 +573,12 @@ impl BundleInterface {
             PyErr_Clear();
             return std::ptr::null_mut();
         }
-        // On failure PyTuple_SetItem releases the item reference itself, so we
-        // must not Py_DecRef the item again here.
+        // PyTuple_SetItem steals the item reference only on success; on failure
+        // the caller still owns it, so release it here.
         if PyTuple_SetItem(p_args, 0, p_value) < 0 {
             error!("Error setting object in args tuple");
             PyErr_Print();
+            Py_XDECREF(p_value);
             Py_DecRef(p_args);
             Py_XDECREF(p_func);
             return std::ptr::null_mut();
