@@ -535,6 +535,7 @@ fn archive_dir_with_limit(dir: &Path, archive_path: &Path, max_bytes: u64) -> Re
         };
         let encoder = GzEncoder::new(limiter, Compression::default());
         let mut builder = Builder::new(encoder);
+        builder.follow_symlinks(false);
 
         for entry in WalkDir::new(dir)
             .into_iter()
