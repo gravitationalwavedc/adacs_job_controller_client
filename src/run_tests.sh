@@ -85,10 +85,11 @@ else
         fi
     done
 
+    # Serial execution is required (7 unit tests race on the global WebSocket
+    # singleton). The explicit --test-threads pass-through branch above already
+    # handles user overrides, so this branch always appends the default.
+    TEST_ARGS+=("--test-threads=1")
+
     # Run cargo test with user-provided args
-    if [[ ${#TEST_ARGS[@]} -eq 0 ]]; then
-        exec cargo test "${CARGO_ARGS[@]}"
-    else
-        exec cargo test "${CARGO_ARGS[@]}" -- "${TEST_ARGS[@]}"
-    fi
+    exec cargo test "${CARGO_ARGS[@]}" -- "${TEST_ARGS[@]}"
 fi
