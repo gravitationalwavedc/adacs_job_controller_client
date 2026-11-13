@@ -294,7 +294,9 @@ impl TungsteniteWebsocketClient {
 
         if !was_closed {
             debug!("WS: Notifying disconnect waiters");
-            disconnect_notify.notify_waiters();
+            // notify_one stores a permit when the supervisor is not yet waiting,
+            // so a disconnect that races ahead of `notified().await` is not lost.
+            disconnect_notify.notify_one();
             if !self.reconnectable.load(Ordering::SeqCst) {
                 debug!("WS: Notifying shutdown (not reconnectable)");
                 get_shutdown_notify().notify_waiters();
@@ -2789,5 +2791,24 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(50), second_notified)
             .await
             .expect_err("second disconnect for the same id must not re-notify waiters");
+    }
+
+    #[tokio::test]
+    async fn test_handle_disconnect_before_await_retains_permit() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(7, Ordering::SeqCst);
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+        client.reconnectable.store(true, Ordering::SeqCst);
+
+        let disconnect_notify = Arc::new(Notify::new());
+
+        // Disconnect races ahead of the supervisor reaching `notified().await`.
+        client.handle_disconnect(7, &disconnect_notify);
+
+        // notify_one stores a permit, so the later await must still resolve.
+        tokio::time::timeout(Duration::from_millis(100), disconnect_notify.notified())
+            .await
+            .expect("disconnect before await must retain a permit");
     }
 }
