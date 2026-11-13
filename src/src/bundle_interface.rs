@@ -50,7 +50,7 @@ struct BundleInterfaceInner {
     thread_scope_error: Option<String>,
 }
 
-// SAFETY: All raw pointer fields (p_global, p_bundle_module, json_module,
+// SAFETY: All raw pointer fields (p_bundle_module, json_module,
 // traceback_module) are owned by the sub-interpreter and only accessed while
 // holding PYTHON_MUTEX. SubInterpreter is Send + Sync; String is Send + Sync.
 unsafe impl Send for BundleInterfaceInner {}
@@ -260,6 +260,10 @@ impl BundleInterface {
 
         // Clear the thread from the thread bundle hash map
         debug!("BundleInterface::new finished for {}", bundle_hash);
+
+        // The redirection classes hold the globals dict via `__globals__`, so
+        // release the constructor's reference now that setup is complete.
+        Py_DecRef(p_global);
 
         Ok(BundleInterface {
             inner: Arc::new(BundleInterfaceInner {
@@ -944,7 +948,7 @@ unsafe fn swallow_python_error() {
 impl Drop for BundleInterfaceInner {
     fn drop(&mut self) {
         // SubInterpreter's Drop handles Py_EndInterpreter.
-        // The PyObjects (p_global, p_bundle_module, etc.) are owned by the
+        // The PyObjects (p_bundle_module, etc.) are owned by the
         // sub-interpreter and will be cleaned up when it is destroyed.
         // We do NOT manually decref them here because the sub-interpreter
         // teardown handles that.
