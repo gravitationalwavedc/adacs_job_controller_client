@@ -526,38 +526,52 @@ pub(crate) fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String>
 fn archive_dir_with_limit(dir: &Path, archive_path: &Path, max_bytes: u64) -> Result<(), String> {
     let file = std::fs::File::create(archive_path)
         .map_err(|e| format!("Failed to create archive file: {e}"))?;
-    let limiter = ArchiveSizeLimiter {
-        inner: file,
-        written: 0,
-        max: max_bytes,
-    };
-    let encoder = GzEncoder::new(limiter, Compression::default());
-    let mut builder = Builder::new(encoder);
 
-    for entry in WalkDir::new(dir)
-        .into_iter()
-        .filter_entry(|e| e.file_name() != ARCHIVE_FILE_NAME)
-        .skip(1)
-    {
-        let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
-        let path = entry.path();
-        let rel = path.strip_prefix(dir).unwrap_or(path);
-        let file_type = entry.file_type();
-        if file_type.is_dir() {
-            builder
-                .append_dir(rel, path)
-                .map_err(|e| format!("Failed to append dir {}: {}", path.display(), e))?;
-        } else {
-            builder
-                .append_path_with_name(path, rel)
-                .map_err(|e| format!("Failed to append path {}: {}", path.display(), e))?;
+    let result = (|| {
+        let limiter = ArchiveSizeLimiter {
+            inner: file,
+            written: 0,
+            max: max_bytes,
+        };
+        let encoder = GzEncoder::new(limiter, Compression::default());
+        let mut builder = Builder::new(encoder);
+
+        for entry in WalkDir::new(dir)
+            .into_iter()
+            .filter_entry(|e| e.file_name() != ARCHIVE_FILE_NAME)
+            .skip(1)
+        {
+            let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
+            let path = entry.path();
+            let rel = path.strip_prefix(dir).unwrap_or(path);
+            let file_type = entry.file_type();
+            if file_type.is_dir() {
+                builder
+                    .append_dir(rel, path)
+                    .map_err(|e| format!("Failed to append dir {}: {}", path.display(), e))?;
+            } else {
+                builder
+                    .append_path_with_name(path, rel)
+                    .map_err(|e| format!("Failed to append path {}: {}", path.display(), e))?;
+            }
+        }
+
+        builder
+            .finish()
+            .map_err(|e| format!("Failed to finish archive: {e}"))?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        if let Err(e) = std::fs::remove_file(archive_path) {
+            warn!(
+                "archive_dir_with_limit: Failed to remove partial archive {:?}: {}",
+                archive_path, e
+            );
         }
     }
 
-    builder
-        .finish()
-        .map_err(|e| format!("Failed to finish archive: {e}"))?;
-    Ok(())
+    result
 }
 
 async fn reload_job_or_abort(job_model: &mut job::Model, job_id: i64, context: &str) -> bool {
@@ -1310,6 +1324,7 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("size limit"));
+        assert!(!archive_path.exists());
     }
 
     #[test]
