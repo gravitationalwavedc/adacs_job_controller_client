@@ -3263,6 +3263,81 @@ fn test_file_upload_partial_file_cleanup_on_peer_close() {
     inner();
 }
 
+/// A pre-existing target must survive an upload that fails before the first
+/// chunk: the target is opened lazily, so a peer Close with no data must not
+/// truncate or delete the original file.
+#[test_fork::test]
+fn test_file_upload_preserves_existing_target_when_closed_before_first_chunk() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test38");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1251i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let server = WebsocketServerFixture::new().await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-upload-preserve-existing".to_string();
+        let target_path = "existing.txt";
+        let original_content = b"original content that must survive";
+        let full_path = fixture.get_temp_path().join(target_path);
+        fs::write(&full_path, original_content).unwrap();
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(1000);
+
+        handle_file_upload(Message::from_data(msg_raw.get_data().clone()));
+
+        let mut server = server;
+        let ready = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for SERVER_READY")
+            .expect("No ready");
+        assert_eq!(ready.id, SERVER_READY);
+
+        // Close the peer before sending any FILE_UPLOAD_CHUNK.
+        server.send_peer_close().await;
+
+        // Wait until the client has processed the Close and torn down the
+        // connection, so the preservation assertion is not trivially early.
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "upload task should release the connection after peer Close"
+        );
+
+        assert_eq!(
+            fs::read(&full_path).unwrap(),
+            original_content,
+            "pre-existing target must be preserved when the upload closes before the first chunk"
+        );
+    } // end inner()
+    inner();
+}
+
 #[test_fork::test]
 fn test_file_upload_partial_file_cleanup_on_receive_error() {
     #[tokio::main(flavor = "current_thread")]
