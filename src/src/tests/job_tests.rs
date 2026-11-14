@@ -1851,6 +1851,47 @@ fn test_archive_dir_nested_files() {
 }
 
 #[test]
+fn test_archive_dir_does_not_follow_symlink_outside_working_directory() {
+    let working_dir = tempfile::TempDir::new().unwrap();
+    let outside_dir = tempfile::TempDir::new().unwrap();
+    let outside_file = outside_dir.path().join("secret.txt");
+    fs::write(&outside_file, "outside secret").unwrap();
+    fs::write(working_dir.path().join("inside.txt"), "inside").unwrap();
+
+    let symlink_path = working_dir.path().join("link.txt");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside_file, &symlink_path).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&outside_file, &symlink_path).unwrap();
+
+    let archive_path = working_dir.path().join("archive.tar.gz");
+    let result = crate::jobs::archive_dir(working_dir.path(), &archive_path);
+    assert!(result.is_ok());
+    assert!(archive_path.exists());
+
+    let archive_file = std::fs::File::open(&archive_path).unwrap();
+    let decoder = GzDecoder::new(archive_file);
+    let mut archive = Archive::new(decoder);
+    let mut entries: Vec<String> = Vec::new();
+    let mut contents: Vec<Vec<u8>> = Vec::new();
+    for entry_result in archive.entries().unwrap() {
+        let mut entry = entry_result.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().to_string();
+        entries.push(path);
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf).unwrap();
+        contents.push(buf);
+    }
+
+    assert!(entries.iter().any(|p| p == "inside.txt"));
+    assert!(entries.iter().any(|p| p == "link.txt"));
+    assert!(
+        !contents.iter().any(|c| c == b"outside secret"),
+        "archive must not contain the contents of a symlink target outside the working directory"
+    );
+}
+
+#[test]
 fn test_archive_dir_unreadable_subdirectory_returns_error() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     fs::write(temp_dir.path().join("root.txt"), "root").unwrap();
