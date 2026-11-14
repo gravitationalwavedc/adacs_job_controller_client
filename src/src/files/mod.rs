@@ -1621,6 +1621,20 @@ pub(crate) fn handle_file_upload_with_url(mut msg: Message, ws_endpoint: String)
     );
 }
 
+/// Open the upload target for writing, logging the failure. The target is
+/// opened lazily on the first chunk (and on `FILE_UPLOAD_COMPLETE` for
+/// zero-byte uploads) so an upload that never writes data does not truncate a
+/// pre-existing file.
+async fn open_upload_file(full_path: &Path) -> Option<File> {
+    match File::create(full_path).await {
+        Ok(file) => Some(file),
+        Err(e) => {
+            warn!("Failed to create file: {}", e);
+            None
+        }
+    }
+}
+
 fn handle_file_upload_internal(
     uuid: String,
     job_id: i64,
@@ -1692,19 +1706,9 @@ fn handle_file_upload_internal(
             }
         }
 
-        let mut file = match File::create(&full_path).await {
-            Ok(f) => f,
-            Err(e) => {
-                warn!("Failed to create file: {}", e);
-                return fail_upload(
-                    &mut ws_sender,
-                    &uuid,
-                    "Failed to open target file for writing",
-                    None,
-                )
-                .await;
-            }
-        };
+        // Open the target lazily: a failed upload that never writes a chunk must
+        // not truncate or delete a pre-existing file.
+        let mut file: Option<File> = None;
 
         let mut received_size = 0u64;
         let upload_start = std::time::Instant::now();
@@ -1728,6 +1732,7 @@ fn handle_file_upload_internal(
                     // Use saturating arithmetic so an overflowing chunk_len can't wrap
                     // past u64::MAX and bypass the size guard on untrusted wire data.
                     if chunk_len > file_size.saturating_sub(received_size) {
+                        let partial_path = file.as_ref().map(|_| full_path.as_path());
                         return fail_upload(
                             &mut ws_sender,
                             &uuid,
@@ -1735,14 +1740,30 @@ fn handle_file_upload_internal(
                                 "File size mismatch: expected {file_size}, got {}",
                                 received_size.saturating_add(chunk_len)
                             ),
-                            Some(&full_path),
+                            partial_path,
                         )
                         .await;
+                    }
+                    if file.is_none() {
+                        let Some(opened) = open_upload_file(&full_path).await else {
+                            return fail_upload(
+                                &mut ws_sender,
+                                &uuid,
+                                "Failed to open target file for writing",
+                                None,
+                            )
+                            .await;
+                        };
+                        file = Some(opened);
                     }
                     let write_result = if force_upload_write_failure() {
                         Err(std::io::Error::other("forced write failure"))
                     } else {
-                        file.write_all(&chunk).await
+                        // Invariant: the target was opened immediately above.
+                        file.as_mut()
+                            .expect("upload file opened before first write")
+                            .write_all(&chunk)
+                            .await
                     };
                     if let Err(e) = write_result {
                         warn!("Failed to write chunk: {}", e);
@@ -1757,17 +1778,34 @@ fn handle_file_upload_internal(
                     received_size += chunk_len;
                 } else if m.id == FILE_UPLOAD_COMPLETE {
                     if received_size != file_size {
+                        let partial_path = file.as_ref().map(|_| full_path.as_path());
                         return fail_upload(
                             &mut ws_sender,
                             &uuid,
                             &format!(
                                 "File size mismatch: expected {file_size}, got {received_size}"
                             ),
-                            Some(&full_path),
+                            partial_path,
                         )
                         .await;
                     }
-                    if !finalize_upload_file(&mut file, &full_path, &mut ws_sender, &uuid).await {
+                    if file.is_none() {
+                        // Zero-byte upload: no chunk arrived, so create the
+                        // (empty) target now.
+                        let Some(opened) = open_upload_file(&full_path).await else {
+                            return fail_upload(
+                                &mut ws_sender,
+                                &uuid,
+                                "Failed to open target file for writing",
+                                None,
+                            )
+                            .await;
+                        };
+                        file = Some(opened);
+                    }
+                    // Invariant: the target was opened above.
+                    let upload_file = file.as_mut().expect("upload file opened before finalize");
+                    if !finalize_upload_file(upload_file, &full_path, &mut ws_sender, &uuid).await {
                         return;
                     }
                     drop(file);
@@ -1780,17 +1818,18 @@ fn handle_file_upload_internal(
                     return;
                 }
             } else if let WsMessage::Close(_) = ws_msg {
-                warn!(
-                    "handle_file_upload: peer sent Close before FILE_UPLOAD_COMPLETE, removing partial file"
-                );
+                warn!("handle_file_upload: peer sent Close before FILE_UPLOAD_COMPLETE");
                 break;
             }
         }
 
-        // Connection dropped before FILE_UPLOAD_COMPLETE — remove the partial
-        // file so it isn't mistaken for a complete upload.
-        warn!("handle_file_upload: connection dropped before FILE_UPLOAD_COMPLETE, removing partial file");
-        remove_partial_file(&full_path).await;
+        // Connection dropped before FILE_UPLOAD_COMPLETE. Remove the partial
+        // file only if this upload actually created it, so a pre-existing
+        // target survives a failure that never wrote a chunk.
+        if file.is_some() {
+            warn!("handle_file_upload: connection dropped before FILE_UPLOAD_COMPLETE, removing partial file");
+            remove_partial_file(&full_path).await;
+        }
     });
 }
 
