@@ -539,7 +539,7 @@ fn archive_dir_with_limit(dir: &Path, archive_path: &Path, max_bytes: u64) -> Re
 
         for entry in WalkDir::new(dir)
             .into_iter()
-            .filter_entry(|e| e.file_name() != ARCHIVE_FILE_NAME)
+            .filter_entry(|e| e.path() != archive_path)
             .skip(1)
         {
             let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
@@ -1294,6 +1294,23 @@ mod tests {
 
         let names = archive_entry_names(&archive_path);
         assert!(names.iter().any(|n| n == "keep.txt"));
+        assert!(!names.iter().any(|n| n == ARCHIVE_FILE_NAME));
+    }
+
+    #[test]
+    fn archive_dir_includes_nested_file_named_like_archive() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
+        std::fs::write(src.join("keep.txt"), b"keep").unwrap();
+        std::fs::write(src.join("subdir").join(ARCHIVE_FILE_NAME), b"nested").unwrap();
+
+        let archive_path = src.join(ARCHIVE_FILE_NAME);
+        archive_dir(&src, &archive_path).unwrap();
+
+        let names = archive_entry_names(&archive_path);
+        assert!(names.iter().any(|n| n == "keep.txt"));
+        assert!(names.iter().any(|n| n == "subdir/archive.tar.gz"));
         assert!(!names.iter().any(|n| n == ARCHIVE_FILE_NAME));
     }
 
