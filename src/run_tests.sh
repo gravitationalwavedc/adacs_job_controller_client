@@ -46,17 +46,26 @@ if [[ "$COVERAGE" == true ]]; then
     # Generate coverage report using cargo-llvm-cov
     echo "Running tests with coverage..."
 
+    # Serial execution is required (7 unit tests race on the global WebSocket
+    # singleton). Honour an explicit --test-threads override.
+    if [[ "$*" != *"--test-threads"* ]]; then
+        if [[ " ${FILTERED_ARGS[*]} " != *" -- "* ]]; then
+            FILTERED_ARGS+=("--")
+        fi
+        FILTERED_ARGS+=("--test-threads=1")
+    fi
+
     # Build base command with coverage options first, then test args
     COVERAGE_CMD="cargo llvm-cov --html"
+
+    if [[ "$OPEN_COVERAGE" == true ]]; then
+        COVERAGE_CMD="$COVERAGE_CMD --open"
+    fi
 
     # Add any additional filtered args
     for arg in "${FILTERED_ARGS[@]}"; do
         COVERAGE_CMD="$COVERAGE_CMD $arg"
     done
-
-    if [[ "$OPEN_COVERAGE" == true ]]; then
-        COVERAGE_CMD="$COVERAGE_CMD --open"
-    fi
 
     exec $COVERAGE_CMD
 elif [[ "$*" == *"--test-threads"* ]]; then
