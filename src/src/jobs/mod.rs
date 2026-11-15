@@ -557,7 +557,10 @@ fn archive_dir_with_limit(dir: &Path, archive_path: &Path, max_bytes: u64) -> Re
             }
         }
 
-        builder
+        let encoder = builder
+            .into_inner()
+            .map_err(|e| format!("Failed to finish archive: {e}"))?;
+        encoder
             .finish()
             .map_err(|e| format!("Failed to finish archive: {e}"))?;
         Ok(())
@@ -1322,6 +1325,26 @@ mod tests {
 
         let archive_path = temp_dir.path().join("out.tar.gz");
         let result = archive_dir_with_limit(&src, &archive_path, 1024);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("size limit"));
+        assert!(!archive_path.exists());
+    }
+
+    #[test]
+    fn archive_dir_propagates_gzip_finalization_error() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("data.txt"), b"payload").unwrap();
+
+        let probe_path = temp_dir.path().join("probe.tar.gz");
+        archive_dir_with_limit(&src, &probe_path, u64::MAX).unwrap();
+        let full_size = std::fs::metadata(&probe_path).unwrap().len();
+        std::fs::remove_file(&probe_path).unwrap();
+
+        let archive_path = temp_dir.path().join("out.tar.gz");
+        let result = archive_dir_with_limit(&src, &archive_path, full_size - 8);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("size limit"));
