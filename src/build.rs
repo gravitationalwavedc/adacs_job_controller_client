@@ -29,12 +29,6 @@ fn main() {
         .define("SUBHOOK_STATIC", None)
         .compile("subhook");
 
-    if std::env::var("CARGO_CFG_TEST").is_ok() {
-        cc::Build::new()
-            .file(std::path::Path::new(&manifest_dir).join("src/tests/trigger.c"))
-            .compile("trigger");
-    }
-
     let bindings = bindgen::Builder::default()
         .header(subhook_path.join("subhook.h").to_str().unwrap().to_string())
         .allowlist_function("subhook_.*")
