@@ -25,7 +25,9 @@ static INIT_PYTHON: std::sync::Once = std::sync::Once::new();
 fn resolve_test_python_library_path() -> String {
     const CANDIDATES: &[&str] = &[
         "/usr/lib/x86_64-linux-gnu/libpython3.12.so",
+        "/usr/lib/x86_64-linux-gnu/libpython3.13.so",
         "/usr/lib/x86_64-linux-gnu/libpython3.so",
+        "/usr/lib/libpython3.13.so",
         "/usr/lib/libpython3.so",
     ];
     if let Ok(path) = std::env::var("PYTHON_LIB_PATH") {
