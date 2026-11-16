@@ -228,6 +228,29 @@ impl TungsteniteWebsocketClient {
         total_cleared
     }
 
+    /// Clears every priority queue, blocking on each mutex until it can be
+    /// acquired. Called on reconnect, where the previous connection's tasks
+    /// are exiting and a short block is acceptable. Unlike
+    /// `clear_queued_messages`, this cannot skip a contended priority and
+    /// leave stale messages to be replayed on the new connection.
+    fn clear_queued_messages_blocking(&self) -> usize {
+        let mut total_cleared = 0;
+        for (p, priority) in self.queue.iter().enumerate() {
+            let mut map = priority.lock();
+            let count: usize = map.values().map(VecDeque::len).sum();
+            total_cleared += count;
+            if count > 0 {
+                debug!("WS: Clearing {} stale messages from priority {}", count, p);
+            }
+            map.clear();
+        }
+        debug!(
+            "WS: Cleared {} stale queued messages before reconnect",
+            total_cleared
+        );
+        total_cleared
+    }
+
     /// Prune empty queue sources (matches C++ pruneSources)
     /// Runs every `QUEUE_SOURCE_PRUNE_SECONDS` (60s)
     fn prune_sources(&self) {
@@ -630,6 +653,7 @@ impl TungsteniteWebsocketClient {
 
     async fn supervise_connections(self: Arc<Self>) {
         let mut attempt = 0u32;
+        let mut had_connection = false;
 
         loop {
             let Some(config) = self.load_connection_config() else {
@@ -638,6 +662,15 @@ impl TungsteniteWebsocketClient {
                 get_shutdown_notify().notify_waiters();
                 return;
             };
+
+            // A previous connection may have left messages in a priority
+            // queue that `handle_disconnect` skipped because its mutex was
+            // contended. Clear them before reconnecting so stale DB requests
+            // and job updates are not replayed on the new connection. Messages
+            // queued before the first successful connection are preserved.
+            if had_connection {
+                self.clear_queued_messages_blocking();
+            }
 
             let delay = match self
                 .clone()
@@ -649,6 +682,7 @@ impl TungsteniteWebsocketClient {
                         return;
                     }
 
+                    had_connection = true;
                     attempt = 0;
                     let delay = Self::reconnect_delay(attempt);
                     warn!("WS: Reconnecting after {:?}", delay);
@@ -2376,6 +2410,131 @@ mod tests {
             let count: usize = map.values().map(VecDeque::len).sum();
             assert_eq!(count, 0, "Priority {p} should be cleared after second pass");
         }
+    }
+
+    #[test]
+    fn test_clear_queued_messages_blocking_clears_contended_priorities() {
+        let client = TungsteniteWebsocketClient::new();
+
+        client.queue_message("p0".to_string(), vec![1], Priority::Highest);
+        {
+            let mut map = client.queue[5].lock();
+            map.insert(
+                "p5".to_string(),
+                VecDeque::from(vec![vec![1], vec![2], vec![3]]),
+            );
+        }
+        client.queue_message("p19".to_string(), vec![1], Priority::Lowest);
+
+        // Hold priority 5 so the clear must block instead of skipping it.
+        let held_guard = client.queue[5].lock();
+        let client_for_clear = client.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let cleared = client_for_clear.clear_queued_messages_blocking();
+            done_tx.send(cleared).unwrap();
+        });
+
+        started_rx.recv().unwrap();
+        // Give the clear thread time to reach the contended lock.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(
+            done_rx.try_recv().is_err(),
+            "blocking clear must wait for the contended priority"
+        );
+
+        drop(held_guard);
+        let cleared = done_rx.recv().unwrap();
+        handle.join().unwrap();
+
+        // p0 (1) + p5 (3) + p19 (1) = 5.
+        assert_eq!(cleared, 5, "should clear all priorities including p5");
+
+        for p in 0..PRIORITY_LEVELS {
+            let map = client.queue[p].lock();
+            let count: usize = map.values().map(VecDeque::len).sum();
+            assert_eq!(count, 0, "Priority {p} should be cleared");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn test_reconnect_clears_stale_queued_messages() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        let mut server = WebsocketServerFixture::new().await;
+
+        client
+            .start_with_token(server.get_url(), "test-token".to_string(), true)
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.is_server_ready() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        server.stop().await;
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.is_connection_closed() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        // Simulate a message left behind by a contended disconnect clear.
+        // queue_message drops while disconnected, so insert directly.
+        let stale = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Medium, "stale");
+        {
+            let mut map = client.queue[Priority::Medium as usize].lock();
+            map.insert(
+                "stale".to_string(),
+                VecDeque::from(vec![stale.get_data().clone()]),
+            );
+        }
+
+        server.start().await;
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while client.is_connection_closed() || !client.is_server_ready() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        // Give the scheduler a chance to replay the stale message if it survived.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let mut replayed = false;
+        while let Ok(message) = server.msg_rx.try_recv() {
+            if message.source == "stale" {
+                replayed = true;
+            }
+        }
+        assert!(
+            !replayed,
+            "stale message must not be replayed after reconnect"
+        );
+
+        let stale_remaining: usize = client.queue[Priority::Medium as usize]
+            .lock()
+            .values()
+            .map(VecDeque::len)
+            .sum();
+        assert_eq!(
+            stale_remaining, 0,
+            "stale queue must be cleared on reconnect"
+        );
+
+        server.stop().await;
     }
 
     #[test]
