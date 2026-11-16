@@ -1990,11 +1990,21 @@ async fn validate_path_is_within(target_path: &Path, working_directory: &str) ->
         return false;
     }
 
-    // Verify remaining components don't contain parent dir references
+    // Verify remaining components don't contain parent dir references and that
+    // no intermediate component is a symlink. `exists()` above follows
+    // symlinks, so a dangling symlink is treated as non-existent and popped
+    // past; reject it here instead of writing through it.
     let remaining = target_path.strip_prefix(&current).unwrap_or(target_path);
+    let mut cumulative = current;
     for component in remaining.components() {
         if matches!(component, Component::ParentDir) {
             return false;
+        }
+        cumulative.push(component);
+        if let Ok(metadata) = fs::symlink_metadata(&cumulative).await {
+            if metadata.file_type().is_symlink() {
+                return false;
+            }
         }
     }
 
@@ -2454,6 +2464,22 @@ mod tests {
         assert!(
             run_validate(&link, &wd),
             "symlink to a file inside wd should pass"
+        );
+    }
+
+    #[test]
+    fn test_dangling_symlink_to_outside_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let wd = tmp.path().to_str().unwrap().to_string();
+        let absent_target = outside.path().join("new_file.txt");
+        let link = tmp.path().join("dangling_link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&absent_target, &link).unwrap();
+
+        assert!(
+            !run_validate(&link, &wd),
+            "dangling symlink to outside should fail"
         );
     }
 
