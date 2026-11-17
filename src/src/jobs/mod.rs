@@ -10,6 +10,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde_json::{json, Value};
 use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use tar::Builder;
 use tracing::{debug, error, info, trace, warn};
@@ -524,7 +525,12 @@ pub(crate) fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String>
 }
 
 fn archive_dir_with_limit(dir: &Path, archive_path: &Path, max_bytes: u64) -> Result<(), String> {
-    let file = std::fs::File::create(archive_path)
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(archive_path)
         .map_err(|e| format!("Failed to create archive file: {e}"))?;
 
     let result = (|| {
@@ -1380,6 +1386,29 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(archive_path.exists());
+    }
+
+    #[test]
+    fn archive_dir_refuses_to_follow_symlink_at_archive_path() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("keep.txt"), b"keep").unwrap();
+
+        let victim = temp_dir.path().join("victim.txt");
+        std::fs::write(&victim, b"do not overwrite").unwrap();
+
+        let archive_path = src.join(ARCHIVE_FILE_NAME);
+        std::os::unix::fs::symlink(&victim, &archive_path).unwrap();
+
+        let result = archive_dir(&src, &archive_path);
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"do not overwrite");
+        assert!(std::fs::symlink_metadata(&archive_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]
