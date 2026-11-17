@@ -39,10 +39,13 @@ cd src
 
 ### Running Tests
 
-Tests must run serially with `--test-threads=1`: parallel execution is flaky because some unit tests race on the global WebSocket singleton, so always run tests serially. All DB operations are remote over WebSocket; there is no local SQLite database. On Ubuntu 24.04+ the `PYTHON_LIB_PATH` env var is required (the default path in `tests/mod.rs` only exists on Debian).
+Tests must run serially with `--test-threads=1`: parallel execution is flaky because some unit tests race on the global WebSocket singleton, so always run tests serially. All DB operations are remote over WebSocket; there is no local SQLite database. The test harness auto-detects the Python shared library (libpython3.12, libpython3.13, or the generic libpython3). Set `PYTHON_LIB_PATH` only to override the detected path.
 
 ```bash
 # Run all tests (canonical command)
+./run_tests.sh -- --test-threads=1
+
+# Override the auto-detected Python library
 PYTHON_LIB_PATH=/usr/lib/x86_64-linux-gnu/libpython3.12.so ./run_tests.sh -- --test-threads=1
 
 # Run specific test module
