@@ -18,8 +18,15 @@ fn pop_optional_id(resp: &mut Message) -> Option<i64> {
     (v != 0).then_some(v)
 }
 
-fn pop_count(resp: &mut Message) -> usize {
-    (resp.pop_uint() as usize).min(resp.remaining_len())
+// Minimum wire bytes per job record: 3x ulong (24) + ubyte (1) + uint (4)
+// + 2x length-prefixed string (16) + 3x bool (3) = 48.
+const MIN_JOB_RECORD_BYTES: usize = 48;
+// Minimum wire bytes per status record: 2x ulong (16) + length-prefixed
+// string (8) + uint (4) = 28.
+const MIN_STATUS_RECORD_BYTES: usize = 28;
+
+fn pop_count(resp: &mut Message, min_record_bytes: usize) -> usize {
+    (resp.pop_uint() as usize).min(resp.remaining_len() / min_record_bytes)
 }
 
 fn cap_status_count(len: usize) -> u32 {
@@ -80,7 +87,7 @@ pub async fn get_running_jobs() -> Result<Vec<job::Model>, String> {
     })
     .await?;
     let mut resp = parse_response(&raw);
-    let count = pop_count(&mut resp);
+    let count = pop_count(&mut resp, MIN_JOB_RECORD_BYTES);
     debug!(
         "DB: get_running_jobs - received {} jobs in {:?}",
         count, elapsed
@@ -106,7 +113,7 @@ async fn get_job_by_message(
     })
     .await?;
     let mut resp = parse_response(&raw);
-    let count = pop_count(&mut resp);
+    let count = pop_count(&mut resp, MIN_JOB_RECORD_BYTES);
     if count == 0 {
         debug!("DB: {} - id={} not found", context, id);
         return Ok(None);
@@ -148,7 +155,7 @@ async fn get_job_statuses(msg: Message, context: &str) -> Result<Vec<jobstatus::
     let (raw, elapsed) =
         send_db_request_timed(msg, |e| format!("DB: {context} - request failed: {e}")).await?;
     let mut resp = parse_response(&raw);
-    let count = pop_count(&mut resp);
+    let count = pop_count(&mut resp, MIN_STATUS_RECORD_BYTES);
     debug!(
         "DB: {} - received {} statuses in {:?}",
         context, count, elapsed
@@ -304,6 +311,16 @@ mod tests {
         resp
     }
 
+    fn make_huge_count_status_response() -> Message {
+        let mut resp = Message::new(DB_RESPONSE, Priority::Highest, "database");
+        resp.push_uint(u32::MAX);
+        resp.push_ulong(11);
+        resp.push_ulong(42);
+        resp.push_string("scheduler_id");
+        resp.push_uint(500);
+        resp
+    }
+
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -389,12 +406,12 @@ mod tests {
     }
 
     #[test]
-    fn get_running_jobs_clamps_count_to_remaining_bytes() {
+    fn get_running_jobs_clamps_count_to_record_capacity() {
         let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let mut parsed = Message::from_data(make_huge_count_job_response().get_data().clone());
         parsed.pop_uint();
-        let expected = parsed.remaining_len();
+        let expected = parsed.remaining_len() / MIN_JOB_RECORD_BYTES;
 
         let mut mock = MockWebsocketClient::new();
         mock.expect_send_db_request().times(1).returning(|_| {
@@ -615,6 +632,33 @@ mod tests {
         assert_eq!(statuses[1].job_id, 42);
         assert_eq!(statuses[1].what, "state");
         assert_eq!(statuses[1].state, 1);
+    }
+
+    #[test]
+    fn get_job_status_by_job_id_clamps_count_to_record_capacity() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        reset_websocket_client_for_test();
+        let mut parsed = Message::from_data(make_huge_count_status_response().get_data().clone());
+        parsed.pop_uint();
+        let expected = parsed.remaining_len() / MIN_STATUS_RECORD_BYTES;
+
+        let mut mock = MockWebsocketClient::new();
+        mock.expect_send_db_request().times(1).returning(|_| {
+            let resp = make_huge_count_status_response();
+            Box::pin(async move { Ok(resp) })
+        });
+        set_websocket_client(Arc::new(mock));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let statuses = rt
+            .block_on(async { get_job_status_by_job_id(42).await })
+            .unwrap();
+
+        assert_eq!(statuses.len(), expected);
+        assert_eq!(statuses[0].id, 11);
+        assert_eq!(statuses[0].job_id, 42);
+        assert_eq!(statuses[0].what, "scheduler_id");
+        assert_eq!(statuses[0].state, 500);
     }
 
     #[test]
@@ -997,7 +1041,7 @@ mod tests {
     }
 
     #[test]
-    fn get_job_by_id_clamps_count_to_remaining_bytes() {
+    fn get_job_by_id_clamps_count_to_record_capacity() {
         let _guard = TEST_MUTEX.lock().unwrap();
         reset_websocket_client_for_test();
         let mut mock = MockWebsocketClient::new();
