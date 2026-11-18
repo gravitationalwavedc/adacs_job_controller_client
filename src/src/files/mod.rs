@@ -1286,9 +1286,11 @@ fn handle_incoming_event(
     resume_notify: &Arc<Notify>,
     state: &mut TransferState,
 ) -> LoopStep {
+    use futures_util::FutureExt;
     match classify_incoming(incoming) {
         IncomingEvent::Pause => {
             is_paused.store(true, Ordering::Release);
+            let _ = Box::pin(resume_notify.notified()).now_or_never();
             LoopStep::Continue
         }
         IncomingEvent::Resume => {
@@ -2875,6 +2877,46 @@ mod tests {
         assert!(
             notified.as_mut().now_or_never().is_some(),
             "Resume must notify the resume waiter"
+        );
+    }
+
+    #[tokio::test]
+    async fn pause_after_resume_discards_stale_resume_permit() {
+        use futures_util::FutureExt;
+
+        let server = WebsocketServerFixture::new().await;
+        let (_ws_sender, mut ws_receiver) = connect_reading_phase_client(&server).await;
+
+        let is_paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let mut state = TransferState::new(1024);
+
+        let step = drain_stream(
+            vec![
+                Ok(pause_message()),
+                Ok(resume_message()),
+                Ok(pause_message()),
+            ],
+            &is_paused,
+            &resume_notify,
+            &mut state,
+        );
+        assert!(step.is_none(), "the buffered sequence must not finish");
+        assert!(
+            is_paused.load(Ordering::Acquire),
+            "the trailing Pause must leave the transfer paused"
+        );
+
+        let step =
+            wait_for_terminal_or_resume(&mut ws_receiver, &is_paused, &resume_notify, &mut state)
+                .now_or_never();
+        assert!(
+            step.is_none(),
+            "a trailing Pause must not be cancelled by a stale Resume permit"
+        );
+        assert!(
+            is_paused.load(Ordering::Acquire),
+            "the transfer must remain paused"
         );
     }
 
