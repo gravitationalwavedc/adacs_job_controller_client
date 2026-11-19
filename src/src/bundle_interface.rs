@@ -17,7 +17,7 @@ use crate::python_interface::{
 use crate::thread_bundle_map::ThreadBundleGuard;
 use serde_json::Value;
 use std::ffi::{CStr, CString};
-use std::path::Path;
+use std::path::{Component, Path};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use tracing::{debug, error, info, trace};
 
@@ -67,6 +67,16 @@ unsafe impl Send for SendPtr {}
 // sub-interpreter creations.
 static STATE: StdMutex<SendPtr> = StdMutex::new(SendPtr(std::ptr::null_mut()));
 
+/// Return true when `bundle_hash` is exactly one normal path component.
+///
+/// The hash is server-supplied and is joined onto the bundles root, so
+/// anything that could escape that root (`..`, absolute paths, separators,
+/// `.`, empty) must be rejected before it becomes a filesystem path.
+fn is_safe_bundle_hash(bundle_hash: &str) -> bool {
+    let mut components = Path::new(bundle_hash).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
 #[derive(Clone)]
 pub struct BundleInterface {
     inner: Arc<BundleInterfaceInner>,
@@ -110,6 +120,14 @@ impl BundleInterface {
     // thread state (GIL released); this acquires PYTHON_MUTEX and restores the
     // saved main thread state before returning.
     pub unsafe fn new(bundle_hash: &str, bundle_path_root: &str) -> Result<Self, String> {
+        if !is_safe_bundle_hash(bundle_hash) {
+            error!(
+                "BundleInterface::new rejecting unsafe bundle hash {:?}",
+                bundle_hash
+            );
+            return Err(format!("Invalid bundle hash: {bundle_hash}"));
+        }
+
         let _guard = PYTHON_MUTEX.lock();
         debug!("BundleInterface::new start for {}", bundle_hash);
 
