@@ -1731,6 +1731,12 @@ fn handle_file_upload_internal(
                 if m.id == FILE_UPLOAD_CHUNK {
                     let chunk = m.pop_bytes();
                     let chunk_len = chunk.len() as u64;
+                    // A zero-length chunk carries no data: treat it as a no-op so
+                    // it cannot open (and truncate) the target before any bytes
+                    // are written.
+                    if chunk_len == 0 {
+                        continue;
+                    }
                     // Use saturating arithmetic so an overflowing chunk_len can't wrap
                     // past u64::MAX and bypass the size guard on untrusted wire data.
                     if chunk_len > file_size.saturating_sub(received_size) {
