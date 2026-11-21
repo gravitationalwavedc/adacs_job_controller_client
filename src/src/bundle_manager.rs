@@ -593,6 +593,22 @@ mod load_bundle_tests {
 
         assert_eq!(bundle.bundle_hash(), INJECTED_HASH);
     }
+
+    #[test]
+    fn load_bundle_rejects_path_traversal_hash() {
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+
+        for hash in ["../evil", "/tmp/evil", "a/b", ".", "..", ""] {
+            let err = BundleManager::singleton()
+                .load_bundle(hash)
+                .err()
+                .expect("traversal-shaped bundle hash should be rejected");
+            assert!(
+                err.starts_with("Invalid bundle hash"),
+                "unexpected error for {hash:?}: {err}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
