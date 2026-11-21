@@ -5,7 +5,7 @@ use crate::python_interface::{
     PyUnicode_FromString, Py_DecRef, PYTHON_MUTEX,
 };
 use crate::tests::fixtures::bundle_fixture::BundleFixture;
-use crate::thread_bundle_map::clear_current_thread_bundle;
+use crate::thread_bundle_map::{clear_current_thread_bundle, set_current_thread_bundle};
 use serde_json::json;
 use test_fork::test;
 use uuid::Uuid;
@@ -286,6 +286,75 @@ fn test_write_log_uses_unknown_bundle_hash_when_no_thread_bundle() {
 
         let last_log = get_last_log_message().expect("No log message captured");
         assert_eq!(last_log.0, "Bundle [unknown]: hello");
+        assert!(last_log.1); // is_stdout
+    }
+    inner();
+}
+
+/// REGRESSION TEST: a partial line accumulated under one bundle must not be
+/// prefixed onto the first complete line emitted by a different bundle on the
+/// same (reused) thread.
+#[test]
+fn test_write_log_discards_partial_line_from_previous_bundle() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        fixture.write_raw_script(
+            &bundle_hash,
+            "def submit(details, job_data):\n    return {}\n",
+        );
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().into_owned());
+        let bundle = BundleManager::singleton()
+            .load_bundle(&bundle_hash)
+            .expect("bundle should load");
+
+        let _guard = PYTHON_MUTEX.lock();
+        // SAFETY: PYTHON_MUTEX is held and the ThreadScope acquires the GIL for
+        // the bundle's sub-interpreter, so the Python C-API calls below are valid.
+        unsafe {
+            let _scope = bundle.thread_scope().expect("thread scope");
+
+            let write_log_msg = |msg: &str| {
+                // SAFETY: PYTHON_MUTEX is held and the ThreadScope holds the GIL
+                // for the bundle's sub-interpreter, so the Python C-API calls
+                // below are valid (the closure inherits the outer unsafe block).
+                let c_msg = std::ffi::CString::new(msg).expect("message has no NUL");
+                let args = PyTuple_New(2);
+                assert!(!args.is_null(), "PyTuple_New(2) should succeed");
+                assert_eq!(
+                    PyTuple_SetItem(args, 0, my_py_true_struct()),
+                    0,
+                    "setting is_stdout should succeed"
+                );
+                let msg_obj = PyUnicode_FromString(c_msg.as_ptr());
+                assert!(!msg_obj.is_null(), "message string should be created");
+                assert_eq!(
+                    PyTuple_SetItem(args, 1, msg_obj),
+                    0,
+                    "setting message should succeed"
+                );
+                let result = write_log(std::ptr::null_mut(), args);
+                assert!(!result.is_null(), "write_log should return Py_None");
+                Py_DecRef(result);
+                Py_DecRef(args);
+            };
+
+            // Flush any line parts left over from a previous test so this test
+            // is deterministic regardless of test execution order.
+            clear_current_thread_bundle();
+            write_log_msg("\n");
+
+            set_current_thread_bundle("bundle-a".to_string());
+            write_log_msg("partial");
+            set_current_thread_bundle("bundle-b".to_string());
+            write_log_msg("done\n");
+            clear_current_thread_bundle();
+        }
+
+        let last_log = get_last_log_message().expect("No log message captured");
+        assert_eq!(last_log.0, "Bundle [bundle-b]: done");
         assert!(last_log.1); // is_stdout
     }
     inner();
