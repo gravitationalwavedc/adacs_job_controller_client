@@ -462,7 +462,9 @@ impl TungsteniteWebsocketClient {
 
         let self_arc_scheduler = self.clone();
         let writer_tx_for_scheduler = writer_tx.clone();
-        tokio::spawn(async move {
+        let scheduler_handle = tokio::spawn(async move {
+            #[cfg(test)]
+            let _live_guard = LiveSchedulerGuard::new();
             loop {
                 data_ready.notified().await;
 
@@ -626,6 +628,7 @@ impl TungsteniteWebsocketClient {
         });
 
         disconnect_notify.notified().await;
+        scheduler_handle.abort();
         Ok(())
     }
 
@@ -990,6 +993,27 @@ static RECONNECT_NOTIFY: std::sync::LazyLock<Arc<Notify>> =
     std::sync::LazyLock::new(|| Arc::new(Notify::new()));
 static SHUTDOWN_NOTIFY: std::sync::LazyLock<Arc<Notify>> =
     std::sync::LazyLock::new(|| Arc::new(Notify::new()));
+
+#[cfg(test)]
+static LIVE_SCHEDULERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+struct LiveSchedulerGuard;
+
+#[cfg(test)]
+impl LiveSchedulerGuard {
+    fn new() -> Self {
+        LIVE_SCHEDULERS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for LiveSchedulerGuard {
+    fn drop(&mut self) {
+        LIVE_SCHEDULERS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 fn get_tungstenite_client() -> Arc<TungsteniteWebsocketClient> {
     let mut client = TUNGSTENITE_CLIENT.write();
@@ -2535,6 +2559,46 @@ mod tests {
         );
 
         server.stop().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn test_scheduler_task_aborted_on_disconnect() {
+        let baseline = LIVE_SCHEDULERS.load(Ordering::SeqCst);
+        let client = TungsteniteWebsocketClient::new();
+        let mut server = WebsocketServerFixture::new().await;
+
+        let connection = tokio::spawn(
+            client
+                .clone()
+                .run_connection(server.get_url(), "test-token".to_string()),
+        );
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.is_server_ready() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            LIVE_SCHEDULERS.load(Ordering::SeqCst),
+            baseline + 1,
+            "connection should own exactly one scheduler task"
+        );
+
+        server.stop().await;
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while LIVE_SCHEDULERS.load(Ordering::SeqCst) != baseline {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("scheduler task must be aborted when the connection ends");
+
+        connection.await.unwrap().unwrap();
     }
 
     #[test]
