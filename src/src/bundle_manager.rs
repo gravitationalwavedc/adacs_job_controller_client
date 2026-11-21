@@ -6,7 +6,7 @@
 
 use crate::bundle_interface::BundleInterface;
 use crate::python_interface::{ThreadScope, PYTHON_MUTEX};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,6 +15,7 @@ use tracing::{debug, error, info, trace};
 pub struct BundleManager {
     bundle_path_root: String,
     bundles: RwLock<HashMap<String, BundleInterface>>,
+    create_lock: Mutex<()>,
 }
 
 // Production: OnceLock - set once, never replaced.
@@ -28,10 +29,10 @@ static SINGLETON_TEST: std::sync::atomic::AtomicPtr<BundleManager> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
 // ─── Test-only load_bundle hook seam ────────────────────────────────────────
-// The write-lock double-check in `load_bundle` ("loaded by another thread,
-// using cached") is unreachable through the public API because the read-lock
-// cache-hit check always returns first. This seam lets a test inject a bundle
-// into the cache between the read-lock check and write-lock acquisition,
+// The double-check in `load_bundle` ("loaded by another thread, using cached")
+// is unreachable through the public API because the read-lock cache-hit check
+// always returns first. This seam lets a test inject a bundle
+// into the cache after the create lock is acquired and before the double-check,
 // making the double-check branch deterministically reachable without a race.
 // Tests run serially (`--test-threads=1`), so the global hook cannot race.
 
@@ -41,9 +42,9 @@ type LoadBundleHook = fn(&BundleManager, &str);
 #[cfg(test)]
 static LOAD_BUNDLE_HOOK: std::sync::Mutex<Option<LoadBundleHook>> = std::sync::Mutex::new(None);
 
-/// Test-only: install a hook to run between the read-lock cache check and the
-/// write-lock acquisition in `load_bundle`, returning the previously-installed
-/// hook (if any). Pass `None` to clear it.
+/// Test-only: install a hook to run after the create lock is acquired and
+/// before the cache double-check in `load_bundle`, returning the
+/// previously-installed hook (if any). Pass `None` to clear it.
 #[cfg(test)]
 fn set_load_bundle_hook(hook: Option<LoadBundleHook>) -> Option<LoadBundleHook> {
     let mut guard = LOAD_BUNDLE_HOOK.lock().unwrap();
@@ -81,6 +82,7 @@ impl BundleManager {
         let manager = BundleManager {
             bundle_path_root,
             bundles: RwLock::new(HashMap::new()),
+            create_lock: Mutex::new(()),
         };
 
         #[cfg(not(test))]
@@ -163,8 +165,8 @@ impl BundleManager {
             .insert(bundle.bundle_hash().to_string(), bundle);
     }
 
-    /// Test-only: run the installed `load_bundle` hook (if any) between the
-    /// read-lock cache check and the write-lock acquisition.
+    /// Test-only: run the installed `load_bundle` hook (if any) after the
+    /// create lock is acquired and before the cache double-check.
     #[cfg(test)]
     fn run_load_bundle_hook_for_test(&self, bundle_hash: &str) {
         if let Some(hook) = *LOAD_BUNDLE_HOOK.lock().unwrap() {
@@ -188,26 +190,32 @@ impl BundleManager {
             }
         }
 
-        // Not loaded – acquire write lock and create
+        // Not loaded – serialize creation without holding the cache lock.
+        // `BundleInterface::new` acquires PYTHON_MUTEX, and `_bundledb`
+        // callbacks call back into `load_bundle` while holding PYTHON_MUTEX.
+        // Holding `bundles.write()` across creation would invert that order.
         debug!(
-            "BundleManager: bundle {} not cached, acquiring write lock",
+            "BundleManager: bundle {} not cached, acquiring create lock",
             bundle_hash
+        );
+        let lock_start = std::time::Instant::now();
+        let _create_guard = self.create_lock.lock();
+        trace!(
+            "BundleManager: acquired create lock in {:?}",
+            lock_start.elapsed()
         );
         #[cfg(test)]
         self.run_load_bundle_hook_for_test(bundle_hash);
-        let lock_start = std::time::Instant::now();
-        let mut bundles = self.bundles.write();
-        trace!(
-            "BundleManager: acquired write lock in {:?}",
-            lock_start.elapsed()
-        );
-        // Double-check after acquiring write lock
-        if let Some(existing) = bundles.get(bundle_hash) {
-            debug!(
-                "BundleManager: bundle {} loaded by another thread, using cached",
-                bundle_hash
-            );
-            return Ok(existing.clone());
+        // Double-check after acquiring create lock
+        {
+            let bundles = self.bundles.read();
+            if let Some(existing) = bundles.get(bundle_hash) {
+                debug!(
+                    "BundleManager: bundle {} loaded by another thread, using cached",
+                    bundle_hash
+                );
+                return Ok(existing.clone());
+            }
         }
 
         // SAFETY: BundleInterface::new requires that Python has been initialised
@@ -218,7 +226,9 @@ impl BundleManager {
         );
         let bundle = unsafe { BundleInterface::new(bundle_hash, &self.bundle_path_root)? };
         info!("BundleManager: loaded bundle {}", bundle_hash);
-        bundles.insert(bundle_hash.to_string(), bundle.clone());
+        self.bundles
+            .write()
+            .insert(bundle_hash.to_string(), bundle.clone());
         debug!("BundleManager: bundle {} inserted into cache", bundle_hash);
         Ok(bundle)
     }
@@ -533,14 +543,31 @@ mod load_bundle_tests {
 
     const INJECTED_HASH: &str = "test_double_check_cache_hit";
 
-    /// Hook that injects a failing bundle into the cache between the read-lock
-    /// check and write-lock acquisition in `load_bundle`, simulating a
+    /// Hook that injects a failing bundle into the cache after the create lock
+    /// is acquired and before the double-check in `load_bundle`, simulating a
     /// concurrent load by another thread.
     fn inject_failing_bundle(manager: &BundleManager, bundle_hash: &str) {
         manager.insert_bundle_for_test(BundleInterface::with_thread_scope_error(
             bundle_hash,
             "boom",
         ));
+    }
+
+    static CREATE_HOOK_ENTERED: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>> =
+        std::sync::Mutex::new(None);
+    static CREATE_HOOK_RELEASE: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>> =
+        std::sync::Mutex::new(None);
+
+    /// Hook that pauses a loader inside the creation critical section so a test
+    /// can observe whether cache readers are blocked while creation is in
+    /// progress.
+    fn pause_after_create_lock(_manager: &BundleManager, _bundle_hash: &str) {
+        if let Some(tx) = CREATE_HOOK_ENTERED.lock().unwrap().take() {
+            tx.send(()).ok();
+        }
+        if let Some(rx) = CREATE_HOOK_RELEASE.lock().unwrap().take() {
+            rx.recv().ok();
+        }
     }
 
     /// RAII guard that installs a `load_bundle` hook for the duration of a test
@@ -608,6 +635,52 @@ mod load_bundle_tests {
                 "unexpected error for {hash:?}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn load_bundle_cached_read_not_blocked_by_concurrent_creation() {
+        crate::tests::init_python_global();
+        BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
+
+        let cached_hash = "test_cached_read_during_creation";
+        BundleManager::singleton().insert_bundle_for_test(
+            BundleInterface::with_thread_scope_error(cached_hash, "boom"),
+        );
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *CREATE_HOOK_ENTERED.lock().unwrap() = Some(entered_tx);
+        *CREATE_HOOK_RELEASE.lock().unwrap() = Some(release_rx);
+        let _guard = LoadBundleHookGuard::install(pause_after_create_lock);
+
+        let loader = std::thread::spawn(|| {
+            // The bundle root is nonexistent, so creation fails once the hook
+            // is released; the test only needs creation to be in progress.
+            let _ = BundleManager::singleton().load_bundle("test_concurrent_creation");
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("loader should reach the creation hook");
+
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let result = BundleManager::singleton().load_bundle(cached_hash);
+            result_tx
+                .send(result.map(|b| b.bundle_hash().to_string()))
+                .ok();
+        });
+
+        let result = result_rx.recv_timeout(std::time::Duration::from_secs(2));
+        release_tx.send(()).ok();
+        loader.join().unwrap();
+        reader.join().unwrap();
+
+        assert_eq!(
+            result
+                .expect("cached read must not block on an in-progress creation")
+                .expect("cached bundle should load"),
+            cached_hash
+        );
     }
 }
 
