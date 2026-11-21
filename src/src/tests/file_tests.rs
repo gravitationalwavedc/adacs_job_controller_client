@@ -3338,6 +3338,86 @@ fn test_file_upload_preserves_existing_target_when_closed_before_first_chunk() {
     inner();
 }
 
+/// A zero-length chunk must be a no-op: it must not open (and truncate) a
+/// pre-existing target, so a subsequent size-mismatch completion must leave
+/// the original bytes intact.
+#[test_fork::test]
+fn test_file_upload_zero_length_chunk_preserves_existing_target() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("test39");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 1252i64;
+        let job = job::Model {
+            id: 1,
+            job_id: Some(job_id),
+            scheduler_id: None,
+            submitting: false,
+            submitting_count: 0,
+            bundle_hash: String::new(),
+            working_directory: working_dir.clone(),
+            running: false,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(1, job);
+
+        let server = WebsocketServerFixture::new().await;
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-upload-zero-length-chunk".to_string();
+        let target_path = "existing.txt";
+        let original_content = b"original content that must survive";
+        let full_path = fixture.get_temp_path().join(target_path);
+        fs::write(&full_path, original_content).unwrap();
+
+        let mut msg_raw = Message::new(UPLOAD_FILE, Priority::Highest, &test_uuid);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string(target_path);
+        msg_raw.push_ulong(1000);
+
+        handle_file_upload(Message::from_data(msg_raw.get_data().clone()));
+
+        let mut server = server;
+        let ready = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for SERVER_READY")
+            .expect("No ready");
+        assert_eq!(ready.id, SERVER_READY);
+
+        // A zero-length chunk must not open or truncate the target.
+        let mut chunk_msg = Message::new(FILE_UPLOAD_CHUNK, Priority::Highest, &test_uuid);
+        chunk_msg.push_bytes(&[]);
+        server.msg_tx.send(chunk_msg.get_data().clone()).unwrap();
+
+        // Completing with fewer bytes than declared triggers the size-mismatch
+        // abort path, which must not delete the untouched pre-existing target.
+        let complete_msg = Message::new(FILE_UPLOAD_COMPLETE, Priority::Highest, &test_uuid);
+        server.msg_tx.send(complete_msg.get_data().clone()).unwrap();
+
+        let response = tokio::time::timeout(Duration::from_secs(1), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_UPLOAD_ERROR")
+            .expect("No response");
+        assert_eq!(response.id, FILE_UPLOAD_ERROR);
+
+        assert_eq!(
+            fs::read(&full_path).unwrap(),
+            original_content,
+            "pre-existing target must be preserved when a zero-length chunk is followed by a size-mismatch abort"
+        );
+    } // end inner()
+    inner();
+}
+
 #[test_fork::test]
 fn test_file_upload_partial_file_cleanup_on_receive_error() {
     #[tokio::main(flavor = "current_thread")]
