@@ -17,6 +17,7 @@ use std::ffi::CStr;
 
 thread_local! {
     static LINE_PARTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static LINE_PARTS_OWNER: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -39,6 +40,14 @@ pub fn get_last_log_message() -> Option<(String, bool)> {
 pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) -> *mut PyObject {
     // Get the bundle hash for this thread
     let bundle_hash = get_current_thread_bundle().unwrap_or_else(|| "unknown".to_string());
+
+    LINE_PARTS_OWNER.with(|owner| {
+        let mut owner = owner.borrow_mut();
+        if owner.as_deref() != Some(bundle_hash.as_str()) {
+            LINE_PARTS.with(|parts| parts.borrow_mut().clear());
+            *owner = Some(bundle_hash.clone());
+        }
+    });
 
     // Convert first argument to a bool (is_stdout)
     let arg_is_stdout_obj = PyTuple_GetItem(args, 0);
@@ -82,6 +91,7 @@ pub unsafe extern "C" fn write_log(_self: *mut PyObject, args: *mut PyObject) ->
             }
             parts.clear();
         });
+        LINE_PARTS_OWNER.with(|owner| *owner.borrow_mut() = None);
 
         #[cfg(test)]
         LAST_MESSAGE.with(|last| {
