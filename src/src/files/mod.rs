@@ -611,7 +611,9 @@ async fn collect_dir_entry(
         .unwrap_or(&path)
         .to_string_lossy()
         .into_owned();
-    Some((relative_path, metadata.is_dir(), metadata.len()))
+    let is_dir = metadata.is_dir();
+    let size = if is_dir { 0 } else { metadata.len() };
+    Some((relative_path, is_dir, size))
 }
 
 /// A source of directory entries whose iteration can fail mid-stream.
@@ -3708,9 +3710,11 @@ mod tests {
 
         let entries = collect_entries(tmp.path());
         assert_eq!(entries.len(), 1);
-        let (relative, is_dir, _) = run_collect(entries.into_iter().next().unwrap(), &wd).unwrap();
+        let (relative, is_dir, size) =
+            run_collect(entries.into_iter().next().unwrap(), &wd).unwrap();
         assert_eq!(relative, "subdir");
         assert!(is_dir, "directory entry should be flagged as a directory");
+        assert_eq!(size, 0, "directory entry size should be zero");
     }
 
     #[test]
