@@ -525,6 +525,10 @@ pub(crate) fn archive_dir(dir: &Path, archive_path: &Path) -> Result<(), String>
 }
 
 fn archive_dir_with_limit(dir: &Path, archive_path: &Path, max_bytes: u64) -> Result<(), String> {
+    if dir.as_os_str().is_empty() {
+        return Err("Refusing to archive an empty directory path".to_string());
+    }
+
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -1321,6 +1325,17 @@ mod tests {
         assert!(names.iter().any(|n| n == "keep.txt"));
         assert!(names.iter().any(|n| n == "subdir/archive.tar.gz"));
         assert!(!names.iter().any(|n| n == ARCHIVE_FILE_NAME));
+    }
+
+    #[test]
+    fn archive_dir_returns_error_for_empty_source_dir() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join(ARCHIVE_FILE_NAME);
+
+        let result = archive_dir(Path::new(""), &archive_path);
+
+        assert!(result.is_err());
+        assert!(!archive_path.exists());
     }
 
     #[test]
