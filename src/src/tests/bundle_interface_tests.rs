@@ -524,17 +524,14 @@ fn test_bundle_load_failure_no_panic() {
         );
         assert_eq!(result_json, serde_json::Value::Null);
 
-        // Calling run_bundle_string should return a serialized json error and NOT panic
+        // Calling run_bundle_string should return an empty string and NOT panic
         let result_str = BundleManager::singleton().run_bundle_string(
             "submit",
             bundle_hash,
             &serde_json::json!({}),
             "",
         );
-        assert!(
-            result_str.contains("Failed to load bundle"),
-            "result_str: {result_str}"
-        );
+        assert!(result_str.is_empty(), "result_str: {result_str}");
 
         // Calling run_bundle_uint64 should return 0 and NOT panic
         let result_u64 = BundleManager::singleton().run_bundle_uint64(

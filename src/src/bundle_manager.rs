@@ -255,11 +255,8 @@ impl BundleManager {
             "run_bundle_string entering {} for bundle {} with details={}",
             function_name, bundle_hash, details
         );
-        let bundle = match self.load_bundle_or_error("run_bundle_string", bundle_hash) {
-            Ok(b) => b,
-            Err(msg) => {
-                return serde_json::json!({ "error": msg }).to_string();
-            }
+        let Ok(bundle) = self.load_bundle_or_error("run_bundle_string", bundle_hash) else {
+            return String::new();
         };
         debug!(
             "run_bundle_string loaded bundle {} for {}",
@@ -275,11 +272,9 @@ impl BundleManager {
         );
         // SAFETY: PYTHON_MUTEX is held above for the duration of this block.
         unsafe {
-            let _scope = match create_thread_scope("run_bundle_string", function_name, &bundle) {
-                Ok(s) => s,
-                Err(e) => {
-                    return serde_json::json!({ "error": e }).to_string();
-                }
+            let Ok(_scope) = create_thread_scope("run_bundle_string", function_name, &bundle)
+            else {
+                return String::new();
             };
             if let Ok(result_obj) = bundle.run(function_name, details, job_data) {
                 trace!(
@@ -636,6 +631,22 @@ mod resolve_working_directory_tests {
     }
 
     #[test]
+    fn resolve_working_directory_returns_empty_string_on_bundle_load_failure() {
+        crate::tests::init_python_global();
+        let fixture = BundleFixture::new();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(resolve_working_directory(
+            "test_resolve_working_directory_missing",
+            json!({}),
+            "",
+            "test",
+        ));
+        assert_eq!(result, "");
+    }
+
+    #[test]
     fn resolve_working_directory_returns_empty_string_on_spawn_blocking_failure() {
         BundleManager::reset_singleton_for_test();
 
@@ -673,15 +684,14 @@ mod thread_scope_error_tests {
     }
 
     #[test]
-    fn run_bundle_string_returns_error_json_when_thread_scope_fails() {
+    fn run_bundle_string_returns_empty_string_when_thread_scope_fails() {
         crate::tests::init_python_global();
         BundleManager::initialize("/tmp/nonexistent_bundle_root".to_string());
         BundleManager::singleton().insert_bundle_for_test(failing_bundle());
 
         let result =
             BundleManager::singleton().run_bundle_string("test_func", FAIL_HASH, &json!({}), "");
-        let parsed: Value = serde_json::from_str(&result).expect("result should be valid JSON");
-        assert_eq!(parsed["error"], "Failed to create thread scope: boom");
+        assert_eq!(result, "");
     }
 
     #[test]
@@ -735,20 +745,13 @@ mod load_bundle_error_tests {
     }
 
     #[test]
-    fn run_bundle_string_returns_error_json_when_load_fails() {
+    fn run_bundle_string_returns_empty_string_when_load_fails() {
         crate::tests::init_python_global();
         let (_fixture, hash) = manager_with_missing_bundle();
 
         let result =
             BundleManager::singleton().run_bundle_string("test_func", hash, &json!({}), "");
-        let parsed: Value = serde_json::from_str(&result).expect("result should be valid JSON");
-        assert!(
-            parsed["error"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("Failed to load bundle"),
-            "unexpected error: {parsed}"
-        );
+        assert_eq!(result, "");
     }
 
     #[test]
