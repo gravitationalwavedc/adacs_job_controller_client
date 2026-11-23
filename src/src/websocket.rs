@@ -754,7 +754,10 @@ impl TungsteniteWebsocketClient {
                 info!("WS: Server ready");
                 self.server_ready.store(true, Ordering::SeqCst);
                 self.data_ready.notify_one();
-                get_reconnect_notify().notify_waiters();
+                // notify_one stores a permit when the main loop is not yet
+                // waiting, so a SERVER_READY that races ahead of
+                // `notified().await` is not lost.
+                get_reconnect_notify().notify_one();
             }
             DB_RESPONSE => {
                 let db_request_id = message.pop_uint();
@@ -2969,5 +2972,26 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(100), disconnect_notify.notified())
             .await
             .expect("disconnect before await must retain a permit");
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_server_ready_before_await_retains_permit() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(1, Ordering::SeqCst);
+
+        let reconnect_notify = get_reconnect_notify();
+
+        // Drain any permit left by an earlier test so this test proves the
+        // SERVER_READY handler itself stores a permit.
+        let _ = tokio::time::timeout(Duration::from_millis(10), reconnect_notify.notified()).await;
+
+        // SERVER_READY races ahead of the main loop reaching `notified().await`.
+        let message = Message::new(SERVER_READY, Priority::Highest, "server");
+        client.handle_message(1, message);
+
+        // notify_one stores a permit, so the later await must still resolve.
+        tokio::time::timeout(Duration::from_millis(100), reconnect_notify.notified())
+            .await
+            .expect("SERVER_READY before await must retain a permit");
     }
 }
