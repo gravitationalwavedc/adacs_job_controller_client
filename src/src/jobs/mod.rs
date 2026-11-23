@@ -282,6 +282,10 @@ pub fn handle_job_submit(mut msg: Message) {
     });
 }
 
+fn is_terminal_status(status: u32) -> bool {
+    matches!(status, COMPLETED | CANCELLED | DELETED)
+}
+
 pub async fn check_job_status(job: job::Model, force_notification: bool) {
     let job_id = job.job_id.unwrap_or(0);
     debug!(
@@ -405,7 +409,13 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
 
     let job_complete = v_status
         .iter()
-        .all(|state| state_to_u32(state.state) == COMPLETED);
+        .all(|state| is_terminal_status(state_to_u32(state.state)));
+
+    let completion_status = v_status
+        .iter()
+        .map(|state| state_to_u32(state.state))
+        .rfind(|status| is_terminal_status(*status))
+        .unwrap_or(COMPLETED);
 
     if job_error != 0 || (status_json["complete"].as_bool().unwrap_or(false) && job_complete) {
         debug!("check_job_status: job complete, saving to DB");
@@ -423,7 +433,11 @@ pub async fn check_job_status(job: job::Model, force_notification: bool) {
         queue_job_update(
             job_id,
             JOB_COMPLETION_SOURCE,
-            if job_error != 0 { job_error } else { COMPLETED },
+            if job_error != 0 {
+                job_error
+            } else {
+                completion_status
+            },
             "Job has completed",
         );
         trace!("check_job_status: job completion message queued on ws");

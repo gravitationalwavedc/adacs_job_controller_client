@@ -1992,7 +1992,7 @@ fn test_archive_dir_empty_directory() {
 
 use crate::db::{job, jobstatus};
 use crate::jobs::check_job_status;
-use crate::messaging::{CANCELLING, COMPLETED, RUNNING, UPDATE_JOB};
+use crate::messaging::{CANCELLED, CANCELLING, COMPLETED, RUNNING, UPDATE_JOB};
 use std::io::Write;
 use tempfile::TempDir;
 use tracing_subscriber::fmt::MakeWriter;
@@ -3562,6 +3562,101 @@ fn test_check_status_cancelling_does_not_terminate_job() {
                 .is_err(),
             "No completion message should be sent for CANCELLING status"
         );
+    }
+    inner();
+}
+
+#[test_fork::test]
+fn test_check_status_cancelled_terminates_job() {
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        let db_name = Uuid::new_v4().to_string();
+        setup_test(&db_name);
+        let fixture = BundleFixture::new();
+        let bundle_hash = Uuid::new_v4().to_string();
+        BundleManager::initialize(fixture.get_bundle_path().to_string_lossy().to_string());
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let working_dir = temp_dir.path().to_str().unwrap().to_string();
+        fs::write(temp_dir.path().join("test.txt"), "content").unwrap();
+
+        let job_id = 1237i64;
+        let job_id_saved = 1i64;
+
+        // CANCELLED (70) is terminal and must terminate the job
+        fixture.write_job_status(
+            &bundle_hash,
+            r#"{"status": [{"info": "Cancelled", "what": "job", "status": 70}], "complete": true}"#,
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+
+        let (mut mock_ws, state) = setup_mock_ws();
+        let job = job::Model {
+            id: job_id_saved,
+            job_id: Some(job_id),
+            scheduler_id: Some(4321),
+            running: true,
+            bundle_hash: bundle_hash.clone(),
+            working_directory: working_dir.clone(),
+            submitting: false,
+            submitting_count: 0,
+            deleting: false,
+            deleted: false,
+        };
+        state.lock().unwrap().jobs.insert(job_id_saved, job.clone());
+
+        // Two messages: the status update and the completion notification.
+        mock_ws
+            .expect_queue_message()
+            .times(2)
+            .returning(move |_, data, _| {
+                let _ = tx_clone.send(data);
+            });
+
+        set_websocket_client(Arc::new(mock_ws));
+
+        check_job_status(job.clone(), false).await;
+
+        let job_after = state
+            .lock()
+            .unwrap()
+            .jobs
+            .get(&job_id_saved)
+            .cloned()
+            .unwrap();
+        assert!(
+            !job_after.running,
+            "Job should not be running after CANCELLED status"
+        );
+
+        let archive_path = std::path::Path::new(&working_dir).join("archive.tar.gz");
+        assert!(
+            archive_path.exists(),
+            "Archive should be created after CANCELLED termination"
+        );
+
+        let msg_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("Timeout waiting for status UPDATE_JOB message")
+            .expect("No status message received");
+        let mut msg = Message::from_data(msg_data);
+        assert_eq!(msg.id, UPDATE_JOB);
+        assert_eq!(msg.pop_uint(), job_id as u32);
+        assert_eq!(msg.pop_string(), "job");
+        assert_eq!(msg.pop_uint(), CANCELLED);
+
+        let completion_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("Timeout waiting for completion UPDATE_JOB message")
+            .expect("No completion message received");
+        let mut completion = Message::from_data(completion_data);
+        assert_eq!(completion.id, UPDATE_JOB);
+        assert_eq!(completion.pop_uint(), job_id as u32);
+        assert_eq!(completion.pop_string(), "_job_completion_");
+        assert_eq!(completion.pop_uint(), CANCELLED);
+        assert_eq!(completion.pop_string(), "Job has completed");
     }
     inner();
 }
