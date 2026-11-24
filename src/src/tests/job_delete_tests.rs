@@ -371,7 +371,14 @@ fn test_delete_job_save_as_deleted_failure_logs_error() {
             }
             Box::pin(async move { Ok(resp) })
         });
-    mock_ws.expect_queue_message().times(0);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let tx_clone = tx.clone();
+    mock_ws
+        .expect_queue_message()
+        .times(1)
+        .returning(move |_, data, _| {
+            let _ = tx_clone.send(data);
+        });
     set_websocket_client(Arc::new(mock_ws));
 
     let mut msg_raw = Message::new(DELETE_JOB, Priority::Medium, SYSTEM_SOURCE);
@@ -385,7 +392,21 @@ fn test_delete_job_save_as_deleted_failure_logs_error() {
             .unwrap();
         rt.block_on(async {
             handle_job_delete(msg);
-            tokio::time::sleep(Duration::from_millis(200)).await;
+
+            // Even though the final save fails, the DELETED notification is
+            // still queued. Await it so the spawned task is polled and any
+            // mock panic surfaces instead of being swallowed.
+            let msg_data = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .expect("Timeout waiting for UPDATE_JOB message")
+                .expect("No message received");
+
+            let mut result_msg = Message::from_data(msg_data);
+            assert_eq!(result_msg.id, UPDATE_JOB);
+            assert_eq!(result_msg.pop_uint(), 1234);
+            assert_eq!(result_msg.pop_string(), "_job_completion_");
+            assert_eq!(result_msg.pop_uint(), DELETED);
+            assert_eq!(result_msg.pop_string(), "Job has been deleted");
         });
     });
 
