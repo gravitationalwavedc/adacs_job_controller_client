@@ -9,11 +9,10 @@ Rust daemon for managing computational jobs on distributed clusters via WebSocke
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
-2. **Install Zig** (required for release builds):
-   ```bash
-   curl -sSf https://webinstall.dev/zig | bash
-   source ~/.config/envman/PATH.env
-   ```
+2. **Install Zig 0.16.0** (required for release builds):
+   Download Zig 0.16.0 from https://ziglang.org/download/ and add it to your
+   `PATH`. The repository vendors the exact toolchain used by CI at
+   `ci/zig-linux-x86_64-0.16.0.tar.xz` (available after cloning in step 4).
 
 3. **Install cargo-zigbuild**:
    ```bash
@@ -122,9 +121,11 @@ objdump -T target/x86_64-unknown-linux-gnu/release/adacs_job_client | grep GLIBC
 ## Troubleshooting
 
 ### Zig not found
+Ensure Zig 0.16.0 is on your `PATH`. The repository vendors it at
+`ci/zig-linux-x86_64-0.16.0.tar.xz`:
 ```bash
-source ~/.config/envman/PATH.env
-# Or reinstall: curl -sSf https://webinstall.dev/zig | bash
+tar -xf ci/zig-linux-x86_64-0.16.0.tar.xz
+export PATH="$PWD/zig-x86_64-linux-0.16.0:$PATH"
 ```
 
 ### cargo-zigbuild not found
@@ -151,5 +152,5 @@ cargo build
 
 ## Requirements
 
-- **Build**: Rust stable, Zig 0.13+
+- **Build**: Rust stable, Zig 0.16.0
 - **Runtime**: glibc 2.17+ (RHEL 7 / CentOS 7 or newer)
