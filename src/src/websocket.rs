@@ -77,6 +77,17 @@ pub struct TungsteniteWebsocketClient {
     last_update_check: AtomicI64,
 }
 
+struct DbRequestPromiseGuard {
+    promises: Arc<RwLock<HashMap<u32, oneshot::Sender<Message>>>>,
+    request_id: u32,
+}
+
+impl Drop for DbRequestPromiseGuard {
+    fn drop(&mut self) {
+        self.promises.write().remove(&self.request_id);
+    }
+}
+
 impl TungsteniteWebsocketClient {
     fn new_internal() -> Self {
         let mut queue = Vec::with_capacity(PRIORITY_LEVELS);
@@ -936,8 +947,13 @@ impl WebsocketClient for TungsteniteWebsocketClient {
         let promises = self.db_request_promises.clone();
         let timeout_duration =
             Duration::from_millis(self.db_request_timeout_ms.load(Ordering::SeqCst));
+        let guard = DbRequestPromiseGuard {
+            promises: promises.clone(),
+            request_id,
+        };
 
         Box::pin(async move {
+            let _guard = guard;
             trace!(
                 "send_db_request: awaiting response for request_id={}",
                 request_id
@@ -1479,6 +1495,33 @@ mod tests {
         assert!(
             client.db_request_promises.read().is_empty(),
             "timed-out request's promise must be removed from the map"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_send_db_request_removes_promise_when_future_dropped_before_polling() {
+        reset_websocket_client_for_test();
+        let client = get_tungstenite_client();
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+
+        let mut msg = Message::new(DB_JOB_GET_RUNNING_JOBS, Priority::Highest, "database");
+        msg.push_ulong(42);
+
+        let fut = client.send_db_request(msg);
+
+        assert_eq!(
+            client.db_request_promises.read().len(),
+            1,
+            "send_db_request should register a pending promise"
+        );
+
+        std::mem::drop(fut);
+
+        assert!(
+            client.db_request_promises.read().is_empty(),
+            "dropping the future must remove its promise from the map"
         );
     }
 
