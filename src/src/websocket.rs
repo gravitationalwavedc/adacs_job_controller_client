@@ -322,7 +322,10 @@ impl TungsteniteWebsocketClient {
             disconnect_notify.notify_one();
             if !self.reconnectable.load(Ordering::SeqCst) {
                 debug!("WS: Notifying shutdown (not reconnectable)");
-                get_shutdown_notify().notify_waiters();
+                // notify_one stores a permit when the main loop is not yet
+                // waiting, so a shutdown that races ahead of
+                // `notified().await` is not lost.
+                get_shutdown_notify().notify_one();
             }
         }
     }
@@ -662,7 +665,10 @@ impl TungsteniteWebsocketClient {
             let Some(config) = self.load_connection_config() else {
                 error!("WS: Missing connection configuration");
                 self.connection_closed.store(true, Ordering::SeqCst);
-                get_shutdown_notify().notify_waiters();
+                // notify_one stores a permit when the main loop is not yet
+                // waiting, so a shutdown that races ahead of
+                // `notified().await` is not lost.
+                get_shutdown_notify().notify_one();
                 return;
             };
 
@@ -697,7 +703,10 @@ impl TungsteniteWebsocketClient {
 
                     if !self.reconnectable.load(Ordering::SeqCst) {
                         error!("WS: Failed to connect: {}", e);
-                        get_shutdown_notify().notify_waiters();
+                        // notify_one stores a permit when the main loop is not
+                        // yet waiting, so a shutdown that races ahead of
+                        // `notified().await` is not lost.
+                        get_shutdown_notify().notify_one();
                         return;
                     }
 
@@ -3057,5 +3066,30 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(100), reconnect_notify.notified())
             .await
             .expect("SERVER_READY before await must retain a permit");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_handle_disconnect_shutdown_before_await_retains_permit() {
+        let client = TungsteniteWebsocketClient::new();
+        client.connection_id.store(9, Ordering::SeqCst);
+        client.connection_closed.store(false, Ordering::SeqCst);
+        client.server_ready.store(true, Ordering::SeqCst);
+        client.reconnectable.store(false, Ordering::SeqCst);
+
+        let disconnect_notify = Arc::new(Notify::new());
+        let shutdown_notify = get_shutdown_notify();
+
+        // Drain any permit left by an earlier test so this test proves the
+        // shutdown handler itself stores a permit.
+        let _ = tokio::time::timeout(Duration::from_millis(10), shutdown_notify.notified()).await;
+
+        // Shutdown races ahead of the main loop reaching `notified().await`.
+        client.handle_disconnect(9, &disconnect_notify);
+
+        // notify_one stores a permit, so the later await must still resolve.
+        tokio::time::timeout(Duration::from_millis(100), shutdown_notify.notified())
+            .await
+            .expect("shutdown before await must retain a permit");
     }
 }
