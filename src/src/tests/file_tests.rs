@@ -5771,6 +5771,137 @@ fn test_task4_truncated_download_selects_size_mismatch_error() {
     inner();
 }
 
+/// A file that grows during transfer must not send bytes beyond the declared
+/// size. We write a 2-chunk file, park the supervisor before the first chunk
+/// send via the pre-chunk-send barrier, grow the file to three chunks, release
+/// the barrier, and assert the peer receives exactly the declared two chunks
+/// followed by a `FILE_DOWNLOAD_ERROR` with the size-mismatch message, the
+/// authoritative result is a primary error, and the connection is released.
+#[test_fork::test]
+fn test_task4_grown_download_selects_size_mismatch_error() {
+    const CHUNK: u64 = 64 * 1024;
+    const TOTAL: u64 = 2 * CHUNK;
+    const GROWN: u64 = 3 * CHUNK;
+
+    #[tokio::main(flavor = "current_thread")]
+    async fn inner() {
+        setup_test("task4_grown_download");
+
+        let fixture = TemporaryDirectoryFixture::new();
+        let working_dir = fixture.get_temp_path().to_str().unwrap().to_string();
+        let path = fixture.get_temp_path().join("grown.bin");
+        write_two_chunk_file(&path);
+
+        let state = create_mock_state();
+        let mock_ws = with_db_support(MockWebsocketClient::new(), &state);
+        set_websocket_client(Arc::new(mock_ws));
+
+        let job_id = 8031i64;
+        state.lock().unwrap().jobs.insert(
+            1,
+            job::Model {
+                id: 1,
+                job_id: Some(job_id),
+                scheduler_id: None,
+                submitting: false,
+                submitting_count: 0,
+                bundle_hash: String::new(),
+                working_directory: working_dir.clone(),
+                running: false,
+                deleting: false,
+                deleted: false,
+            },
+        );
+
+        let barrier = crate::tests::fixtures::websocket_server_fixture::LifecycleBarrier::new();
+        set_pre_chunk_send_barrier_for_test(Some(barrier.clone()));
+
+        let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::unbounded_channel();
+        set_transfer_outcome_observer_for_test(Some(outcome_tx));
+
+        let config = WebsocketServerConfig {
+            server_ready: ServerReadyBehaviour::Valid,
+            close_handshake: CloseHandshakeBehaviour::Acknowledge,
+            drop_after_n_incoming: None,
+        };
+        let mut server = WebsocketServerFixture::with_config(config).await;
+        let observer = server.lifecycle();
+        set_test_config(server.port);
+
+        let test_uuid = "test-uuid-task4-grown".to_string();
+        let mut msg_raw = Message::new(FILE_DOWNLOAD, Priority::Highest, SYSTEM_SOURCE);
+        msg_raw.push_uint(job_id as u32);
+        msg_raw.push_string(&test_uuid);
+        msg_raw.push_string("some_hash");
+        msg_raw.push_string("grown.bin");
+
+        handle_file_download(Message::from_data(msg_raw.get_data().clone()));
+
+        // Park the supervisor before the first chunk send, then grow the file
+        // to three chunks so a later read exceeds the declared size.
+        tokio::time::timeout(Duration::from_secs(2), barrier.wait_until_reached())
+            .await
+            .expect("supervisor must reach the pre-chunk-send barrier");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(GROWN)
+            .unwrap();
+        barrier.release();
+
+        // Consume the FILE_DOWNLOAD_DETAILS message sent before the transfer.
+        let details = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_DETAILS")
+            .expect("No details");
+        assert_eq!(details.id, FILE_DOWNLOAD_DETAILS);
+
+        // Exactly the declared two chunks are transmitted.
+        for _ in 0..2 {
+            let chunk = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+                .await
+                .expect("Timeout waiting for FILE_CHUNK")
+                .expect("No chunk");
+            assert_eq!(chunk.id, FILE_CHUNK);
+        }
+
+        // The over-size chunk is never sent; the next message is the
+        // size-mismatch FILE_DOWNLOAD_ERROR.
+        let error_msg = tokio::time::timeout(Duration::from_secs(2), server.msg_rx.recv())
+            .await
+            .expect("Timeout waiting for FILE_DOWNLOAD_ERROR")
+            .expect("No error message");
+        assert_eq!(error_msg.id, FILE_DOWNLOAD_ERROR);
+        let mut error_msg = error_msg;
+        let error_text = error_msg.pop_string();
+        assert_eq!(
+            error_text,
+            format!("File size mismatch: expected {TOTAL}, got {GROWN}")
+        );
+        assert_eq!(error_msg.source, test_uuid);
+
+        // The authoritative result must be a primary error.
+        let outcome = tokio::time::timeout(Duration::from_secs(2), outcome_rx.recv())
+            .await
+            .expect("supervisor must report an authoritative result")
+            .expect("outcome channel closed");
+        assert!(
+            matches!(outcome, TransferOutcome::PrimaryError(_)),
+            "grown download must select a primary error, got {outcome:?}"
+        );
+
+        assert!(
+            wait_for_released(&observer, 1, Duration::from_secs(2)).await,
+            "supervisor must release the connection after the size-mismatch error"
+        );
+        assert_eq!(observer.live_connections(), 0);
+        set_transfer_outcome_observer_for_test(None);
+        reset_download_test_seams();
+    } // end inner()
+    inner();
+}
+
 /// A Close-send failure after an otherwise successful transfer must preserve
 /// the successful transfer result (`CleanEof`) while recording the cleanup
 /// failure. We park the supervisor just before its Close send via the

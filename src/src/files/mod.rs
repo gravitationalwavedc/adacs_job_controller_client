@@ -1125,6 +1125,23 @@ async fn run_reading_phase(ctx: &mut TransferContext<'_>, state: &mut TransferSt
                 }
                 Ok(n) => {
                     trace!("handle_file_download: Read {} bytes from file", n);
+                    let received = state.total_bytes().saturating_add(n as u64);
+                    if received > state.expected_size() {
+                        let expected = state.expected_size();
+                        warn!(
+                            "handle_file_download: File size mismatch: expected {expected} bytes, got {received} bytes (file grew during download)"
+                        );
+                        send_file_error(
+                            ctx.ws_sender,
+                            ctx.uuid,
+                            &format!("File size mismatch: expected {expected}, got {received}"),
+                            FILE_DOWNLOAD_ERROR,
+                        )
+                        .await;
+                        return LoopStep::Finish(AuthoritativeResult::PrimaryError(format!(
+                            "file grew beyond expected size: received {received} of {expected} bytes"
+                        )));
+                    }
                     // Build the chunk message bytes and arm the Sending phase.
                     let mut chunk_msg = Message::new(FILE_CHUNK, Priority::Highest, ctx.uuid);
                     chunk_msg.push_bytes(&ctx.buffer[..n]);
