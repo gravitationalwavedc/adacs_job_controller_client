@@ -1,6 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Model {
     pub id: i64,
